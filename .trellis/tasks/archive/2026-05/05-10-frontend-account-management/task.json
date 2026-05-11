@@ -3,7 +3,7 @@
   "name": "frontend-account-management",
   "title": "前端账号管理功能",
   "description": "",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "your-name",
   "assignee": "your-name",
   "createdAt": "2026-05-10",
-  "completedAt": null,
+  "completedAt": "2026-05-12",
   "branch": null,
   "base_branch": "master",
   "worktree_path": null,
@@ -26,7 +26,7 @@
     "prd_status": "confirmed",
     "workflow": {
       "version": 1,
-      "current_step": "awaiting_commit",
+      "current_step": "ready_to_finish",
       "vcs": {
         "kind": "git",
         "commit_required": true
@@ -36,17 +36,17 @@
         "completed_at": "2026-05-10T15:09:44Z"
       },
       "check": {
-        "completed_at": "2026-05-10T15:09:44Z",
-        "fingerprint": "ff2eb4a852565835439b4febee88a681bf139f80805d2fa7b978939e55cff1f3",
-        "head": "c9c678504a1e8a83cfabdf538b9341cc79f4296b"
+        "completed_at": "2026-05-11T23:33:24Z",
+        "fingerprint": "995f6933e264146237603fccaba63723ecb6c0bf0893cf6e7f1e510bbaff5816",
+        "head": "e18f8bd8467846e2d68ef46f45b8d12e4a4da5a8"
       },
       "spec_update": {
         "reviewed_at": "2026-05-10T15:09:45Z",
         "result": "updated"
       },
       "commit": {
-        "hash": null,
-        "recorded_at": null
+        "hash": "e18f8bd8467846e2d68ef46f45b8d12e4a4da5a8",
+        "recorded_at": "2026-05-11T23:33:25Z"
       }
     }
   }
