@@ -17,7 +17,19 @@ from pydantic import ValidationError
 from aistudio_api.application.chat_service import cleanup_files, encode_schema_to_wire, normalize_chat_request, normalize_gemini_request, normalize_openai_tools
 from aistudio_api.application.validation import validate_number_range
 from aistudio_api.domain.errors import AistudioError, AuthError, RequestError, UsageLimitExceeded
-from aistudio_api.domain.model_capabilities import IMAGE_RESPONSE_FORMATS, get_model_capabilities, plan_image_generation, validate_chat_capabilities
+from aistudio_api.domain.model_capabilities import (
+    DEFAULT_IMAGE_N,
+    DEFAULT_IMAGE_RESPONSE_FORMAT,
+    DEFAULT_IMAGE_SIZE,
+    IMAGE_IGNORED_OPENAI_FIELDS,
+    IMAGE_N_MAX,
+    IMAGE_N_MIN,
+    IMAGE_RESPONSE_FORMATS,
+    IMAGE_UNSUPPORTED_OPENAI_FIELDS,
+    get_model_capabilities,
+    plan_image_generation,
+    validate_chat_capabilities,
+)
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent, AistudioPart, AistudioThinkingConfig, ThinkingLevel
 from aistudio_api.api.responses import (
@@ -45,6 +57,18 @@ THINKING_LEVELS = {
 
 def _bad_request(message: str, error_type: str = "bad_request") -> HTTPException:
     return HTTPException(400, detail={"message": message, "type": error_type})
+
+
+def parse_image_request(payload: Any) -> ImageRequest:
+    try:
+        return ImageRequest.model_validate(payload)
+    except ValidationError as exc:
+        fields = [".".join(str(part) for part in error["loc"]) for error in exc.errors() if error.get("loc")]
+        if fields:
+            message = f"Invalid image generation request field(s): {', '.join(fields)}. {exc.errors()[0]['msg']}"
+        else:
+            message = str(exc)
+        raise _bad_request(message, "invalid_request_error") from exc
 
 
 def _upstream_exception(exc: AistudioError) -> HTTPException:
@@ -247,11 +271,24 @@ def _merge_usage(total: dict, usage: dict | None) -> dict:
 
 
 def _normalize_image_response_format(response_format: str | None) -> str:
-    normalized = (response_format or "b64_json").strip().lower()
+    normalized = (response_format or DEFAULT_IMAGE_RESPONSE_FORMAT).strip().lower()
     if normalized not in IMAGE_RESPONSE_FORMATS:
         supported = ", ".join(IMAGE_RESPONSE_FORMATS)
         raise ValueError(f"response_format must be one of: {supported}")
     return normalized
+
+
+def _validate_unsupported_image_fields(req: ImageRequest) -> None:
+    unsupported = [field for field in IMAGE_UNSUPPORTED_OPENAI_FIELDS if getattr(req, field, None) is not None]
+    if not unsupported:
+        return
+    fields = ", ".join(unsupported)
+    supported = "prompt, model, n, size, response_format"
+    ignored = ", ".join(IMAGE_IGNORED_OPENAI_FIELDS)
+    raise ValueError(
+        f"Unsupported image generation field(s): {fields}. Supported fields: {supported}. "
+        f"Compatibility-only ignored field(s): {ignored}"
+    )
 
 
 def _image_data_url(mime_type: str | None, b64: str) -> str:
@@ -303,8 +340,8 @@ def _chat_image_request(req: ChatRequest) -> tuple[ImageRequest, list[str]]:
         ImageRequest(
             prompt=normalized["capture_prompt"],
             model=normalized["model"],
-            n=1,
-            size="1024x1024",
+            n=DEFAULT_IMAGE_N,
+            size=DEFAULT_IMAGE_SIZE,
             response_format="url",
         ),
         cleanup_paths,
@@ -312,12 +349,13 @@ def _chat_image_request(req: ChatRequest) -> tuple[ImageRequest, list[str]]:
 
 
 def _validate_image_request(req: ImageRequest):
+    _validate_unsupported_image_fields(req)
     if not req.prompt or not req.prompt.strip():
         raise ValueError("prompt is required")
-    if req.n < 1:
-        raise ValueError("n must be at least 1")
-    if req.n > 10:
-        raise ValueError("n must be 10 or less")
+    if req.n < IMAGE_N_MIN:
+        raise ValueError(f"n must be at least {IMAGE_N_MIN}")
+    if req.n > IMAGE_N_MAX:
+        raise ValueError(f"n must be {IMAGE_N_MAX} or less")
     response_format = _normalize_image_response_format(req.response_format)
     return plan_image_generation(req.model, req.size), response_format
 

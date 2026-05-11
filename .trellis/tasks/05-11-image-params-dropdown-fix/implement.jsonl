@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend/API/static frontend conventions and pre-development checklist for this single-repo task."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Quality and test expectations for backend and static frontend changes."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Image parameter validation should return clear API errors for unsupported fields."}
+{"file":".trellis/tasks/05-11-image-params-dropdown-fix/research/pro-image-resolution-probe.md","reason":"Use real-account probe results to expose pro image 2K/4K sizes without over-advertising flash image support."}

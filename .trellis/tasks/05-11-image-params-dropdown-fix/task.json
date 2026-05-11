@@ -1,0 +1,53 @@
+{
+  "id": "image-params-dropdown-fix",
+  "name": "image-params-dropdown-fix",
+  "title": "修复图像参数下拉与参数支持",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "your-name",
+  "assignee": "your-name",
+  "createdAt": "2026-05-11",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "prd_status": "confirmed",
+    "workflow": {
+      "version": 1,
+      "current_step": "awaiting_commit",
+      "vcs": {
+        "kind": "git",
+        "commit_required": true
+      },
+      "implement": {
+        "dispatched_at": "2026-05-11T13:38:10Z",
+        "completed_at": "2026-05-11T13:38:11Z"
+      },
+      "check": {
+        "completed_at": "2026-05-11T15:12:58Z",
+        "fingerprint": "995f6933e264146237603fccaba63723ecb6c0bf0893cf6e7f1e510bbaff5816",
+        "head": "35c3719e5b4bf674dcef75b2e85ea7ac533ab0bf"
+      },
+      "spec_update": {
+        "reviewed_at": "2026-05-11T13:38:11Z",
+        "result": "updated"
+      },
+      "commit": {
+        "hash": null,
+        "recorded_at": null
+      }
+    }
+  }
+}

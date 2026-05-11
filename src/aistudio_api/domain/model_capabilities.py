@@ -8,6 +8,22 @@ from typing import Any
 
 MODEL_CREATED = 1700000000
 IMAGE_RESPONSE_FORMATS = ("b64_json", "url")
+DEFAULT_IMAGE_SIZE = "1024x1024"
+DEFAULT_IMAGE_N = 1
+IMAGE_N_MIN = 1
+IMAGE_N_MAX = 10
+DEFAULT_IMAGE_RESPONSE_FORMAT = "b64_json"
+SQUARE_IMAGE_PROMPT_SUFFIX = "Use a square 1:1 composition."
+IMAGE_IGNORED_OPENAI_FIELDS = ("user",)
+IMAGE_UNSUPPORTED_OPENAI_FIELDS = (
+    "quality",
+    "style",
+    "background",
+    "moderation",
+    "output_compression",
+    "output_format",
+    "partial_images",
+)
 
 
 @dataclass(frozen=True)
@@ -69,9 +85,27 @@ class ModelCapabilities:
             "capabilities": capabilities,
         }
         if self.image_sizes:
+            sizes = [size.to_public_dict() for size in self.image_sizes.values()]
+            size_values = [size["size"] for size in sizes]
             data["image_generation"] = {
-                "sizes": [size.to_public_dict() for size in self.image_sizes.values()],
+                "sizes": sizes,
                 "response_formats": list(IMAGE_RESPONSE_FORMATS),
+                "defaults": {
+                    "size": DEFAULT_IMAGE_SIZE,
+                    "n": DEFAULT_IMAGE_N,
+                    "response_format": DEFAULT_IMAGE_RESPONSE_FORMAT,
+                },
+                "parameters": {
+                    "size": {"type": "string", "enum": size_values, "default": DEFAULT_IMAGE_SIZE},
+                    "n": {"type": "integer", "minimum": IMAGE_N_MIN, "maximum": IMAGE_N_MAX, "default": DEFAULT_IMAGE_N},
+                    "response_format": {
+                        "type": "string",
+                        "enum": list(IMAGE_RESPONSE_FORMATS),
+                        "default": DEFAULT_IMAGE_RESPONSE_FORMAT,
+                    },
+                },
+                "unsupported_fields": list(IMAGE_UNSUPPORTED_OPENAI_FIELDS),
+                "ignored_fields": list(IMAGE_IGNORED_OPENAI_FIELDS),
             }
         if self.unsupported_generation_fields:
             data["unsupported_generation_fields"] = list(self.unsupported_generation_fields)
@@ -92,9 +126,19 @@ IMAGE_MODEL_UNSUPPORTED_FIELDS = (
 )
 
 
-DEFAULT_IMAGE_SIZES = {
-    "512x512": ImageSizeCapability("512x512", aspect_ratio="1:1", output_image_size="512"),
-    "1024x1024": ImageSizeCapability("1024x1024", aspect_ratio="1:1", output_image_size="1K"),
+FLASH_IMAGE_SIZES = {
+    "512x512": ImageSizeCapability(
+        "512x512",
+        aspect_ratio="1:1",
+        output_image_size="512",
+        prompt_suffix=SQUARE_IMAGE_PROMPT_SUFFIX,
+    ),
+    "1024x1024": ImageSizeCapability(
+        "1024x1024",
+        aspect_ratio="1:1",
+        output_image_size="1K",
+        prompt_suffix=SQUARE_IMAGE_PROMPT_SUFFIX,
+    ),
     "1024x1792": ImageSizeCapability(
         "1024x1792",
         aspect_ratio="9:16",
@@ -108,6 +152,48 @@ DEFAULT_IMAGE_SIZES = {
         prompt_suffix="Use a horizontal 16:9 composition.",
     ),
 }
+
+PRO_IMAGE_SIZES = {
+    **FLASH_IMAGE_SIZES,
+    "2048x2048": ImageSizeCapability(
+        "2048x2048",
+        aspect_ratio="1:1",
+        output_image_size="2K",
+        prompt_suffix=SQUARE_IMAGE_PROMPT_SUFFIX,
+    ),
+    "1536x2816": ImageSizeCapability(
+        "1536x2816",
+        aspect_ratio="9:16",
+        output_image_size="2K",
+        prompt_suffix="Use a vertical 9:16 composition.",
+    ),
+    "2816x1536": ImageSizeCapability(
+        "2816x1536",
+        aspect_ratio="16:9",
+        output_image_size="2K",
+        prompt_suffix="Use a horizontal 16:9 composition.",
+    ),
+    "4096x4096": ImageSizeCapability(
+        "4096x4096",
+        aspect_ratio="1:1",
+        output_image_size="4K",
+        prompt_suffix=SQUARE_IMAGE_PROMPT_SUFFIX,
+    ),
+    "2304x4096": ImageSizeCapability(
+        "2304x4096",
+        aspect_ratio="9:16",
+        output_image_size="4K",
+        prompt_suffix="Use a vertical 9:16 composition.",
+    ),
+    "4096x2304": ImageSizeCapability(
+        "4096x2304",
+        aspect_ratio="16:9",
+        output_image_size="4K",
+        prompt_suffix="Use a horizontal 16:9 composition.",
+    ),
+}
+
+DEFAULT_IMAGE_SIZES = FLASH_IMAGE_SIZES
 
 
 def _text_model(
@@ -133,7 +219,11 @@ def _text_model(
     )
 
 
-def _image_model(model_id: str) -> ModelCapabilities:
+def _image_model(
+    model_id: str,
+    *,
+    image_sizes: dict[str, ImageSizeCapability] = DEFAULT_IMAGE_SIZES,
+) -> ModelCapabilities:
     return ModelCapabilities(
         id=model_id,
         text_output=True,
@@ -146,7 +236,7 @@ def _image_model(model_id: str) -> ModelCapabilities:
         structured_output=False,
         safety_settings=False,
         unsupported_generation_fields=IMAGE_MODEL_UNSUPPORTED_FIELDS,
-        image_sizes=DEFAULT_IMAGE_SIZES,
+        image_sizes=image_sizes,
     )
 
 
@@ -159,7 +249,7 @@ MODEL_CAPABILITIES: dict[str, ModelCapabilities] = {
     "gemini-3.1-pro-preview": _text_model("gemini-3.1-pro-preview"),
     "gemini-3.1-flash-lite": _text_model("gemini-3.1-flash-lite"),
     "gemini-3.1-flash-image-preview": _image_model("gemini-3.1-flash-image-preview"),
-    "gemini-3-pro-image-preview": _image_model("gemini-3-pro-image-preview"),
+    "gemini-3-pro-image-preview": _image_model("gemini-3-pro-image-preview", image_sizes=PRO_IMAGE_SIZES),
     "gemini-3.1-flash-live-preview": _text_model("gemini-3.1-flash-live-preview", tools=False, streaming=True),
     "gemini-3.1-flash-tts-preview": _text_model("gemini-3.1-flash-tts-preview", image_input=False, search=False, tools=False, thinking=False, structured_output=False),
     # Latest aliases

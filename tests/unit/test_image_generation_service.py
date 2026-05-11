@@ -2,15 +2,22 @@ import asyncio
 import base64
 import json
 
+import httpx
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import ValidationError
 
+from aistudio_api.api.dependencies import get_client
+from aistudio_api.api.routes_openai import router as openai_router
 from aistudio_api.api.schemas import ChatRequest, ImageRequest
 from aistudio_api.api.state import runtime_state
 from aistudio_api.application.api_service import handle_chat, handle_image_generation
 from aistudio_api.domain.errors import RequestError
 from aistudio_api.domain.models import Candidate, GeneratedImage, ModelOutput
+
+
+SQUARE_PROMPT_SUFFIX = "Use a square 1:1 composition."
 
 
 class FakeImageClient:
@@ -79,6 +86,22 @@ def run_with_runtime(coro):
         runtime_state.rotator = old_rotator
 
 
+def request_app(app: FastAPI, method: str, url: str, **kwargs) -> httpx.Response:
+    async def send() -> httpx.Response:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.request(method, url, **kwargs)
+
+    return asyncio.run(send())
+
+
+def openai_app(client) -> FastAPI:
+    app = FastAPI()
+    app.include_router(openai_router)
+    app.dependency_overrides[get_client] = lambda: client
+    return app
+
+
 def run_stream_with_runtime(coro):
     async def collect():
         response = await coro
@@ -105,6 +128,7 @@ def test_image_generation_runs_n_sequential_calls_and_aggregates_images():
     assert len(client.calls) == 2
     assert all(call["model"] == "gemini-3.1-flash-image-preview" for call in client.calls)
     assert all(call["generation_config_overrides"] == {"output_image_size": [None, "1K"]} for call in client.calls)
+    assert all(call["prompt"] == f"draw a city\n\n{SQUARE_PROMPT_SUFFIX}" for call in client.calls)
     assert [base64.b64decode(item["b64_json"]) for item in response["data"]] == [b"image-1", b"image-2"]
 
 
@@ -118,6 +142,23 @@ def test_image_generation_rejects_unsupported_size_before_client_call():
     assert error.value.status_code == 400
     assert "256x256" in error.value.detail["message"]
     assert client.calls == []
+
+
+@pytest.mark.parametrize(
+    ("size", "output_image_size"),
+    [("2048x2048", "2K"), ("4096x4096", "4K")],
+)
+def test_image_generation_accepts_pro_high_resolution_sizes(size, output_image_size):
+    client = FakeImageClient()
+    req = ImageRequest(prompt="draw", model="gemini-3-pro-image-preview", size=size)
+
+    response = run_with_runtime(handle_image_generation(req, client))
+
+    assert len(client.calls) == 1
+    assert client.calls[0]["model"] == "gemini-3-pro-image-preview"
+    assert client.calls[0]["generation_config_overrides"] == {"output_image_size": [None, output_image_size]}
+    assert client.calls[0]["prompt"] == f"draw\n\n{SQUARE_PROMPT_SUFFIX}"
+    assert response["data"][0]["b64_json"]
 
 
 def test_image_generation_rejects_non_image_model_before_client_call():
@@ -180,6 +221,50 @@ def test_image_generation_rejects_unknown_response_format_before_client_call():
     assert client.calls == []
 
 
+def test_image_generation_rejects_unsupported_openai_image_fields_before_client_call():
+    client = FakeImageClient()
+    req = ImageRequest(prompt="draw", model="gemini-3.1-flash-image-preview", quality="hd", style="vivid")
+
+    with pytest.raises(HTTPException) as error:
+        run_with_runtime(handle_image_generation(req, client))
+
+    assert error.value.status_code == 400
+    assert "quality" in error.value.detail["message"]
+    assert "style" in error.value.detail["message"]
+    assert client.calls == []
+
+
+def test_image_generation_accepts_compatibility_user_field_without_claiming_effect():
+    client = FakeImageClient()
+    req = ImageRequest(prompt="draw", model="gemini-3.1-flash-image-preview", user="client-trace")
+
+    response = run_with_runtime(handle_image_generation(req, client))
+
+    assert len(client.calls) == 1
+    assert response["data"][0]["b64_json"]
+
+
+def test_image_request_rejects_unknown_extra_fields():
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        ImageRequest.model_validate({"prompt": "draw", "seed": 123})
+
+
+def test_image_generation_route_rejects_unknown_extra_fields_as_bad_request():
+    client = FakeImageClient()
+
+    response = request_app(
+        openai_app(client),
+        "POST",
+        "/v1/images/generations",
+        json={"prompt": "draw", "model": "gemini-3.1-flash-image-preview", "seed": 123},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["type"] == "invalid_request_error"
+    assert "seed" in response.json()["detail"]["message"]
+    assert client.calls == []
+
+
 def test_image_generation_returns_friendly_error_when_no_image_data():
     client = FakeEmptyImageClient()
     req = ImageRequest(prompt="draw", model="gemini-3.1-flash-image-preview")
@@ -213,7 +298,7 @@ def test_chat_completion_with_image_model_returns_markdown_image():
     response = run_with_runtime(handle_chat(req, client))
 
     assert len(client.calls) == 1
-    assert client.calls[0]["prompt"] == "draw a city"
+    assert client.calls[0]["prompt"] == f"draw a city\n\n{SQUARE_PROMPT_SUFFIX}"
     content = response["choices"][0]["message"]["content"]
     assert content == "![generated image 1](data:image/png;base64,aW1hZ2UtMQ==)"
 

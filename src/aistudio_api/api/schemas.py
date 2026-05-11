@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from aistudio_api.config import DEFAULT_IMAGE_MODEL, DEFAULT_TEXT_MODEL
 
@@ -52,11 +52,21 @@ class ChatRequest(BaseModel):
 
 
 class ImageRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     prompt: str
     model: str = DEFAULT_IMAGE_MODEL
     n: int = 1
     size: str = "1024x1024"
     response_format: str | None = "b64_json"
+    quality: Optional[str] = None
+    style: Optional[str] = None
+    background: Optional[str] = None
+    moderation: Optional[str] = None
+    output_compression: Optional[int] = None
+    output_format: Optional[str] = None
+    partial_images: Optional[int] = None
+    user: Optional[str] = None
 
 
 class ImageUrl(BaseModel):

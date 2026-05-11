@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from typing import Any
 
-from aistudio_api.application.api_service import handle_chat, handle_image_generation, handle_messages, handle_openai_responses
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
+
+from aistudio_api.application.api_service import handle_chat, handle_image_generation, handle_messages, handle_openai_responses, parse_image_request
 from aistudio_api.domain.model_capabilities import get_model_metadata, list_model_metadata
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
 
 from .dependencies import get_client
-from .schemas import ChatRequest, ImageRequest
+from .schemas import ChatRequest
 
 router = APIRouter()
 
@@ -43,6 +45,7 @@ async def messages(req: dict, client: AIStudioClient = Depends(get_client)):
 
 
 @router.post("/v1/images/generations")
-async def image_generations(req: ImageRequest, client: AIStudioClient = Depends(get_client)):
+async def image_generations(req: Any = Body(...), client: AIStudioClient = Depends(get_client)):
+    req = parse_image_request(req)
     return await handle_image_generation(req, client)
 

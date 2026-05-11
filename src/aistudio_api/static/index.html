@@ -145,7 +145,7 @@
                   <div class="cselect-btn" @click="toggleSelect('imageModel',$event)" tabindex="0"><span x-text="imageModel||'选择模型'"></span><span class="arrow"></span></div>
                   <div class="cselect-menu">
                     <template x-for="m in imageModels" :key="m.id"><div class="cselect-opt" :class="{active:imageModel===m.id}" @click="selectImageModel(m.id)" x-text="m.id"></div></template>
-                    <div class="cselect-opt" x-show="!imageModels.length">暂无图像模型</div>
+                    <div class="cselect-opt" aria-disabled="true" x-show="!imageModels.length">暂无图像模型</div>
                   </div>
                 </div>
               </div>
@@ -160,7 +160,13 @@
               </div>
               <div class="image-control image-count-control">
                 <div class="control-label">数量</div>
-                <input class="image-count" type="number" min="1" max="10" step="1" x-model.number="imageCount" @change="normalizeImageCount()">
+                <input class="image-count" type="number" :min="imageCountMin" :max="imageCountMax" step="1" x-model.number="imageCount" @change="normalizeImageCount()">
+                <div class="control-hint" x-text="imageCountHint"></div>
+              </div>
+              <div class="image-control">
+                <div class="control-label">响应格式</div>
+                <div class="image-param-value" x-text="imageResponseFormat"></div>
+                <div class="control-hint" x-text="imageFormatLabel"></div>
               </div>
             </div>
             <div class="notice notice-error" x-show="modelError" x-text="modelError" x-cloak></div>

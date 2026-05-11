@@ -41,11 +41,32 @@ def test_static_frontend_exposes_image_upload_and_generation_page():
     assert "selectedCaps.image_input" in app_js
     assert "selectImageModel(m.id)" in index_html
     assert "x-model.number=\"imageCount\"" in index_html
+    assert ":min=\"imageCountMin\"" in index_html
+    assert ":max=\"imageCountMax\"" in index_html
+    assert "imageCountHint" in index_html
+    assert "imageResponseFormat" in index_html
+    assert "imageGenerationMeta" in app_js
+    assert "response_format:this.imageResponseFormat" in app_js
     assert "x-text=\"imageSize\"" in index_html
     assert "/v1/images/generations" in app_js
-    assert "response_format:'url'" in app_js
     assert "retryLastImage()" in index_html
     assert "downloadImage(item)" in index_html
     assert "retryImage(item)" in index_html
     assert "localStorage.getItem('aistudio.imageHistory')" in app_js
     assert "clearImageHistory()" in index_html
+
+
+def test_static_frontend_custom_select_supports_keyboard_and_scrollable_image_menu():
+    app_js = (ROOT / "src" / "aistudio_api" / "static" / "app.js").read_text(encoding="utf-8")
+    index_html = (ROOT / "src" / "aistudio_api" / "static" / "index.html").read_text(encoding="utf-8")
+    style_css = (ROOT / "src" / "aistudio_api" / "static" / "style.css").read_text(encoding="utf-8")
+
+    assert "handleSelectKeydown" in app_js
+    assert "ArrowDown" in app_js
+    assert "Spacebar" in app_js
+    assert "scrollIntoView({block:'nearest'})" in app_js
+    assert "x-for=\"s in imageSizes\"" in index_html
+    assert "aria-disabled=\"true\" x-show=\"!imageModels.length\"" in index_html
+    assert "overscroll-behavior:contain" in style_css
+    assert ".cselect-opt:hover,.cselect-opt.highlighted" in style_css
+    assert ".image-form-panel{grid-row:span 2;position:sticky;top:20px;overflow:visible" in style_css

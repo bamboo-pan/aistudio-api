@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/index.md","reason":"Verify implementation against backend/API/static frontend conventions."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Verify tests and quality gates for this change."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Verify unsupported image parameters use clear and consistent API errors."}
+{"file":".trellis/tasks/05-11-image-params-dropdown-fix/research/pro-image-resolution-probe.md","reason":"Verify pro image 2K/4K support matches the real-account probe and remains model-specific."}

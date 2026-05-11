@@ -387,7 +387,9 @@ await client.warmup()
 ### 2. Signatures
 
 - `POST /v1/images/generations` with `ImageRequest` fields `prompt`, `model`,
-	`n`, `size`, and optional `response_format`.
+	`n`, `size`, optional `response_format`, and declared OpenAI compatibility
+	fields such as `quality`, `style`, `user`, `background`, `moderation`,
+	`output_compression`, and `output_format`.
 - `POST /v1/chat/completions` with an image-output model should route image
 	generation semantics instead of failing because chat-only streaming is enabled.
 - `GET /v1/models` and `GET /v1/models/{model}` expose image-generation
@@ -407,8 +409,24 @@ await client.warmup()
 - OpenAI-compatible public sizes must map to AI Studio's accepted wire values.
 	For 1024-based sizes such as `1024x1024`, `1024x1792`, and `1792x1024`, send
 	`output_image_size` as `1K`, not raw `1024`.
+- Image size capability is model-specific. Do not share a single size list across
+	all image-output models when real probes show different limits. In particular,
+	`gemini-3.1-flash-image-preview` stays on the verified 512/1K sizes, while
+	`gemini-3-pro-image-preview` may advertise and accept verified 2K/4K public
+	sizes that map to `output_image_size` values `2K` and `4K`.
+- Public square sizes should add a square prompt suffix such as
+	`Use a square 1:1 composition.` before replay, because AI Studio's
+	`output_image_size` token alone does not guarantee the requested aspect ratio.
 - Unsupported image sizes remain hard validation errors because silently changing
 	aspect ratio or resolution changes user intent.
+- Image-generation metadata must describe the actual supported contract, not just
+	the default request shape. Include supported `sizes`, `response_formats`, the
+	`n` minimum/maximum/default, default `size` and `response_format`, explicit
+	unsupported fields, and ignored compatibility fields.
+- OpenAI compatibility fields that do not change AI Studio output must not be
+	silently treated as supported. Either reject them before gateway calls or list
+	them as explicitly ignored when their value is only for client-side tracking
+	(for example `user`).
 
 ### 4. Validation & Error Matrix
 
@@ -416,6 +434,15 @@ await client.warmup()
 - `n > 10` -> `400` before any gateway call.
 - Unsupported image size -> `400` before any gateway call and include supported
 	sizes or the rejected size in the message.
+- Pro-only sizes such as `2048x2048` or `4096x4096` on
+	`gemini-3.1-flash-image-preview` -> `400` before any gateway call.
+- Unsupported effect/output fields such as `quality`, `style`, `background`,
+	`moderation`, `output_compression`, or `output_format` -> `400` before any
+	gateway call, with the field names in the message.
+- Ignored compatibility fields such as `user` -> accepted without changing image
+	generation output and documented in model metadata.
+- Unknown extra fields -> `400` validation error; do not silently accept fields
+	that are neither implemented nor documented as ignored.
 - Non-image model used for image generation -> `400` with a model capability
 	message.
 - `response_format=url` -> compatible image response, not a format-only `400`.
@@ -429,8 +456,18 @@ await client.warmup()
 	image payload without extra user configuration.
 - Base: Existing callers send `response_format=b64_json`; response shape remains
 	unchanged.
+- Base: Clients send `user` for OpenAI request tracking; the backend accepts it
+	but does not send it to AI Studio, and `/v1/models` marks it as ignored.
+- Base: `gemini-3-pro-image-preview` accepts verified 2K/4K sizes such as
+	`2048x2048` and `4096x4096`, appends the aspect-ratio prompt suffix, and maps
+	them to `output_image_size` tokens `2K` and `4K`.
 - Bad: Reject `response_format=url` solely because the gateway internally stores
 	image bytes instead of public URLs.
+- Bad: Advertise pro-only 2K/4K sizes on `gemini-3.1-flash-image-preview`, or
+	accept a square public size while letting AI Studio return an unintended
+	landscape/portrait aspect ratio.
+- Bad: Accept `style=vivid` or `quality=hd` and then ignore it without metadata or
+	a validation error.
 
 ### 6. Tests Required
 
@@ -442,7 +479,16 @@ await client.warmup()
 - Unit-test unsupported size still fails before any client/gateway call.
 - Unit-test supported public sizes map to AI Studio-accepted `output_image_size`
 	values such as `512` and `1K`.
+- Unit-test model-specific image size capabilities: flash image must reject
+	pro-only 2K/4K sizes, and pro image must map verified high-resolution sizes to
+	`2K`/`4K` wire tokens.
+- Unit-test square public image sizes add a square aspect-ratio prompt suffix
+	before gateway calls.
 - Unit-test model metadata advertises the supported image response formats.
+- Unit-test model metadata advertises image parameter defaults, ranges/enums,
+	unsupported fields, ignored fields, and every public supported size.
+- Unit-test unsupported image parameters fail before fake client/gateway calls;
+	unit-test ignored fields such as `user` remain accepted.
 
 ### 7. Wrong vs Correct
 
