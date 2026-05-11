@@ -13,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from aistudio_api.config import settings
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent
@@ -21,6 +22,10 @@ log = logging.getLogger("aistudio.session")
 
 AI_STUDIO_URL = "https://aistudio.google.com/prompts/new_chat"
 AI_STUDIO_URL_FALLBACK = "https://aistudio.google.com/app/prompts/new_chat"
+AI_STUDIO_HOST = "aistudio.google.com"
+AI_STUDIO_CHAT_PATH_PREFIXES = ("/prompts/", "/app/prompts/")
+AI_STUDIO_CHAT_READY_TIMEOUT_MS = 90_000
+AI_STUDIO_CHAT_READY_POLL_MS = 1_000
 INSTALL_HOOKS_JS = r"""
 mw:((() => {
     // Verify hooks are actually present on XHR prototype, not just a stale flag
@@ -413,13 +418,25 @@ class BrowserSession:
         return self._ctx
 
     def _new_context_sync(self):
-        if self._auth_file and Path(self._auth_file).exists():
+        if self._auth_file:
+            auth_path = Path(self._auth_file)
+            if not auth_path.exists():
+                raise FileNotFoundError(
+                    f"Browser auth state file is missing: {auth_path}. "
+                    "Activate an account or complete login again before browser preheat/capture."
+                )
             try:
                 return self._browser.new_context(storage_state=self._auth_file)
             except Exception:
                 ctx = self._browser.new_context()
-                self._apply_storage_state_sync(ctx, self._auth_file)
-                return ctx
+                try:
+                    self._apply_storage_state_sync(ctx, self._auth_file)
+                    return ctx
+                except Exception as fallback_exc:
+                    raise RuntimeError(
+                        f"Browser auth state file is invalid: {auth_path}. "
+                        "Activate an account or complete login again before browser preheat/capture."
+                    ) from fallback_exc
         return self._browser.new_context()
 
     def _apply_storage_state_sync(self, ctx, auth_file: str) -> None:
@@ -430,7 +447,8 @@ class BrowserSession:
 
     def _ensure_hook_page_sync(self):
         self._ensure_browser_sync()
-        if "aistudio.google.com" not in (self._hook_page.url or ""):
+        if not self._is_chat_runtime_ready_sync(self._hook_page):
+            log.debug("hook page not chat-ready before install: %s", self._format_chat_runtime_diagnostics_sync(self._hook_page))
             self._goto_aistudio_sync(self._hook_page)
         self._install_hooks_sync(self._hook_page)
         return self._hook_page
@@ -786,46 +804,170 @@ mw:((hash) => {
 
     def _goto_aistudio_sync(self, page) -> None:
         import time as _t
-        last_exc = None
+        last_error = None
         for url in (AI_STUDIO_URL, AI_STUDIO_URL_FALLBACK):
+            route_started_at = _t.time()
+            goto_error = None
             try:
-                _t0 = _t.time()
                 page.goto(url, wait_until="networkidle", timeout=30000)
-                log.debug(f"[timing] goto {url} took {_t.time()-_t0:.1f}s")
-                # Wait for SPA framework and chat UI to render
-                for _ in range(60):
-                    page.wait_for_timeout(1000)
-                    has_dms = page.evaluate("mw:!!window.default_MakerSuite")
-                    has_textarea = page.query_selector("textarea") is not None
-                    if has_dms and has_textarea:
-                        log.debug(f"[timing] UI ready (dms+textarea) after {_t.time()-_t0:.1f}s", flush=True)
-                        return
-                    if has_dms and _ > 20:
-                        page.evaluate(DIALOG_CLEANUP_JS)
-                log.debug(f"[timing] UI partially ready after {_t.time()-_t0:.1f}s (dms={has_dms}, textarea={has_textarea})", flush=True)
-                return
+                log.debug(f"[timing] goto {url} took {_t.time()-route_started_at:.1f}s")
             except Exception as exc:
-                log.debug(f"[timing] goto {url} failed after {_t.time()-_t0:.1f}s: {exc}")
-                last_exc = exc
-        if last_exc is not None:
-            raise last_exc
+                goto_error = exc
+                last_error = exc
+                log.debug(f"[timing] goto {url} failed after {_t.time()-route_started_at:.1f}s: {exc}")
+
+            current_url = getattr(page, "url", "")
+            if self._is_google_signin_url(current_url):
+                diagnostics = self._format_chat_runtime_diagnostics_sync(page)
+                auth_state = self._format_auth_state_diagnostics()
+                raise RuntimeError(
+                    f"AI Studio redirected to Google sign-in after navigating to {url}; "
+                    f"browser auth state is missing or invalid ({auth_state}). "
+                    f"Activate an account or complete login again. {diagnostics}"
+                )
+
+            if goto_error is not None and not self._is_aistudio_url(current_url):
+                continue
+
+            if self._wait_for_chat_runtime_sync(page):
+                log.debug(f"[timing] UI ready (dms+textarea) after {_t.time()-route_started_at:.1f}s")
+                return
+
+            diagnostics = self._format_chat_runtime_diagnostics_sync(page)
+            last_error = RuntimeError(f"AI Studio chat runtime not ready after navigating to {url}: {diagnostics}")
+            log.debug("[timing] UI not ready after %.1fs: %s", _t.time() - route_started_at, diagnostics)
+        if last_error is not None:
+            raise last_error
+
+    def _is_aistudio_url(self, url: str | None) -> bool:
+        try:
+            parsed = urlparse(url or "")
+        except Exception:
+            return False
+        return parsed.hostname == AI_STUDIO_HOST
+
+    def _is_google_signin_url(self, url: str | None) -> bool:
+        try:
+            parsed = urlparse(url or "")
+        except Exception:
+            return False
+        return parsed.hostname == "accounts.google.com" and "/signin" in (parsed.path or "")
+
+    def _format_auth_state_diagnostics(self) -> str:
+        if not self._auth_file:
+            return "auth_file=<none>"
+        auth_path = Path(self._auth_file)
+        return f"auth_file={auth_path}, exists={auth_path.exists()}"
+
+    def _is_aistudio_chat_url(self, url: str | None) -> bool:
+        try:
+            parsed = urlparse(url or "")
+        except Exception:
+            return False
+        if parsed.hostname != AI_STUDIO_HOST:
+            return False
+        return any((parsed.path or "").startswith(prefix) for prefix in AI_STUDIO_CHAT_PATH_PREFIXES)
+
+    def _chat_runtime_state_sync(self, page, *, include_details: bool = False) -> dict[str, Any]:
+        errors: list[str] = []
+        try:
+            url = page.url or ""
+        except Exception as exc:
+            url = ""
+            errors.append(f"url={exc}")
+
+        state: dict[str, Any] = {
+            "url": url,
+            "is_chat_route": self._is_aistudio_chat_url(url),
+            "has_default_MakerSuite": False,
+            "has_textarea": False,
+            "title": "",
+            "body": "",
+            "errors": errors,
+        }
+
+        try:
+            state["has_default_MakerSuite"] = bool(page.evaluate("mw:!!window.default_MakerSuite"))
+        except Exception as exc:
+            errors.append(f"default_MakerSuite={exc}")
+
+        try:
+            state["has_textarea"] = page.query_selector("textarea") is not None
+        except Exception as exc:
+            errors.append(f"textarea={exc}")
+
+        if include_details:
+            try:
+                state["title"] = page.title()
+            except Exception as exc:
+                errors.append(f"title={exc}")
+            try:
+                state["body"] = page.evaluate("() => document.body?.innerText?.substring(0, 500) || ''")
+            except Exception as exc:
+                errors.append(f"body={exc}")
+
+        return state
+
+    def _is_chat_runtime_ready_sync(self, page) -> bool:
+        state = self._chat_runtime_state_sync(page)
+        return bool(state["is_chat_route"] and state["has_default_MakerSuite"] and state["has_textarea"])
+
+    def _wait_for_chat_runtime_sync(self, page) -> bool:
+        attempts = max(1, AI_STUDIO_CHAT_READY_TIMEOUT_MS // AI_STUDIO_CHAT_READY_POLL_MS)
+        for attempt_index in range(attempts):
+            state = self._chat_runtime_state_sync(page)
+            if state["is_chat_route"] and state["has_default_MakerSuite"] and state["has_textarea"]:
+                return True
+            if state["has_default_MakerSuite"] and attempt_index >= 20:
+                try:
+                    page.evaluate(DIALOG_CLEANUP_JS)
+                except Exception:
+                    pass
+            page.wait_for_timeout(AI_STUDIO_CHAT_READY_POLL_MS)
+
+        return self._is_chat_runtime_ready_sync(page)
+
+    def _format_chat_runtime_diagnostics_sync(self, page) -> str:
+        state = self._chat_runtime_state_sync(page, include_details=True)
+        body = str(state.get("body") or "").replace("\n", " ")[:300]
+        parts = [
+            f"url={state.get('url') or '<unknown>'}",
+            f"title={state.get('title') or '<unknown>'}",
+            f"chat_route={state.get('is_chat_route')}",
+            f"default_MakerSuite={state.get('has_default_MakerSuite')}",
+            f"textarea={state.get('has_textarea')}",
+            f"body={body or '<empty>'}",
+        ]
+        errors = state.get("errors") or []
+        if errors:
+            parts.append(f"errors={'; '.join(errors)}")
+        return ", ".join(parts)
 
     def _install_hooks_sync(self, page) -> None:
-        result = page.evaluate(INSTALL_HOOKS_JS)
+        try:
+            result = page.evaluate(INSTALL_HOOKS_JS)
+        except Exception as exc:
+            diagnostics = self._format_chat_runtime_diagnostics_sync(page)
+            raise RuntimeError(f"Hook install failed: {exc}; {diagnostics}") from exc
         if result == "already_hooked":
             return
         if isinstance(result, str) and result.startswith("hooked:"):
             self._snap_key = result.split(":", 1)[1]
             return
-        for _ in range(3):
+        for attempt_index in range(3):
             page.wait_for_timeout(2000)
-            result = page.evaluate(INSTALL_HOOKS_JS)
+            try:
+                result = page.evaluate(INSTALL_HOOKS_JS)
+            except Exception as exc:
+                diagnostics = self._format_chat_runtime_diagnostics_sync(page)
+                raise RuntimeError(f"Hook install failed after retry {attempt_index + 1}: {exc}; {diagnostics}") from exc
             if result == "already_hooked":
                 return
             if isinstance(result, str) and result.startswith("hooked:"):
                 self._snap_key = result.split(":", 1)[1]
                 return
-        raise RuntimeError(f"Hook install failed: {result}")
+        diagnostics = self._format_chat_runtime_diagnostics_sync(page)
+        raise RuntimeError(f"Hook install failed: {result}; {diagnostics}")
 
     def _click_run_button_sync(self, page) -> bool:
         try:

@@ -1,0 +1,53 @@
+{
+  "id": "hook-install-no-default-makersuite",
+  "name": "hook-install-no-default-makersuite",
+  "title": "修复 Hook install failed no_default_MakerSuite",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "your-name",
+  "assignee": "your-name",
+  "createdAt": "2026-05-11",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "prd_status": "override",
+    "workflow": {
+      "version": 1,
+      "current_step": "awaiting_commit",
+      "vcs": {
+        "kind": "git",
+        "commit_required": true
+      },
+      "implement": {
+        "dispatched_at": "2026-05-11T00:22:41Z",
+        "completed_at": "2026-05-11T00:22:41Z"
+      },
+      "check": {
+        "completed_at": "2026-05-11T01:28:18Z",
+        "fingerprint": "723df6d06ee14c4c45789be7f8cacefbed72ae5554fbdfcacf9f97d02ee3c5e5",
+        "head": "3b2843d5724af914847b0abea2bc826d59c426e7"
+      },
+      "spec_update": {
+        "reviewed_at": "2026-05-11T00:22:41Z",
+        "result": "updated"
+      },
+      "commit": {
+        "hash": null,
+        "recorded_at": null
+      }
+    }
+  }
+}

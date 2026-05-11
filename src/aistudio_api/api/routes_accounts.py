@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
 from aistudio_api.api.dependencies import get_account_service, get_runtime_state
+from aistudio_api.infrastructure.account.login_service import LoginStatus
 
 router = APIRouter(prefix="/accounts")
 
@@ -52,11 +53,28 @@ async def login_start(
 async def login_status(
     session_id: str,
     account_service=Depends(get_account_service),
+    runtime_state=Depends(get_runtime_state),
 ):
     """查询登录状态。"""
     session = account_service.get_login_status(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="登录会话不存在")
+    if session.status == LoginStatus.COMPLETED and session.account_id and not session.auth_activated:
+        browser_session = runtime_state.client._session if runtime_state.client else None
+        if browser_session is not None:
+            account = await account_service.activate_account(
+                session.account_id,
+                browser_session,
+                runtime_state.snapshot_cache,
+                runtime_state.busy_lock,
+            )
+            if account is None:
+                session.status = LoginStatus.FAILED
+                session.error = "登录已保存，但切换浏览器认证状态失败"
+            else:
+                session.auth_activated = True
+        else:
+            session.auth_activated = True
     return LoginStatusResponse(
         session_id=session.session_id,
         status=session.status.value,

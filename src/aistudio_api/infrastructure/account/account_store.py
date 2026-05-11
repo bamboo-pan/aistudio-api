@@ -216,8 +216,7 @@ class AccountStore:
         # 更新注册表
         registry = self._load_registry()
         registry.accounts[account_id] = meta
-        if registry.active_account_id is None:
-            registry.active_account_id = account_id
+        registry.active_account_id = account_id
         self._save_registry(registry)
         return meta
 

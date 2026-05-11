@@ -29,6 +29,7 @@ class LoginSession:
     account_id: str | None = None
     email: str | None = None
     error: str | None = None
+    auth_activated: bool = False
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 

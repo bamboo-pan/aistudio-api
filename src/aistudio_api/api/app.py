@@ -50,6 +50,14 @@ async def lifespan(app: FastAPI):
     account_service = AccountService(account_store, login_service)
     runtime_state.account_service = account_service
 
+    active_auth_path = account_store.get_active_auth_path()
+    if active_auth_path is not None:
+        await client.switch_auth(str(active_auth_path))
+        if active_auth_path.exists():
+            logger.info("Loaded active account auth state: %s", active_auth_path)
+        else:
+            logger.warning("Active account auth state file is missing: %s", active_auth_path)
+
     # 初始化账号轮询器
     rotation_mode = getattr(settings, "account_rotation_mode", "round_robin")
     cooldown = getattr(settings, "account_cooldown_seconds", 60)
