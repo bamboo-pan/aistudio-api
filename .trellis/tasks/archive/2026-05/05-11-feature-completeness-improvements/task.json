@@ -3,7 +3,7 @@
   "name": "feature-completeness-improvements",
   "title": "功能完整性改进",
   "description": "",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "your-name",
   "assignee": "your-name",
   "createdAt": "2026-05-11",
-  "completedAt": null,
+  "completedAt": "2026-05-12",
   "branch": null,
   "base_branch": "master",
   "worktree_path": null,
@@ -26,7 +26,7 @@
     "prd_status": "confirmed",
     "workflow": {
       "version": 1,
-      "current_step": "awaiting_commit",
+      "current_step": "ready_to_finish",
       "vcs": {
         "kind": "git",
         "commit_required": true
@@ -36,17 +36,17 @@
         "completed_at": "2026-05-11T04:10:32Z"
       },
       "check": {
-        "completed_at": "2026-05-11T04:10:32Z",
-        "fingerprint": "30c7b3be3ae6078b33a93187ccedc7b579e4d89b55626630a2c72f0fef0a80bc",
-        "head": "8ab49f229d1d32308fdfe28c894270eaf5a28bb1"
+        "completed_at": "2026-05-11T23:33:59Z",
+        "fingerprint": "995f6933e264146237603fccaba63723ecb6c0bf0893cf6e7f1e510bbaff5816",
+        "head": "d92b3d1a38c1085f29379bac8bfc2f86dd01bbea"
       },
       "spec_update": {
         "reviewed_at": "2026-05-11T04:10:33Z",
         "result": "updated"
       },
       "commit": {
-        "hash": null,
-        "recorded_at": null
+        "hash": "d92b3d1a38c1085f29379bac8bfc2f86dd01bbea",
+        "recorded_at": "2026-05-11T23:34:00Z"
       }
     }
   }
