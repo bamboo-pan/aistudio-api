@@ -17,6 +17,7 @@ Self-hosted OpenAI-compatible API proxy for Google AI Studio. No API key needed 
 - **Anti-detection** — Camoufox (anti-fingerprint Firefox) to avoid bot detection
 - **BotGuard** — auto-detects snapshot function via runtime feature matching (survives bundle updates)
 - **Multi-account** — round-robin / LRU / least-rate-limited rotation
+- **Credential import/export** — WebUI and backend APIs for project backup packages and single-account storage state
 
 ## Quick Start
 
@@ -72,6 +73,17 @@ curl http://localhost:8080/v1/chat/completions \
 
 # List models
 curl http://localhost:8080/v1/models
+
+# Image generation (OpenAI-compatible)
+curl http://localhost:8080/v1/images/generations \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini-3.1-flash-image-preview",
+    "prompt": "Draw a neon city in the rain",
+    "n": 2,
+    "size": "1024x1024",
+    "response_format": "b64_json"
+  }'
 ```
 
 ### Gemini-native API
@@ -119,31 +131,20 @@ python3 main.py client "Draw a cat" --image --save cat.png
 
 | Model | ID | Default Google Search | Notes |
 |-------|----|----------------------|-------|
-| Gemma 4 31B | `gemma-4-31b-it` | ❌ | Default text model |
+| Gemma 4 31B | `gemma-4-31b-it` | ✅ | Default text model |
 | Gemma 4 26B A4B | `gemma-4-26b-a4b-it` | ✅ | MoE, 4B active |
 | Gemini 3 Flash | `gemini-3-flash-preview` | ❌ | Fast |
 | Gemini 3.1 Pro | `gemini-3.1-pro-preview` | ❌ | |
 | Gemini 3.1 Flash Lite | `gemini-3.1-flash-lite` | ❌ | |
-| Gemini 3.1 Flash Image | `gemini-3.1-flash-image-preview` | ❌ | Default image model |
+| Gemini 3.1 Flash Image | `gemini-3.1-flash-image-preview` | ❌ | Default image model, Pro/Ultra |
 | Gemini 3 Pro Image | `gemini-3-pro-image-preview` | ❌ | |
 | Gemini 3.1 Flash Live | `gemini-3.1-flash-live-preview` | ❌ | Real-time conversation |
 | Gemini 3.1 Flash TTS | `gemini-3.1-flash-tts-preview` | ❌ | Text-to-speech |
-| Gemini 2.5 Pro | `gemini-2.5-pro` | ❌ | |
-| Gemini 2.5 Flash | `gemini-2.5-flash` | ❌ | |
-| Gemini 2.5 Flash Lite | `gemini-2.5-flash-lite` | ❌ | |
-| Gemini 2.5 Flash Image | `gemini-2.5-flash-image` | ❌ | |
-| Gemini 2.0 Flash Lite | `gemini-2.0-flash-lite` | ❌ | |
-| Deep Research | `deep-research-preview-04-2026` | ❌ | |
-| Deep Research Max | `deep-research-max-preview-04-2026` | ❌ | |
-| Imagen 4 | `imagen-4.0-generate-001` | ❌ | Image generation |
-| Imagen 4 Ultra | `imagen-4.0-ultra-generate-001` | ❌ | |
-| Imagen 4 Fast | `imagen-4.0-fast-generate-001` | ❌ | |
-| Veo 3.1 | `veo-3.1-generate-preview` | ❌ | Video generation |
-| Veo 2 | `veo-2.0-generate-001` | ❌ | |
-| Lyria 3 | `lyria-3-pro-preview` | ❌ | Music generation |
-| Robotics ER | `gemini-robotics-er-1.6-preview` | ❌ | Robotics |
+| Gemini Pro Latest | `gemini-pro-latest` | ❌ | Alias |
+| Gemini Flash Latest | `gemini-flash-latest` | ❌ | Alias |
+| Gemini Flash Lite Latest | `gemini-flash-lite-latest` | ❌ | Alias |
 
-All models have thinking enabled by default (streaming `thinking` field). Gemma 4 26B A4B has Google Search enabled by default.
+`/v1/models` returns capability metadata for every registered model. `/v1/images/generations` supports `b64_json` and also accepts client requests for `response_format=url` by returning a data URL plus base64 fallback. It validates `size` through model metadata and returns 400 for unsupported model/size combinations. When `/v1/chat/completions` is called with an image model, the server uses image-generation semantics and ignores incompatible `stream=true` requests.
 
 ## Configuration
 
@@ -219,6 +220,25 @@ Rotation modes:
 - `round_robin` — cycle through accounts
 - `lru` — least recently used
 - `least_rl` — least rate-limited
+
+### Credential Import / Export
+
+The account-management WebUI includes credential import and export controls. Exported JSON is a project backup package containing account metadata, `auth.json` / Playwright storage state, and a sensitive-data warning. Backend APIs are also available:
+
+```bash
+# Export all accounts
+curl http://localhost:8080/accounts/export > credentials.backup.json
+
+# Export one account
+curl http://localhost:8080/accounts/acc_xxxxxxxx/export > one-account.backup.json
+
+# Import a project backup package or single-account auth.json / storage state
+curl http://localhost:8080/accounts/import \
+  -H "Content-Type: application/json" \
+  --data-binary @credentials.backup.json
+```
+
+Backup files contain cookies and tokens that may grant account access. Store them only in trusted locations and do not share them.
 
 ## Development
 

@@ -109,6 +109,15 @@ select.sel:focus,.sel:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(
 .table-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .delete-confirm{display:flex;flex-direction:column;gap:8px;min-width:190px}
 .confirm-text{font-size:13px;color:#991b1b;line-height:1.4;word-break:break-word}
+.credential-box{padding:20px;display:flex;flex-direction:column;gap:14px}
+.credential-warning{margin-bottom:2px}
+.credential-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px}
+.credential-panel{display:flex;flex-direction:column;gap:10px;min-width:0}
+.credential-title{font-size:14px;font-weight:600}
+.credential-input,.credential-textarea{width:100%;border:1px solid var(--border);border-radius:8px;font-size:13px;font-family:inherit;outline:none;background:#fff}
+.credential-input{padding:8px 10px}
+.credential-textarea{min-height:150px;resize:vertical;padding:10px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;line-height:1.45;word-break:break-word}
+.credential-input:focus,.credential-textarea:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(16,163,127,.12)}
 
 /* Custom Select */
 .cselect{position:relative;display:inline-block;min-width:100px}

@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend spec index and pre-development checklist for this single-repo task."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Quality conventions and known project patterns for backend implementation."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Relevant to model capability validation, image request errors, and credential import/export failures."}
+{"file":".trellis/spec/backend/directory-structure.md","reason":"Relevant for placing model capability and account import/export code in the existing layers."}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Relevant for sensitive credential warnings and image/account operation logging."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Task introduces a shared model capability registry and should avoid duplicating model metadata."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Task spans API schemas/routes, application services, gateway rewriting, account storage, tests, and minimal WebUI."}

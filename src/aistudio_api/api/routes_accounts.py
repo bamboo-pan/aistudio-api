@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Depends
+import json
+from typing import Any
+
+from fastapi import APIRouter, HTTPException, Depends, Request, Response
 from pydantic import BaseModel
 
 from aistudio_api.api.dependencies import get_account_service, get_runtime_state
@@ -37,6 +40,26 @@ class LoginStatusResponse(BaseModel):
 
 class UpdateAccountRequest(BaseModel):
     name: str
+
+
+class CredentialImportResponse(BaseModel):
+    imported: list[AccountResponse]
+    count: int
+
+
+def _mark_sensitive_response(response: Response) -> None:
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+
+
+def _to_account_response(account) -> AccountResponse:
+    return AccountResponse(
+        id=account.id,
+        name=account.name,
+        email=account.email,
+        created_at=account.created_at,
+        last_used=account.last_used,
+    )
 
 
 @router.post("/login/start", response_model=LoginStartResponse)
@@ -91,13 +114,7 @@ async def list_accounts(
     """列出所有账号。"""
     accounts = account_service.list_accounts()
     return [
-        AccountResponse(
-            id=a.id,
-            name=a.name,
-            email=a.email,
-            created_at=a.created_at,
-            last_used=a.last_used,
-        )
+        _to_account_response(a)
         for a in accounts
     ]
 
@@ -110,12 +127,66 @@ async def get_active_account(
     account = account_service.get_active_account()
     if account is None:
         raise HTTPException(status_code=404, detail="没有活跃账号")
-    return AccountResponse(
-        id=account.id,
-        name=account.name,
-        email=account.email,
-        created_at=account.created_at,
-        last_used=account.last_used,
+    return _to_account_response(account)
+
+
+@router.get("/export")
+async def export_all_credentials(
+    response: Response,
+    account_service=Depends(get_account_service),
+) -> dict[str, Any]:
+    """导出所有账号凭证备份包。"""
+    _mark_sensitive_response(response)
+    try:
+        return account_service.export_credentials()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=400, detail=f"账号 {exc} 缺少 auth.json，无法导出") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/{account_id}/export")
+async def export_account_credentials(
+    account_id: str,
+    response: Response,
+    account_service=Depends(get_account_service),
+) -> dict[str, Any]:
+    """导出单个账号凭证备份包。"""
+    _mark_sensitive_response(response)
+    try:
+        return account_service.export_credentials(account_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="账号不存在") from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=400, detail=f"账号 {exc} 缺少 auth.json，无法导出") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/import", response_model=CredentialImportResponse)
+async def import_credentials(
+    request: Request,
+    name: str | None = None,
+    activate: bool = True,
+    account_service=Depends(get_account_service),
+):
+    """导入凭证备份包或单账号 Playwright storage state。"""
+    try:
+        payload = await request.json()
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="无效的 JSON 凭证内容") from exc
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="凭证内容必须是 JSON 对象")
+
+    try:
+        imported = account_service.import_credentials(payload, name=name, activate=activate)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return CredentialImportResponse(
+        imported=[_to_account_response(account) for account in imported],
+        count=len(imported),
     )
 
 
@@ -139,13 +210,7 @@ async def activate_account(
     )
     if account is None:
         raise HTTPException(status_code=404, detail="账号不存在或切换失败")
-    return AccountResponse(
-        id=account.id,
-        name=account.name,
-        email=account.email,
-        created_at=account.created_at,
-        last_used=account.last_used,
-    )
+    return _to_account_response(account)
 
 
 @router.delete("/{account_id}")
@@ -170,10 +235,4 @@ async def update_account(
     account = account_service.update_account(account_id, req.name)
     if account is None:
         raise HTTPException(status_code=404, detail="账号不存在")
-    return AccountResponse(
-        id=account.id,
-        name=account.name,
-        email=account.email,
-        created_at=account.created_at,
-        last_used=account.last_used,
-    )
+    return _to_account_response(account)

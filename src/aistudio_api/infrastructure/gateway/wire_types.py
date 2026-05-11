@@ -155,6 +155,15 @@ class AistudioGenerationConfig:
         self._ensure_len(18)
         self.values[17] = value
 
+    @property
+    def output_image_size(self):
+        return self.values[26] if len(self.values) > 26 else None
+
+    @output_image_size.setter
+    def output_image_size(self, value):
+        self._ensure_len(27)
+        self.values[26] = value
+
     def clear_gemma_thinking_budget(self):
         if len(self.values) > 16:
             self.values[16] = None

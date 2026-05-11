@@ -8,6 +8,7 @@ import mimetypes
 from dataclasses import replace
 
 from aistudio_api.config import DEFAULT_TEXT_MODEL
+from aistudio_api.domain.model_capabilities import get_model_capabilities, unsupported_generation_fields_for
 
 from .wire_types import AistudioContent, AistudioGenerationConfig, AistudioPart, AistudioRequest
 
@@ -98,9 +99,11 @@ class AistudioWireCodec:
         generation_config_overrides: dict | None = None,
         sanitize_plain_text: bool = True,
         safety_off: bool = False,
+        enable_thinking: bool = True,
     ) -> str:
         request = self.decode(original_body)
         request.model = model
+        capabilities = get_model_capabilities(model)
         if snapshot is not None:
             request.snapshot = snapshot
 
@@ -130,21 +133,37 @@ class AistudioWireCodec:
             if value is None or not hasattr(request.generation_config, attr):
                 continue
             setattr(request.generation_config, attr, value)
-        request.generation_config.enable_default_thinking()
 
         # OpenAI chat compatibility should not inherit browser-side structured output
         # or explicit reasoning settings from a previously captured AI Studio request.
-        if sanitize_plain_text and "image" not in model.lower():
+        if sanitize_plain_text and not capabilities.image_output:
             request.generation_config.sanitize_for_plain_text()
+
+        if enable_thinking and capabilities.thinking:
             request.generation_config.enable_default_thinking()
+        else:
+            request.generation_config.thinking_config = None
+            request.generation_config.request_flag = None
+
+        self._sanitize_request_for_model(request, model)
 
         if safety_off:
             request.safety_settings = [[None, None, cat, 4] for cat in [7, 8, 9, 10]]
 
-        if "image" not in model.lower():
+        if not capabilities.image_output:
             request.tools = tools if tools else None
+        else:
+            request.tools = None
 
         return self.encode(request)
+
+    def _sanitize_request_for_model(self, request: AistudioRequest, model: str) -> None:
+        config = request.generation_config
+        for attr in unsupported_generation_fields_for(model):
+            if hasattr(config, attr):
+                setattr(config, attr, None)
+            if attr == "request_flag":
+                request.request_flag = None
 
     def _build_user_content(self, prompt: str, images: list[str] | None) -> AistudioContent:
         parts = []
@@ -224,6 +243,7 @@ def modify_body(
     generation_config_overrides: dict | None = None,
     sanitize_plain_text: bool = True,
     safety_off: bool = False,
+    enable_thinking: bool = True,
 ) -> str:
     return _codec.rewrite(
         original_body=original_body,
@@ -242,4 +262,5 @@ def modify_body(
         generation_config_overrides=generation_config_overrides,
         sanitize_plain_text=sanitize_plain_text,
         safety_off=safety_off,
+        enable_thinking=enable_thinking,
     )

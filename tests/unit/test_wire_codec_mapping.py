@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_decode_image_request_maps_generation_config_fields_from_proto_indexes():
     codec = AistudioWireCodec()
-    raw = (ROOT / "test-image-input.json").read_text()
+    raw = (ROOT / "test-image-input.json").read_text(encoding="utf-8")
 
     request = codec.decode(raw)
 
@@ -27,7 +27,7 @@ def test_decode_image_request_maps_generation_config_fields_from_proto_indexes()
 
 def test_encode_preserves_newly_mapped_proto_fields():
     codec = AistudioWireCodec()
-    raw = (ROOT / "test-image-input.json").read_text()
+    raw = (ROOT / "test-image-input.json").read_text(encoding="utf-8")
 
     request = codec.decode(raw)
     encoded = codec.encode(request)

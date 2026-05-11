@@ -1,0 +1,5 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend package index and pre-development checklist"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Error response and validation conventions for API compatibility"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend quality bar for focused implementation"}
+{"file": ".trellis/tasks/05-11-image-generation-client-compat/research/image-client-compat.md", "reason": "Client compatibility findings for image generation requests"}

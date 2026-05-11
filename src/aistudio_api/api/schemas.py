@@ -40,6 +40,9 @@ class ChatRequest(BaseModel):
     top_k: Optional[int] = None
     max_tokens: Optional[int] = None
     tools: Optional[list[OpenAITool]] = None
+    thinking: Optional[str | bool] = None
+    grounding: Optional[bool] = None
+    safety_off: Optional[bool] = None
     stream_options: "StreamOptions | None" = None
 
 
@@ -52,6 +55,7 @@ class ImageRequest(BaseModel):
     model: str = DEFAULT_IMAGE_MODEL
     n: int = 1
     size: str = "1024x1024"
+    response_format: str | None = "b64_json"
 
 
 class ImageUrl(BaseModel):

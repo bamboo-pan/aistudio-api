@@ -17,6 +17,7 @@ Google AIStudio Playgroud 反代，支持 Google 会员（Pro/Ultra），支持 
 - **反检测** — 使用 Camoufox
 - **BotGuard** — 自动特征匹配定位 snapshot 函数
 - **多账号轮询** — round-robin / LRU / 最少限流
+- **账号凭证导入/导出** — WebUI 和后端 API 支持项目备份包与单账号 storage state
 
 ## 快速开始
 
@@ -62,6 +63,17 @@ curl http://localhost:8080/v1/chat/completions \
 
 # 查看模型列表
 curl http://localhost:8080/v1/models
+
+# 生图（OpenAI 兼容）
+curl http://localhost:8080/v1/images/generations \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini-3.1-flash-image-preview",
+    "prompt": "画一座雨夜霓虹城市",
+    "n": 2,
+    "size": "1024x1024",
+    "response_format": "b64_json"
+  }'
 ```
 
 ### Gemini 原生接口
@@ -117,6 +129,8 @@ python3 main.py client "画一只猫" --image --save cat.png
 | Gemini 3.1 Flash Lite | `gemini-3.1-flash-lite` | ❌ | |
 | Gemini 3.1 Flash Image | `gemini-3.1-flash-image-preview` | ❌ | 默认图片模型，仅限 Pro/Ultra |
 | Gemini 3 Pro Image | `gemini-3-pro-image-preview` | ❌ | |
+
+`/v1/models` 会返回每个模型的 `capabilities` 元数据。`/v1/images/generations` 支持 `b64_json`，也兼容客户端请求的 `response_format=url`（返回 data URL 和 base64 兜底），并通过模型能力元数据校验 `size`；不支持的模型或尺寸会返回 400。通过 `/v1/chat/completions` 选择图片模型时，服务端会自动走生图语义并忽略不适用的 `stream=true`。
 
 
 ## 配置
@@ -193,6 +207,25 @@ AISTUDIO_ACCOUNT_ROTATION_MODE=round_robin python3 main.py server
 - `round_robin` — 轮流使用
 - `lru` — 最久未使用
 - `least_rl` — 最少被限流
+
+### 凭证导入 / 导出
+
+账号管理 WebUI 提供凭证导入和导出入口。导出的 JSON 是项目备份包，包含账号元数据、`auth.json` / Playwright storage state 以及敏感数据警告。也可以直接调用后端 API：
+
+```bash
+# 导出全部账号
+curl http://localhost:8080/accounts/export > credentials.backup.json
+
+# 导出单个账号
+curl http://localhost:8080/accounts/acc_xxxxxxxx/export > one-account.backup.json
+
+# 导入项目备份包或单账号 auth.json / storage state
+curl http://localhost:8080/accounts/import \
+  -H "Content-Type: application/json" \
+  --data-binary @credentials.backup.json
+```
+
+备份文件包含可用于登录的 Cookie 和令牌，请只保存在可信位置，不要分享给他人。
 
 ## 开发
 

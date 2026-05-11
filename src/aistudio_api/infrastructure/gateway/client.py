@@ -152,6 +152,8 @@ class AIStudioClient:
         generation_config_overrides: dict | None = None,
         sanitize_plain_text: bool = True,
         force_refresh_capture: bool = False,
+        safety_off: bool = False,
+        enable_thinking: bool = True,
     ):
         captured = await self.capture_request(
             prompt=capture_prompt,
@@ -173,6 +175,8 @@ class AIStudioClient:
             max_tokens=max_tokens,
             generation_config_overrides=generation_config_overrides,
             sanitize_plain_text=sanitize_plain_text,
+            safety_off=safety_off,
+            enable_thinking=enable_thinking,
         ):
             yield event
 
@@ -229,6 +233,8 @@ class AIStudioClient:
         max_tokens: Optional[int] = None,
         generation_config_overrides: dict | None = None,
         sanitize_plain_text: bool = True,
+        safety_off: bool = False,
+        enable_thinking: bool = True,
     ) -> ModelOutput:
         logger.info("拦截请求: %r", f"{capture_prompt[:20]}...")
         captured = await self.capture_request(capture_prompt, model=model, images=capture_images, contents=contents)
@@ -247,6 +253,8 @@ class AIStudioClient:
             max_tokens=max_tokens,
             generation_config_overrides=generation_config_overrides,
             sanitize_plain_text=sanitize_plain_text,
+            safety_off=safety_off,
+            enable_thinking=enable_thinking,
         )
 
         status, raw = await self._replay_service.replay(captured, body=modified_body)
@@ -269,13 +277,21 @@ class AIStudioClient:
         prompt: str,
         model: str = DEFAULT_IMAGE_MODEL,
         save_path: Optional[str] = None,
+        generation_config_overrides: dict | None = None,
     ) -> ModelOutput:
         logger.info("生图请求: %r", f"{prompt[:20]}...")
         captured = await self.capture_request(prompt, model=model)
         if not captured:
             raise RequestError(0, "无法拦截请求")
 
-        modified_body = modify_body(captured.body, model=model, prompt=prompt)
+        modified_body = modify_body(
+            captured.body,
+            model=model,
+            prompt=prompt,
+            generation_config_overrides=generation_config_overrides,
+            sanitize_plain_text=False,
+            enable_thinking=False,
+        )
         status, raw = await self._replay_service.replay(captured, body=modified_body, timeout=120)
         raw_text = raw.decode("utf-8", errors="replace")
         self._dump_raw_exchange(

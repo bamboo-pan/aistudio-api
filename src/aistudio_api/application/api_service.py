@@ -6,14 +6,16 @@ import base64
 import json
 import logging
 import time
+from typing import Any
 
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
 from aistudio_api.application.chat_service import cleanup_files, normalize_chat_request, normalize_gemini_request, normalize_openai_tools
 from aistudio_api.domain.errors import AistudioError, AuthError, RequestError, UsageLimitExceeded
+from aistudio_api.domain.model_capabilities import IMAGE_RESPONSE_FORMATS, get_model_capabilities, plan_image_generation, validate_chat_capabilities
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
-from aistudio_api.infrastructure.gateway.wire_types import AistudioContent, AistudioPart
+from aistudio_api.infrastructure.gateway.wire_types import AistudioContent, AistudioPart, AistudioThinkingConfig, ThinkingLevel
 from aistudio_api.api.responses import (
     chat_completion_response,
     new_chat_id,
@@ -28,6 +30,133 @@ from aistudio_api.api.schemas import ChatRequest, GeminiGenerateContentRequest, 
 from aistudio_api.api.state import runtime_state
 
 logger = logging.getLogger("aistudio.server")
+
+
+THINKING_LEVELS = {
+    "low": ThinkingLevel.LOW,
+    "medium": ThinkingLevel.MEDIUM,
+    "high": ThinkingLevel.HIGH,
+}
+
+
+def _bad_request(message: str) -> HTTPException:
+    return HTTPException(400, detail={"message": message, "type": "bad_request"})
+
+
+def _explicit_thinking_enabled(value: str | bool | None) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    return value.lower() not in ("off", "false", "0", "none")
+
+
+def _thinking_enabled(value: str | bool | None) -> bool:
+    if value is None:
+        return True
+    return _explicit_thinking_enabled(value)
+
+
+def _thinking_overrides(value: str | bool | None) -> dict | None:
+    if value is None or isinstance(value, bool):
+        return None
+    normalized = value.lower()
+    if normalized in ("off", "false", "0", "none"):
+        return None
+    level = THINKING_LEVELS.get(normalized)
+    if level is None:
+        raise ValueError("thinking must be one of: off, low, medium, high")
+    return {"thinking_config": AistudioThinkingConfig(level).to_wire(), "request_flag": 1}
+
+
+def _merge_usage(total: dict, usage: dict | None) -> dict:
+    if not usage:
+        return total
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        value = usage.get(key)
+        if isinstance(value, int):
+            total[key] = total.get(key, 0) + value
+    completion_details = usage.get("completion_tokens_details")
+    if isinstance(completion_details, dict):
+        total_details = total.setdefault("completion_tokens_details", {})
+        for key, value in completion_details.items():
+            if isinstance(value, int):
+                total_details[key] = total_details.get(key, 0) + value
+    return total
+
+
+def _normalize_image_response_format(response_format: str | None) -> str:
+    normalized = (response_format or "b64_json").strip().lower()
+    if normalized not in IMAGE_RESPONSE_FORMATS:
+        supported = ", ".join(IMAGE_RESPONSE_FORMATS)
+        raise ValueError(f"response_format must be one of: {supported}")
+    return normalized
+
+
+def _image_data_url(mime_type: str | None, b64: str) -> str:
+    mime = mime_type or "image/png"
+    return f"data:{mime};base64,{b64}"
+
+
+def _format_image_items(items: list[dict[str, Any]], response_format: str) -> list[dict[str, Any]]:
+    data: list[dict[str, Any]] = []
+    for item in items:
+        if response_format == "url":
+            data.append(
+                {
+                    "url": item["url"],
+                    "b64_json": item["b64_json"],
+                    "revised_prompt": item["revised_prompt"],
+                }
+            )
+        else:
+            data.append({"b64_json": item["b64_json"], "revised_prompt": item["revised_prompt"]})
+    return data
+
+
+def _image_chat_content(data: list[dict[str, Any]]) -> str:
+    lines = []
+    for index, item in enumerate(data, start=1):
+        image_url = item.get("url")
+        if not image_url and item.get("b64_json"):
+            image_url = _image_data_url("image/png", item["b64_json"])
+        if image_url:
+            lines.append(f"![generated image {index}]({image_url})")
+    return "\n\n".join(lines)
+
+
+def _is_image_output_chat_model(model: str) -> bool:
+    try:
+        return get_model_capabilities(model, strict=True).image_output
+    except ValueError:
+        return False
+
+
+def _chat_image_request(req: ChatRequest) -> tuple[ImageRequest, list[str]]:
+    normalized = normalize_chat_request(req.messages, req.model)
+    cleanup_paths = list(normalized["cleanup_paths"])
+    if normalized["capture_images"]:
+        cleanup_files(cleanup_paths)
+        raise ValueError("Image generation through chat completions supports text prompts only")
+    return (
+        ImageRequest(
+            prompt=normalized["capture_prompt"],
+            model=normalized["model"],
+            n=1,
+            size="1024x1024",
+            response_format="url",
+        ),
+        cleanup_paths,
+    )
+
+
+def _validate_image_request(req: ImageRequest):
+    if req.n < 1:
+        raise ValueError("n must be at least 1")
+    if req.n > 10:
+        raise ValueError("n must be 10 or less")
+    response_format = _normalize_image_response_format(req.response_format)
+    return plan_image_generation(req.model, req.size), response_format
 
 
 async def _try_switch_account() -> bool:
@@ -77,12 +206,67 @@ def stats_response() -> dict:
     return {"models": stats, "totals": totals}
 
 
+def _build_chat_image_streaming_response(
+    image_req: ImageRequest,
+    client: AIStudioClient,
+    cleanup_paths: list[str],
+    *,
+    include_usage: bool,
+) -> StreamingResponse:
+    async def stream_response():
+        try:
+            chat_id = new_chat_id()
+            image_response = await handle_image_generation(image_req, client)
+            content = _image_chat_content(image_response["data"])
+            if content:
+                yield sse_chunk(chat_id, image_req.model, content, include_usage=include_usage)
+            yield sse_chunk(chat_id, image_req.model, "", finish="stop", include_usage=include_usage)
+            if include_usage:
+                yield sse_usage_chunk(chat_id, image_req.model)
+            yield "data: [DONE]\n\n"
+        except HTTPException as exc:
+            detail = exc.detail.get("message") if isinstance(exc.detail, dict) else str(exc.detail)
+            yield sse_error(detail)
+        except Exception as exc:
+            logger.error("Chat image stream error: %s", exc, exc_info=True)
+            yield sse_error(str(exc))
+        finally:
+            cleanup_files(cleanup_paths)
+
+    return StreamingResponse(
+        stream_response(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 async def handle_chat(req: ChatRequest, client: AIStudioClient):
     busy_lock = runtime_state.busy_lock
     if busy_lock is None:
         raise HTTPException(503, detail={"message": "Server not ready", "type": "service_unavailable"})
     if busy_lock.locked():
         raise HTTPException(429, detail={"message": "Server is busy", "type": "rate_limit_exceeded"})
+
+    if _is_image_output_chat_model(req.model):
+        cleanup_paths: list[str] = []
+        try:
+            image_req, cleanup_paths = _chat_image_request(req)
+            if req.stream:
+                include_usage = True
+                if req.stream_options is not None:
+                    include_usage = req.stream_options.include_usage
+                return _build_chat_image_streaming_response(image_req, client, cleanup_paths, include_usage=include_usage)
+
+            image_response = await handle_image_generation(image_req, client)
+            return chat_completion_response(
+                model=image_req.model,
+                content=_image_chat_content(image_response["data"]),
+            )
+        except ValueError as exc:
+            raise _bad_request(str(exc)) from exc
+        finally:
+            if not req.stream:
+                cleanup_files(cleanup_paths)
 
     max_retries = 3  # 最多重试次数
     last_error = None
@@ -99,6 +283,17 @@ async def handle_chat(req: ChatRequest, client: AIStudioClient):
             tmp_files = list(normalized["cleanup_paths"])
 
             try:
+                tools = normalize_openai_tools(req.tools)
+                has_image_input = bool(normalized["capture_images"])
+                validate_chat_capabilities(
+                    model,
+                    has_image_input=has_image_input,
+                    uses_tools=bool(req.tools),
+                    uses_search=bool(req.grounding),
+                    uses_thinking=_explicit_thinking_enabled(req.thinking),
+                    stream=req.stream,
+                )
+
                 logger.info(
                     "Chat: model=%s, contents=%s, capture_prompt=%s..., images=%s, stream=%s, attempt=%d",
                     model,
@@ -108,12 +303,19 @@ async def handle_chat(req: ChatRequest, client: AIStudioClient):
                     req.stream,
                     attempt + 1,
                 )
-                tools = normalize_openai_tools(req.tools)
+
+                if req.grounding:
+                    from aistudio_api.infrastructure.gateway.request_rewriter import TOOLS_TEMPLATES
+                    tools = list(tools or [])
+                    tools.append(TOOLS_TEMPLATES["google_search"])
 
                 # Gemma 4 默认开启 Google Search
                 if tools is None and any(m in model for m in ("gemma-4-26b-a4b-it", "gemma-4-31b-it")):
                     from aistudio_api.infrastructure.gateway.request_rewriter import TOOLS_TEMPLATES
                     tools = [TOOLS_TEMPLATES["google_search"]]
+
+                generation_config_overrides = _thinking_overrides(req.thinking)
+                enable_thinking = _thinking_enabled(req.thinking)
 
                 if req.stream:
                     include_usage = True
@@ -133,6 +335,9 @@ async def handle_chat(req: ChatRequest, client: AIStudioClient):
                         top_k=req.top_k,
                         max_tokens=req.max_tokens,
                         tools=tools,
+                        generation_config_overrides=generation_config_overrides,
+                        safety_off=bool(req.safety_off),
+                        enable_thinking=enable_thinking,
                     )
 
                 output = await client.generate_content(
@@ -150,6 +355,9 @@ async def handle_chat(req: ChatRequest, client: AIStudioClient):
                     top_k=req.top_k,
                     max_tokens=req.max_tokens,
                     tools=tools,
+                    generation_config_overrides=generation_config_overrides,
+                    safety_off=bool(req.safety_off),
+                    enable_thinking=enable_thinking,
                     sanitize_plain_text=True,
                 )
 
@@ -186,6 +394,8 @@ async def handle_chat(req: ChatRequest, client: AIStudioClient):
                 else:
                     logger.warning("429 限流，无法切换账号")
                     raise HTTPException(429, detail={"message": str(exc), "type": "rate_limit_exceeded"}) from exc
+            except ValueError as exc:
+                raise _bad_request(str(exc)) from exc
             except AistudioError as exc:
                 runtime_state.record(model, "errors")
                 rotator = runtime_state.rotator
@@ -213,6 +423,11 @@ async def handle_image_generation(req: ImageRequest, client: AIStudioClient):
     if busy_lock.locked():
         raise HTTPException(429, detail={"message": "Server is busy", "type": "rate_limit_exceeded"})
 
+    try:
+        image_plan, response_format = _validate_image_request(req)
+    except ValueError as exc:
+        raise _bad_request(str(exc)) from exc
+
     max_retries = 3
     last_error = None
 
@@ -223,13 +438,32 @@ async def handle_image_generation(req: ImageRequest, client: AIStudioClient):
                 if account_svc and not account_svc.get_active_account():
                     await _try_switch_account()
             try:
-                logger.info("Image: model=%s, prompt=%s..., attempt=%d", req.model, req.prompt[:50], attempt + 1)
-                output = await client.generate_image(prompt=req.prompt, model=req.model)
-
-                data = []
-                for img in output.images:
-                    b64 = base64.b64encode(img.data).decode("ascii")
-                    data.append({"b64_json": b64, "revised_prompt": output.text or ""})
+                logger.info(
+                    "Image: model=%s, size=%s, n=%d, prompt=%s..., attempt=%d",
+                    image_plan.model,
+                    image_plan.size,
+                    req.n,
+                    req.prompt[:50],
+                    attempt + 1,
+                )
+                items: list[dict[str, Any]] = []
+                usage_total: dict = {}
+                for _ in range(req.n):
+                    output = await client.generate_image(
+                        prompt=image_plan.prompt_for(req.prompt),
+                        model=image_plan.model,
+                        generation_config_overrides=image_plan.generation_config_overrides,
+                    )
+                    _merge_usage(usage_total, output.usage)
+                    for img in output.images:
+                        b64 = base64.b64encode(img.data).decode("ascii")
+                        items.append(
+                            {
+                                "b64_json": b64,
+                                "url": _image_data_url(img.mime, b64),
+                                "revised_prompt": output.text or "",
+                            }
+                        )
 
                 # 记录成功
                 rotator = runtime_state.rotator
@@ -238,10 +472,10 @@ async def handle_image_generation(req: ImageRequest, client: AIStudioClient):
                     if account:
                         rotator.record_success(account.id)
 
-                runtime_state.record(req.model, "success", output.usage)
-                return {"created": int(time.time()), "data": data}
+                runtime_state.record(image_plan.model, "success", usage_total)
+                return {"created": int(time.time()), "data": _format_image_items(items, response_format)}
             except UsageLimitExceeded as exc:
-                runtime_state.record(req.model, "rate_limited")
+                runtime_state.record(image_plan.model, "rate_limited")
                 last_error = exc
 
                 # 记录限流
@@ -259,7 +493,7 @@ async def handle_image_generation(req: ImageRequest, client: AIStudioClient):
                     logger.warning("Image 429 限流，无法切换账号")
                     raise HTTPException(429, detail={"message": str(exc), "type": "rate_limit_exceeded"}) from exc
             except AistudioError as exc:
-                runtime_state.record(req.model, "errors")
+                runtime_state.record(image_plan.model, "errors")
                 rotator = runtime_state.rotator
                 if rotator:
                     account = runtime_state.account_service.get_active_account() if runtime_state.account_service else None
@@ -267,7 +501,7 @@ async def handle_image_generation(req: ImageRequest, client: AIStudioClient):
                         rotator.record_error(account.id)
                 raise HTTPException(500, detail={"message": str(exc), "type": "server_error"}) from exc
             except Exception as exc:
-                runtime_state.record(req.model, "errors")
+                runtime_state.record(image_plan.model, "errors")
                 logger.error("Image error: %s", exc, exc_info=True)
                 raise HTTPException(500, detail={"message": str(exc), "type": "server_error"}) from exc
 
@@ -290,6 +524,9 @@ def _build_streaming_response(
     top_k: int | None = None,
     max_tokens: int | None = None,
     tools: list[list] | None = None,
+    generation_config_overrides: dict | None = None,
+    safety_off: bool = False,
+    enable_thinking: bool = True,
 ) -> StreamingResponse:
     async def stream_response():
         busy_lock = runtime_state.busy_lock
@@ -320,6 +557,9 @@ def _build_streaming_response(
                             top_k=top_k,
                             max_tokens=max_tokens,
                             tools=tools,
+                            generation_config_overrides=generation_config_overrides,
+                            safety_off=safety_off,
+                            enable_thinking=enable_thinking,
                             force_refresh_capture=stream_attempt > 0,
                         ):
                             if event_type == "body" and text:
@@ -394,7 +634,7 @@ async def handle_gemini_generate_content(
                     await _try_switch_account()
             normalized = None
             try:
-                normalized = normalize_gemini_request(req, model_path)
+                normalized = normalize_gemini_request(req, model_path, stream=stream)
                 logger.info(
                     "Gemini: model=%s, contents=%s, stream=%s, attempt=%d",
                     normalized["model"],

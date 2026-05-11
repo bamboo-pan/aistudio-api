@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend spec index for reviewing implementation against project conventions."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Primary quality checklist for the Trellis check agent."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Review clear 400/500 behavior for invalid model/image/credential inputs."}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Review logging and sensitive-data handling around credential import/export."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Review whether shared capability metadata avoids duplication."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Review cross-layer consistency across API, services, gateway, accounts, tests, and WebUI."}

@@ -17,6 +17,11 @@ dependencies = [
   "python-dotenv>=1.0.0",
 ]
 
+[project.optional-dependencies]
+test = [
+  "pytest>=8.0.0",
+]
+
 [project.scripts]
 aistudio-api = "aistudio_api.main:main"
 aistudio-api-server = "aistudio_api.api.app:main"

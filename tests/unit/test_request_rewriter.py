@@ -103,3 +103,26 @@ def test_modify_body_keeps_structured_generation_config_for_gemini_mode():
     assert body[3][14] == [2, 1]
     assert body[3][16] == [1, None, None, 3]
     assert body[3][17] == 1
+
+
+def test_modify_body_strips_unsupported_image_generation_config_and_sets_size():
+    original = '["models/gemini-3.1-flash-image-preview",[[[[null,"old"]],"user"]],null,[null,["6"],null,65536,1,0.95,64,"application/json",[6],null,null,null,null,null,[2,1],null,[1,null,null,3],1,null,null,null,null,null,null,null,null,[null,"512"]],"!snap",null,null]'
+
+    rewritten = modify_body(
+        original,
+        model="gemini-3.1-flash-image-preview",
+        prompt="new image",
+        generation_config_overrides={"output_image_size": [None, "1K"]},
+        sanitize_plain_text=False,
+        enable_thinking=False,
+    )
+
+    body = json.loads(rewritten)
+    assert body[3][1] is None
+    assert body[3][7] is None
+    assert body[3][8] is None
+    assert body[3][14] is None
+    assert body[3][16] is None
+    assert body[3][17] is None
+    assert body[3][26] == [None, "1K"]
+    assert body[10] is None

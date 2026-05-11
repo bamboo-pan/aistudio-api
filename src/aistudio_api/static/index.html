@@ -164,6 +164,31 @@
             <button class="btn" :disabled="forcingNext" @click="forceNext()" x-text="forcingNext?'切换中':'强制切换'"></button>
           </div>
         </div>
+        <div class="card" style="margin-bottom:24px">
+          <div class="card-head">凭证导入 / 导出</div>
+          <div class="credential-box">
+            <div class="notice notice-error credential-warning">导出的 JSON 包含浏览器 Cookie 和令牌。请仅保存在可信位置，不要分享给他人。</div>
+            <div class="credential-grid">
+              <div class="credential-panel">
+                <div class="credential-title">导出</div>
+                <div class="table-actions">
+                  <button class="btn" :disabled="credentialExporting" @click="exportCredentials()" x-text="credentialExporting?'导出中':'导出全部'"></button>
+                  <button class="btn" :disabled="credentialExporting||!activeId" @click="exportCredentials(activeId)">导出当前激活</button>
+                </div>
+                <textarea class="credential-textarea" x-model="credentialExportText" readonly placeholder="导出的凭证备份会显示在这里"></textarea>
+              </div>
+              <div class="credential-panel">
+                <div class="credential-title">导入</div>
+                <input class="credential-input" type="text" x-model="credentialImportName" placeholder="单账号导入名称（可选）">
+                <textarea class="credential-textarea" x-model="credentialImportText" placeholder="粘贴备份 JSON 或单账号 auth.json / storage state"></textarea>
+                <div class="table-actions">
+                  <button class="btn btn-primary" :disabled="credentialImporting||!credentialImportText.trim()" @click="importCredentials()" x-text="credentialImporting?'导入中':'导入凭证'"></button>
+                </div>
+              </div>
+            </div>
+            <div class="notice notice-error" x-show="credentialError" x-text="credentialError"></div>
+          </div>
+        </div>
         <div class="card">
           <div class="card-head"><span>账号池</span><span style="font-size:13px;color:var(--muted)" x-text="accountRows.length+' 个账号'"></span></div>
           <div class="table-wrap"><table>

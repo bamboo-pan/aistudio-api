@@ -110,6 +110,81 @@ try {
 
 ---
 
+## Scenario: Credential Import / Export Safety
+
+### 1. Scope / Trigger
+
+- Trigger: Backend or WebUI changes import, export, display, validate, or restore
+	account `auth.json` / Playwright storage-state credentials.
+- Applies to credential backup packages and single-account storage-state JSON.
+
+### 2. Signatures
+
+- `GET /accounts/export` -> project credential backup package.
+- `GET /accounts/{account_id}/export` -> single-account credential backup package.
+- `POST /accounts/import` with JSON body -> `{ "imported": AccountResponse[], "count": number }`.
+- `AccountStore.import_credentials(payload, name=None, activate=True) -> list[AccountMeta]`.
+
+### 3. Contracts
+
+- Export responses contain live cookies/tokens and must set `Cache-Control: no-store`
+	and `Pragma: no-cache`.
+- Backup packages use `format = "aistudio-api.credentials.backup"`, a supported
+	integer `version`, a `manifest.warning`, and `accounts[].meta` plus `accounts[].auth`.
+- Single-account imports accept Playwright storage state / `auth.json` objects with
+	a non-empty `cookies` array and an optional `origins` array.
+- Imported storage states must include at least one Google cookie domain such as
+	`.google.com` or `accounts.google.com`.
+- Backup package validation must complete for every account before writing any new
+	account directories or registry entries.
+
+### 4. Validation & Error Matrix
+
+- Invalid JSON body -> `400` with a clear invalid JSON message.
+- Non-object JSON body -> `400` with a JSON-object message.
+- Unsupported backup `format` or `version` -> `400` / `ValueError` before saving.
+- Empty or missing `cookies` -> `400` / `ValueError` before saving.
+- Cookie missing `name`, `value`, `domain`, or `path` -> `400` / `ValueError` before saving.
+- Storage state with no Google cookie -> `400` / `ValueError` before saving.
+- Missing exported `auth.json` -> `400`; missing account id -> `404`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: Validate all backup entries first, then save accounts and activate the
+	requested active account only after successful validation.
+- Base: Single storage-state import creates one account and activates it by default.
+- Bad: Save the first account from a backup package, then reject a malformed second
+	account and leave a partial restore behind.
+
+### 6. Tests Required
+
+- Store-level export test asserts `format`, `manifest.warning`, account metadata,
+	and included auth payload.
+- Store-level import tests cover single storage state, backup metadata restoration,
+	malformed packages, non-Google cookies, and atomic validation before saving.
+- Route-level export test asserts `Cache-Control: no-store` and `Pragma: no-cache`.
+- Route-level import test asserts invalid JSON returns `400` without writing accounts.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+for entry in payload["accounts"]:
+		validate(entry)
+		save_account(entry)
+```
+
+#### Correct
+
+```python
+validated = [validate(entry) for entry in payload["accounts"]]
+for entry in validated:
+		save_account(entry)
+```
+
+---
+
 ## Testing Requirements
 
 - For static JavaScript changes, run a syntax check with `node --check` when Node
@@ -296,4 +371,91 @@ auth_file = account_store.get_active_auth_path()
 if auth_file:
     client.switch_auth(auth_file)
 await client.warmup()
+```
+
+---
+
+## Scenario: OpenAI-Compatible Image Generation Compatibility
+
+### 1. Scope / Trigger
+
+- Trigger: Backend changes OpenAI-compatible image generation routes, image-model
+	metadata, or chat routing for models with image output capability.
+- Applies when third-party clients such as Cherry Studio call image-capable models
+	through `/v1/images/generations` or `/v1/chat/completions`.
+
+### 2. Signatures
+
+- `POST /v1/images/generations` with `ImageRequest` fields `prompt`, `model`,
+	`n`, `size`, and optional `response_format`.
+- `POST /v1/chat/completions` with an image-output model should route image
+	generation semantics instead of failing because chat-only streaming is enabled.
+- `GET /v1/models` and `GET /v1/models/{model}` expose image-generation
+	metadata for image-capable models.
+
+### 3. Contracts
+
+- `response_format` may be omitted, `null`, `b64_json`, or `url`; the backend
+	normalizes client variants to a usable generated-image response.
+- `b64_json` responses keep the OpenAI-compatible `{ "data": [{ "b64_json": ... }] }`
+	shape used by existing callers.
+- `url` compatibility should not require public object hosting. When the backend
+	only has image bytes, returning a data URL plus `b64_json` fallback is allowed.
+- Chat requests selecting an image-output model must not expose unsupported
+	streaming errors to users; the backend should downgrade/normalize streaming and
+	return a client-consumable image result when practical.
+- OpenAI-compatible public sizes must map to AI Studio's accepted wire values.
+	For 1024-based sizes such as `1024x1024`, `1024x1792`, and `1792x1024`, send
+	`output_image_size` as `1K`, not raw `1024`.
+- Unsupported image sizes remain hard validation errors because silently changing
+	aspect ratio or resolution changes user intent.
+
+### 4. Validation & Error Matrix
+
+- `n < 1` -> `400` before any gateway call.
+- `n > 10` -> `400` before any gateway call.
+- Unsupported image size -> `400` before any gateway call and include supported
+	sizes or the rejected size in the message.
+- Non-image model used for image generation -> `400` with a model capability
+	message.
+- `response_format=url` -> compatible image response, not a format-only `400`.
+- Chat request with image-output model and `stream=true` -> normalized image
+	generation response or SSE chunks, not `does not support streaming responses`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: Cherry Studio calls `/v1/images/generations` with an image model and
+	either omits `response_format` or sends `url`; the backend returns a usable
+	image payload without extra user configuration.
+- Base: Existing callers send `response_format=b64_json`; response shape remains
+	unchanged.
+- Bad: Reject `response_format=url` solely because the gateway internally stores
+	image bytes instead of public URLs.
+
+### 6. Tests Required
+
+- Unit-test `b64_json` response shape remains stable.
+- Unit-test `url` compatibility includes a client-usable URL/data URL and does
+	not remove the base64 fallback.
+- Unit-test image-output models called through chat with `stream=true` do not
+	fail capability validation.
+- Unit-test unsupported size still fails before any client/gateway call.
+- Unit-test supported public sizes map to AI Studio-accepted `output_image_size`
+	values such as `512` and `1K`.
+- Unit-test model metadata advertises the supported image response formats.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+if req.response_format != "b64_json":
+    raise ValueError("response_format must be 'b64_json'")
+```
+
+#### Correct
+
+```python
+response_format = normalize_image_response_format(req.response_format)
+return build_image_generation_response(output, response_format=response_format)
 ```

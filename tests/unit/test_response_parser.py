@@ -5,11 +5,11 @@ from aistudio_api.domain.models import parse_chunk_usage, parse_response_chunk, 
 from aistudio_api.infrastructure.gateway.stream_parser import IncrementalJSONStreamParser, classify_chunk
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_parse_text_output_from_stream_bundle():
-    raw = (ROOT / "test_output.json").read_text()
+    raw = (ROOT / "test_output.json").read_text(encoding="utf-8")
     output = parse_text_output(raw)
 
     assert output.text == "你好！有什么我可以帮你的吗？"
@@ -24,7 +24,7 @@ def test_parse_text_output_from_stream_bundle():
 
 
 def test_parse_response_chunk_and_classify_chunk():
-    raw = json.loads((ROOT / "test_output.json").read_text())
+    raw = json.loads((ROOT / "test_output.json").read_text(encoding="utf-8"))
     final_chunk = raw[0][-1]
 
     candidate = parse_response_chunk(final_chunk)
@@ -41,7 +41,7 @@ def test_parse_response_chunk_and_classify_chunk():
 
 
 def test_stream_parser_extracts_real_chunks():
-    raw = (ROOT / "tests/test_output.json").read_text()
+    raw = (ROOT / "test_output.json").read_text(encoding="utf-8")
     parser = IncrementalJSONStreamParser()
 
     chunks = list(parser.feed(raw))

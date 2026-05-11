@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
@@ -15,6 +16,13 @@ _SEARCH_ROOTS: list[Path] = [
     Path.cwd(),
     Path(__file__).resolve().parents[4],  # src/aistudio_api/infrastructure/account -> 项目根
 ]
+
+BACKUP_FORMAT = "aistudio-api.credentials.backup"
+BACKUP_VERSION = 1
+BACKUP_WARNING = (
+    "This backup contains sensitive browser cookies and tokens. Anyone with this file "
+    "may be able to access the exported AI Studio accounts. Store it securely and do not share it."
+)
 
 
 def _resolve_accounts_dir() -> Path:
@@ -43,6 +51,10 @@ def _generate_account_id() -> str:
     """生成 acc_ 前缀的随机 ID。"""
     import secrets
     return f"acc_{secrets.token_hex(4)}"
+
+
+def _is_safe_account_id(account_id: str) -> bool:
+    return bool(re.fullmatch(r"[A-Za-z0-9_.-]+", account_id))
 
 
 @dataclass
@@ -191,17 +203,22 @@ class AccountStore:
         email: str | None,
         storage_state: dict[str, Any],
         account_id: str | None = None,
+        created_at: str | None = None,
+        last_used: str | None = None,
+        activate: bool = True,
     ) -> AccountMeta:
         """保存新账号。"""
-        if account_id is None:
-            account_id = _generate_account_id()
         now = datetime.now(timezone.utc).isoformat()
+        if account_id is None or not _is_safe_account_id(account_id):
+            account_id = self._generate_unique_account_id()
+        elif self.get_account(account_id) is not None:
+            account_id = self._generate_unique_account_id()
         meta = AccountMeta(
             id=account_id,
             name=name,
             email=email,
-            created_at=now,
-            last_used=now,
+            created_at=created_at or now,
+            last_used=last_used or (now if activate else None),
         )
         account_dir = self._accounts_dir / account_id
         account_dir.mkdir(parents=True, exist_ok=True)
@@ -216,9 +233,63 @@ class AccountStore:
         # 更新注册表
         registry = self._load_registry()
         registry.accounts[account_id] = meta
-        registry.active_account_id = account_id
+        if activate:
+            registry.active_account_id = account_id
         self._save_registry(registry)
         return meta
+
+    def export_credentials(self, account_id: str | None = None) -> dict[str, Any]:
+        """导出单个或全部账号凭证为项目备份包。"""
+        registry = self._load_registry()
+        account_ids = [account_id] if account_id else list(registry.accounts)
+        accounts = []
+        manifest_accounts = []
+
+        for current_id in account_ids:
+            if current_id is None or current_id not in registry.accounts:
+                raise KeyError(current_id or "")
+            meta = registry.accounts[current_id]
+            auth_path = self.get_auth_path(current_id)
+            if auth_path is None:
+                raise FileNotFoundError(current_id)
+            storage_state = json.loads(auth_path.read_text(encoding="utf-8"))
+            self._validate_storage_state(storage_state)
+            meta_payload = meta.to_dict()
+            manifest_accounts.append(meta_payload)
+            accounts.append({"meta": meta_payload, "auth": storage_state})
+
+        return {
+            "format": BACKUP_FORMAT,
+            "version": BACKUP_VERSION,
+            "manifest": {
+                "exported_at": datetime.now(timezone.utc).isoformat(),
+                "warning": BACKUP_WARNING,
+                "account_count": len(accounts),
+                "active_account_id": registry.active_account_id,
+                "accounts": manifest_accounts,
+            },
+            "accounts": accounts,
+        }
+
+    def import_credentials(
+        self,
+        payload: dict[str, Any],
+        *,
+        name: str | None = None,
+        activate: bool = True,
+    ) -> list[AccountMeta]:
+        """导入项目备份包或兼容的 Playwright storage state。"""
+        if self._is_backup_package(payload):
+            return self._import_backup_package(payload, activate=activate)
+        self._validate_storage_state(payload)
+        return [
+            self.save_account(
+                name=name or "Imported account",
+                email=None,
+                storage_state=payload,
+                activate=activate,
+            )
+        ]
 
     def delete_account(self, account_id: str) -> bool:
         """删除账号，返回是否成功。"""
@@ -260,3 +331,82 @@ class AccountStore:
             return None
         path = self._accounts_dir / account_id / "auth.json"
         return path if path.exists() else None
+
+    def _generate_unique_account_id(self) -> str:
+        registry = self._load_registry()
+        account_id = _generate_account_id()
+        while account_id in registry.accounts:
+            account_id = _generate_account_id()
+        return account_id
+
+    def _is_backup_package(self, payload: dict[str, Any]) -> bool:
+        return payload.get("format") == BACKUP_FORMAT or (
+            isinstance(payload.get("manifest"), dict) and isinstance(payload.get("accounts"), list)
+        )
+
+    def _import_backup_package(self, payload: dict[str, Any], *, activate: bool) -> list[AccountMeta]:
+        if payload.get("format") != BACKUP_FORMAT:
+            raise ValueError(f"credential backup format must be '{BACKUP_FORMAT}'")
+        if payload.get("version") != BACKUP_VERSION:
+            raise ValueError(f"unsupported credential backup version: {payload.get('version')}")
+        accounts = payload.get("accounts")
+        if not isinstance(accounts, list) or not accounts:
+            raise ValueError("credential backup must contain at least one account")
+
+        manifest = payload.get("manifest") if isinstance(payload.get("manifest"), dict) else {}
+        requested_active_id = manifest.get("active_account_id")
+        imported: list[AccountMeta] = []
+        id_map: dict[str, str] = {}
+
+        validated_accounts: list[tuple[dict[str, Any], dict[str, Any], str | None]] = []
+        for entry in accounts:
+            if not isinstance(entry, dict):
+                raise ValueError("credential backup account entries must be objects")
+            meta_payload = entry.get("meta") if isinstance(entry.get("meta"), dict) else {}
+            storage_state = entry.get("auth") or entry.get("storage_state") or entry.get("storageState")
+            self._validate_storage_state(storage_state)
+            requested_id = meta_payload.get("id") if isinstance(meta_payload.get("id"), str) else None
+            validated_accounts.append((meta_payload, storage_state, requested_id))
+
+        for meta_payload, storage_state, requested_id in validated_accounts:
+            account = self.save_account(
+                name=str(meta_payload.get("name") or meta_payload.get("email") or "Imported account"),
+                email=meta_payload.get("email") if isinstance(meta_payload.get("email"), str) else None,
+                storage_state=storage_state,
+                account_id=requested_id,
+                created_at=meta_payload.get("created_at") if isinstance(meta_payload.get("created_at"), str) else None,
+                last_used=meta_payload.get("last_used") if isinstance(meta_payload.get("last_used"), str) else None,
+                activate=False,
+            )
+            if requested_id:
+                id_map[requested_id] = account.id
+            imported.append(account)
+
+        if activate and imported:
+            active_id = id_map.get(requested_active_id) if isinstance(requested_active_id, str) else None
+            self.set_active_account(active_id or imported[-1].id)
+
+        return imported
+
+    def _validate_storage_state(self, storage_state: Any) -> None:
+        if not isinstance(storage_state, dict):
+            raise ValueError("credential storage state must be a JSON object")
+        cookies = storage_state.get("cookies")
+        origins = storage_state.get("origins", [])
+        if not isinstance(cookies, list) or not cookies:
+            raise ValueError("credential storage state must contain a non-empty cookies array")
+        if not isinstance(origins, list):
+            raise ValueError("credential storage state origins must be an array when present")
+        required_cookie_fields = {"name", "value", "domain", "path"}
+        has_google_cookie = False
+        for cookie in cookies:
+            if not isinstance(cookie, dict):
+                raise ValueError("credential storage state cookies must be objects")
+            missing = [field for field in required_cookie_fields if not isinstance(cookie.get(field), str)]
+            if missing:
+                raise ValueError(f"credential storage state cookie is missing fields: {', '.join(missing)}")
+            domain = cookie["domain"].lstrip(".").lower()
+            if domain == "google.com" or domain.endswith(".google.com"):
+                has_google_cookie = True
+        if not has_google_cookie:
+            raise ValueError("credential storage state must include at least one Google cookie")

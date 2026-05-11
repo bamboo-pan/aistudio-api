@@ -12,6 +12,7 @@ import httpx
 
 from aistudio_api.config import DEFAULT_IMAGE_MODEL
 from aistudio_api.domain.errors import RequestError
+from aistudio_api.domain.model_capabilities import require_model_capabilities
 from aistudio_api.infrastructure.gateway.request_rewriter import TOOLS_TEMPLATES
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent, AistudioPart
 
@@ -23,6 +24,23 @@ SCHEMA_TYPE_CODES = {
     "boolean": 4,
     "array": 5,
     "object": 6,
+}
+
+
+GENERATION_CONFIG_FIELD_NAMES = {
+    "stop_sequences": "stopSequences",
+    "max_tokens": "maxOutputTokens",
+    "temperature": "temperature",
+    "top_p": "topP",
+    "top_k": "topK",
+    "response_mime_type": "responseMimeType",
+    "response_schema": "responseSchema",
+    "presence_penalty": "presencePenalty",
+    "frequency_penalty": "frequencyPenalty",
+    "response_logprobs": "responseLogprobs",
+    "logprobs": "logprobs",
+    "media_resolution": "mediaResolution",
+    "thinking_config": "thinkingConfig",
 }
 
 
@@ -227,11 +245,12 @@ def normalize_openai_tools(tools) -> list[list] | None:
     return [[None, [encode_function_declaration_to_wire(decl) for decl in function_declarations]]]
 
 
-def normalize_gemini_request(req, requested_model: str, tmp_dir: str = "/tmp") -> dict:
+def normalize_gemini_request(req, requested_model: str, tmp_dir: str = "/tmp", *, stream: bool = False) -> dict:
     if not req.contents:
         raise ValueError("contents is required")
 
     model = requested_model if requested_model.startswith("models/") else f"models/{requested_model}"
+    capabilities = require_model_capabilities(model)
     contents: list[AistudioContent] = []
     cleanup_paths: list[str] = []
     capture_prompt = "你好"
@@ -279,18 +298,24 @@ def normalize_gemini_request(req, requested_model: str, tmp_dir: str = "/tmp") -
         )
 
     tools = None
+    uses_function_tools = False
+    uses_search = False
     if req.tools:
         tools = []
         for tool in req.tools:
             if tool.codeExecution is not None:
+                uses_function_tools = True
                 tools.append(TOOLS_TEMPLATES["code_execution"])
             if tool.functionDeclarations:
+                uses_function_tools = True
                 tools.append([None, [encode_function_declaration_to_wire(decl) for decl in tool.functionDeclarations]])
             if tool.googleSearch is not None or tool.googleSearchRetrieval is not None:
+                uses_search = True
                 tools.append(TOOLS_TEMPLATES["google_search"])
 
     # Gemma 4 小模型默认开启 Google Search
     if tools is None and any(m in model for m in ("gemma-4-26b-a4b-it", "gemma-4-31b-it")):
+        uses_search = True
         tools = [TOOLS_TEMPLATES["google_search"]]
 
     generation_config = req.generationConfig
@@ -327,6 +352,23 @@ def normalize_gemini_request(req, requested_model: str, tmp_dir: str = "/tmp") -
             generation_config_overrides["media_resolution"] = generation_config.mediaResolution
         if generation_config.thinkingConfig is not None:
             generation_config_overrides["thinking_config"] = generation_config.thinkingConfig
+
+    if capture_images and not capabilities.image_input:
+        raise ValueError(f"Model '{model}' does not support image input")
+    if stream and not capabilities.streaming:
+        raise ValueError(f"Model '{model}' does not support streaming responses")
+    if uses_function_tools and not capabilities.tools:
+        raise ValueError(f"Model '{model}' does not support tool calls")
+    if uses_search and not capabilities.search:
+        raise ValueError(f"Model '{model}' does not support Google Search grounding")
+    if generation_config_overrides:
+        unsupported = set(capabilities.unsupported_generation_fields)
+        if "thinking_config" in generation_config_overrides and not capabilities.thinking:
+            unsupported.add("thinking_config")
+        blocked = [field for field in generation_config_overrides if field in unsupported]
+        if blocked:
+            field_names = ", ".join(GENERATION_CONFIG_FIELD_NAMES.get(field, field) for field in blocked)
+            raise ValueError(f"Model '{model}' does not support generationConfig field(s): {field_names}")
 
     return {
         "model": model,

@@ -1,0 +1,53 @@
+{
+  "id": "feature-completeness-improvements",
+  "name": "feature-completeness-improvements",
+  "title": "功能完整性改进",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "your-name",
+  "assignee": "your-name",
+  "createdAt": "2026-05-11",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "prd_status": "confirmed",
+    "workflow": {
+      "version": 1,
+      "current_step": "awaiting_commit",
+      "vcs": {
+        "kind": "git",
+        "commit_required": true
+      },
+      "implement": {
+        "dispatched_at": "2026-05-11T04:10:32Z",
+        "completed_at": "2026-05-11T04:10:32Z"
+      },
+      "check": {
+        "completed_at": "2026-05-11T04:10:32Z",
+        "fingerprint": "30c7b3be3ae6078b33a93187ccedc7b579e4d89b55626630a2c72f0fef0a80bc",
+        "head": "8ab49f229d1d32308fdfe28c894270eaf5a28bb1"
+      },
+      "spec_update": {
+        "reviewed_at": "2026-05-11T04:10:33Z",
+        "result": "updated"
+      },
+      "commit": {
+        "hash": null,
+        "recorded_at": null
+      }
+    }
+  }
+}

@@ -1,3 +1,5 @@
+import pytest
+
 from aistudio_api.api.schemas import GeminiContent, GeminiGenerateContentRequest, GeminiGenerationConfig, GeminiPart
 from aistudio_api.application.chat_service import normalize_gemini_request, normalize_openai_tools
 from aistudio_api.api.schemas import ChatRequest
@@ -27,7 +29,7 @@ def test_normalize_gemini_request_exposes_generation_config_overrides():
         ),
     )
 
-    normalized = normalize_gemini_request(req, "models/gemini-3.1-flash-image-preview")
+    normalized = normalize_gemini_request(req, "models/gemini-3-flash-preview")
 
     assert normalized["generation_config_overrides"] == {
         "stop_sequences": ["6"],
@@ -44,6 +46,25 @@ def test_normalize_gemini_request_exposes_generation_config_overrides():
         "media_resolution": [2, 1],
         "thinking_config": [1, None, None, 3],
     }
+
+
+def test_normalize_gemini_request_rejects_media_resolution_for_image_model():
+    req = GeminiGenerateContentRequest(
+        contents=[GeminiContent(role="user", parts=[GeminiPart(text="hello")])],
+        generationConfig=GeminiGenerationConfig(mediaResolution=[2, 1]),
+    )
+
+    with pytest.raises(ValueError, match="mediaResolution"):
+        normalize_gemini_request(req, "models/gemini-3.1-flash-image-preview")
+
+
+def test_normalize_gemini_request_rejects_streaming_for_image_model():
+    req = GeminiGenerateContentRequest(
+        contents=[GeminiContent(role="user", parts=[GeminiPart(text="hello")])],
+    )
+
+    with pytest.raises(ValueError, match="streaming"):
+        normalize_gemini_request(req, "models/gemini-3.1-flash-image-preview", stream=True)
 
 
 def test_normalize_gemini_request_encodes_function_declarations_to_wire_tools():

@@ -102,3 +102,17 @@ class AccountService:
     def update_account(self, account_id: str, name: str) -> AccountMeta | None:
         """更新账号名称。"""
         return self._store.update_account(account_id, name)
+
+    def export_credentials(self, account_id: str | None = None) -> dict[str, Any]:
+        """导出账号凭证备份包。"""
+        return self._store.export_credentials(account_id)
+
+    def import_credentials(
+        self,
+        payload: dict[str, Any],
+        *,
+        name: str | None = None,
+        activate: bool = True,
+    ) -> list[AccountMeta]:
+        """导入账号凭证备份包或单账号 storage state。"""
+        return self._store.import_credentials(payload, name=name, activate=activate)
