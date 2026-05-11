@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/index.md","reason":"Project spec index and available backend/static app guidelines for this single-repo task."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Quality bar for reviewing code changes in this repo."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Check that frontend changes reuse existing patterns instead of duplicating new helpers."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check account UI behavior against existing account and rotation API contracts."}

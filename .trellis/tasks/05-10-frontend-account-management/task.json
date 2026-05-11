@@ -1,0 +1,53 @@
+{
+  "id": "frontend-account-management",
+  "name": "frontend-account-management",
+  "title": "前端账号管理功能",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "your-name",
+  "assignee": "your-name",
+  "createdAt": "2026-05-10",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "prd_status": "confirmed",
+    "workflow": {
+      "version": 1,
+      "current_step": "awaiting_commit",
+      "vcs": {
+        "kind": "git",
+        "commit_required": true
+      },
+      "implement": {
+        "dispatched_at": "2026-05-10T15:09:43Z",
+        "completed_at": "2026-05-10T15:09:44Z"
+      },
+      "check": {
+        "completed_at": "2026-05-10T15:09:44Z",
+        "fingerprint": "ff2eb4a852565835439b4febee88a681bf139f80805d2fa7b978939e55cff1f3",
+        "head": "c9c678504a1e8a83cfabdf538b9341cc79f4296b"
+      },
+      "spec_update": {
+        "reviewed_at": "2026-05-10T15:09:45Z",
+        "result": "updated"
+      },
+      "commit": {
+        "hash": null,
+        "recorded_at": null
+      }
+    }
+  }
+}

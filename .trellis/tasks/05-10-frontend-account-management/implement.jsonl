@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/index.md","reason":"Project spec index and available backend/static app guidelines for this single-repo task."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Quality bar and forbidden patterns for code changes in this repo."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Frontend account-management changes extend existing Alpine helpers and should reuse local patterns."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"The UI consumes existing account and rotation API contracts across frontend/API layers."}

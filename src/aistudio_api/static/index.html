@@ -138,31 +138,77 @@
       <div class="page-pad">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:24px">
           <h1 style="font-size:24px;font-weight:700">账号管理</h1>
-          <button class="btn btn-primary" @click="addAccount()">+ 登录账号</button>
+          <button class="btn btn-primary" :disabled="loginBusy" @click="addAccount()" x-text="loginBusy?'登录中...':'+ 登录账号'"></button>
+        </div>
+        <div class="stat-grid account-summary">
+          <div class="stat-card"><div class="slabel">当前激活账号</div><div class="sval" x-text="activeLabel"></div></div>
+          <div class="stat-card"><div class="slabel">账号数量</div><div class="sval" x-text="accountCount"></div></div>
+          <div class="stat-card"><div class="slabel">轮询模式</div><div class="sval" x-text="rotationMode==='round_robin'?'顺序轮询':rotationMode==='lru'?'LRU':rotationMode==='least_rl'?'最少限流':rotationMode"></div></div>
+        </div>
+        <div class="notice-stack" x-show="loginSession.status||accountsError||activeAccountNote||rotationError" x-cloak>
+          <div class="notice" :class="loginStatusClass()" x-show="loginSession.status">
+            <div class="notice-main"><span class="notice-title">登录会话</span><span x-text="loginStatusText()"></span><span class="notice-id" x-show="loginSession.id" x-text="loginSession.id"></span></div>
+            <div class="notice-detail" x-show="loginSession.email" x-text="loginSession.email"></div>
+            <div class="notice-detail" x-show="loginSession.error" x-text="loginSession.error"></div>
+          </div>
+          <div class="notice notice-error" x-show="accountsError" x-text="accountsError"></div>
+          <div class="notice notice-info" x-show="activeAccountNote" x-text="activeAccountNote"></div>
+          <div class="notice notice-error" x-show="rotationError" x-text="rotationError"></div>
         </div>
         <div class="card" style="margin-bottom:24px">
           <div class="card-head">轮询设置</div>
           <div style="padding:20px;display:flex;flex-wrap:wrap;gap:16px;align-items:end">
             <div><div style="font-size:13px;color:var(--muted);margin-bottom:4px">模式</div><div class="cselect" :class="{open:openSelect==='rotMode'}" @click.stop><div class="cselect-btn" @click="toggleSelect('rotMode',$event)" tabindex="0" style="min-width:130px"><span x-text="rotCfg.mode==='round_robin'?'顺序轮询':rotCfg.mode==='lru'?'最近最少使用 (LRU)':rotCfg.mode==='least_rl'?'最小频率限制':'未知'"></span><span class="arrow"></span></div><div class="cselect-menu"><template x-for="v in ['round_robin','lru','least_rl']"><div class="cselect-opt" :class="{active:rotCfg.mode===v}" @click="rotCfg.mode=v;openSelect=null" x-text="v==='round_robin'?'顺序轮询':v==='lru'?'最近最少使用 (LRU)':v==='least_rl'?'最小频率限制':v"></div></template></div></div></div>
             <div><div style="font-size:13px;color:var(--muted);margin-bottom:4px">冷却时间 (秒)</div><input type="number" x-model.number="rotCfg.cooldown" style="width:80px;padding:8px;border:1px solid var(--border);border-radius:8px;font-size:14px" min="0"></div>
-            <button class="btn" @click="saveRotation()">保存设置</button>
-            <button class="btn" @click="forceNext()">强制切换</button>
+            <button class="btn" :disabled="savingRotation" @click="saveRotation()" x-text="savingRotation?'保存中':'保存设置'"></button>
+            <button class="btn" :disabled="forcingNext" @click="forceNext()" x-text="forcingNext?'切换中':'强制切换'"></button>
           </div>
         </div>
         <div class="card">
           <div class="card-head"><span>账号池</span><span style="font-size:13px;color:var(--muted)" x-text="accountRows.length+' 个账号'"></span></div>
           <div class="table-wrap"><table>
-            <thead><tr><th>邮箱</th><th>请求</th><th>成功</th><th>429</th><th>状态</th><th>操作</th></tr></thead>
+            <thead><tr><th>账号</th><th>请求</th><th>成功</th><th>429</th><th>状态</th><th>操作</th></tr></thead>
             <tbody>
               <template x-for="a in accountRows" :key="a.id"><tr>
-                <td><div style="font-weight:500" x-text="a.email||a.name||a.id"></div><div style="font-size:12px;color:var(--muted);font-family:monospace" x-text="a.id"></div></td>
+                <td>
+                  <div x-show="renameId!==a.id">
+                    <div class="acct-name" x-text="a.name||a.email||a.id"></div>
+                    <div class="acct-meta" x-show="a.email&&a.email!==a.name" x-text="a.email"></div>
+                    <div class="acct-id" x-text="a.id"></div>
+                  </div>
+                  <div class="inline-edit" x-show="renameId===a.id">
+                    <input class="inline-input" type="text" x-model="renameDraft" placeholder="账号名称" @keydown.enter.prevent="renameAccount(a)" @keydown.escape.prevent="cancelRename()">
+                    <div class="acct-id" x-text="a.id"></div>
+                  </div>
+                </td>
                 <td x-text="a.requests||0"></td>
                 <td><span class="badge badge-green" x-text="a.success||0"></span></td>
                 <td><span class="badge" :class="(a.rate_limited||0)>0?'badge-red':'badge-gray'" x-text="a.rate_limited||0"></span></td>
                 <td><span class="badge badge-green" x-show="a.id===activeId">激活</span><span class="badge badge-gray" x-show="a.id!==activeId">待命</span></td>
-                <td><button class="btn btn-sm" x-show="a.id!==activeId" @click="activateAccount(a.id)">手动激活</button></td>
+                <td>
+                  <div class="table-actions">
+                    <button class="btn btn-sm" x-show="a.id!==activeId" :disabled="isRowBusy(a.id)" @click="activateAccount(a.id)" x-text="isAccountBusy('activate',a.id)?'激活中':'手动激活'"></button>
+                    <button class="btn btn-sm" x-show="renameId!==a.id" :disabled="isRowBusy(a.id)" @click="beginRename(a)">重命名</button>
+                    <template x-if="renameId===a.id">
+                      <div class="table-actions">
+                        <button class="btn btn-sm btn-primary" :disabled="isAccountBusy('rename',a.id)||!renameDraft.trim()" @click="renameAccount(a)" x-text="isAccountBusy('rename',a.id)?'保存中':'保存'"></button>
+                        <button class="btn btn-sm" :disabled="isAccountBusy('rename',a.id)" @click="cancelRename()">取消</button>
+                      </div>
+                    </template>
+                    <button class="btn btn-sm btn-danger-outline" x-show="deleteConfirmId!==a.id" :disabled="isRowBusy(a.id)" @click="requestDeleteAccount(a)">删除</button>
+                    <template x-if="deleteConfirmId===a.id">
+                      <div class="delete-confirm">
+                        <div class="confirm-text">删除 <strong x-text="accountLabel(a)"></strong>？</div>
+                        <div class="table-actions">
+                          <button class="btn btn-sm btn-danger" :disabled="isAccountBusy('delete',a.id)" @click="deleteAccount(a)" x-text="isAccountBusy('delete',a.id)?'删除中':'确认删除'"></button>
+                          <button class="btn btn-sm" :disabled="isAccountBusy('delete',a.id)" @click="cancelDelete()">取消</button>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+                </td>
               </tr></template>
-              <tr x-show="!accountRows.length"><td colspan="6" style="text-align:center;color:var(--muted);padding:24px">暂无账号</td></tr>
+              <tr x-show="!accountRows.length"><td colspan="6" style="text-align:center;color:var(--muted);padding:24px" x-text="accountsLoading?'正在加载账号...':accountsError?'账号列表加载失败':'暂无账号'"></td></tr>
             </tbody></table></div>
         </div>
       </div>
