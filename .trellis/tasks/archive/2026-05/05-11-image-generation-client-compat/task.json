@@ -3,7 +3,7 @@
   "name": "image-generation-client-compat",
   "title": "简化图像生成客户端兼容",
   "description": "",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "your-name",
   "assignee": "your-name",
   "createdAt": "2026-05-11",
-  "completedAt": null,
+  "completedAt": "2026-05-12",
   "branch": null,
   "base_branch": "master",
   "worktree_path": null,
@@ -26,27 +26,27 @@
     "prd_status": "confirmed",
     "workflow": {
       "version": 1,
-      "current_step": "awaiting_implement",
+      "current_step": "ready_to_finish",
       "vcs": {
         "kind": "git",
         "commit_required": true
       },
       "implement": {
-        "dispatched_at": null,
-        "completed_at": null
+        "dispatched_at": "2026-05-11T23:34:39Z",
+        "completed_at": "2026-05-11T23:34:40Z"
       },
       "check": {
-        "completed_at": null,
-        "fingerprint": null,
-        "head": null
+        "completed_at": "2026-05-11T23:34:40Z",
+        "fingerprint": "995f6933e264146237603fccaba63723ecb6c0bf0893cf6e7f1e510bbaff5816",
+        "head": "cf6d5b997804e98688c496d3acea91ab040d43f9"
       },
       "spec_update": {
-        "reviewed_at": null,
-        "result": null
+        "reviewed_at": "2026-05-11T23:34:41Z",
+        "result": "noop"
       },
       "commit": {
-        "hash": null,
-        "recorded_at": null
+        "hash": "cf6d5b997804e98688c496d3acea91ab040d43f9",
+        "recorded_at": "2026-05-11T23:34:41Z"
       }
     }
   }
