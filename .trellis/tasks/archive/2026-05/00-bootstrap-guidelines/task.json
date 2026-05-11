@@ -3,7 +3,7 @@
   "name": "00-bootstrap-guidelines",
   "title": "Bootstrap Guidelines",
   "description": "Fill in project development guidelines for AI agents",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": "docs",
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "your-name",
   "assignee": "your-name",
   "createdAt": "2026-05-10",
-  "completedAt": null,
+  "completedAt": "2026-05-12",
   "branch": null,
   "base_branch": null,
   "worktree_path": null,
@@ -28,27 +28,27 @@
     "prd_status": "confirmed",
     "workflow": {
       "version": 1,
-      "current_step": "awaiting_implement",
+      "current_step": "ready_to_finish",
       "vcs": {
-        "kind": "unknown",
-        "commit_required": false
+        "kind": "git",
+        "commit_required": true
       },
       "implement": {
-        "dispatched_at": null,
-        "completed_at": null
+        "dispatched_at": "2026-05-11T23:31:44Z",
+        "completed_at": "2026-05-11T23:31:44Z"
       },
       "check": {
-        "completed_at": null,
-        "fingerprint": null,
-        "head": null
+        "completed_at": "2026-05-11T23:31:45Z",
+        "fingerprint": "995f6933e264146237603fccaba63723ecb6c0bf0893cf6e7f1e510bbaff5816",
+        "head": "9803ab0c0a95ba32be2c9600fdf53e7f40de9d1a"
       },
       "spec_update": {
-        "reviewed_at": null,
-        "result": null
+        "reviewed_at": "2026-05-11T23:31:45Z",
+        "result": "noop"
       },
       "commit": {
-        "hash": null,
-        "recorded_at": null
+        "hash": "9803ab0c0a95ba32be2c9600fdf53e7f40de9d1a",
+        "recorded_at": "2026-05-11T23:31:46Z"
       }
     }
   }
