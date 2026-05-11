@@ -39,11 +39,14 @@ class AistudioWireCodec:
 
     def decode(self, raw_body: str) -> AistudioRequest:
         body = json.loads(raw_body)
+        raw_generation_config = body[self.GENERATION_CONFIG_INDEX] if len(body) > self.GENERATION_CONFIG_INDEX else []
+        if not isinstance(raw_generation_config, list):
+            raw_generation_config = []
         return AistudioRequest(
             model=body[self.MODEL_INDEX],
             contents=self._decode_contents(body[self.CONTENTS_INDEX]),
             safety_settings=body[self.SAFETY_INDEX],
-            generation_config=AistudioGenerationConfig(list(body[self.GENERATION_CONFIG_INDEX])),
+            generation_config=AistudioGenerationConfig(list(raw_generation_config)),
             snapshot=body[self.SNAPSHOT_INDEX] if len(body) > self.SNAPSHOT_INDEX else None,
             system_instruction=self._decode_system_instruction(body[self.SYSTEM_INSTRUCTION_INDEX] if len(body) > self.SYSTEM_INSTRUCTION_INDEX else None),
             tools=body[self.TOOLS_INDEX] if len(body) > self.TOOLS_INDEX else None,

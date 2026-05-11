@@ -12,6 +12,7 @@ from enum import Enum
 from typing import Any
 
 from aistudio_api.infrastructure.account.account_store import AccountStore, AccountMeta
+from aistudio_api.domain.model_capabilities import get_model_capabilities
 
 logger = logging.getLogger("aistudio.rotator")
 
@@ -70,13 +71,16 @@ class AccountRotator:
         account_store: AccountStore,
         mode: RotationMode = RotationMode.ROUND_ROBIN,
         cooldown_seconds: int = 60,
+        error_isolation_threshold: int = 3,
     ) -> None:
         self._store = account_store
         self._mode = mode
         self._cooldown_seconds = cooldown_seconds
+        self._error_isolation_threshold = error_isolation_threshold
         self._stats: dict[str, AccountStats] = {}
         self._current_index: int = 0
         self._lock = asyncio.Lock()
+        self.last_selection_reason: str | None = None
 
         # 初始化已有账号的统计
         for account in self._store.list_accounts():
@@ -108,13 +112,18 @@ class AccountRotator:
             result[account.id] = {
                 "name": account.name,
                 "email": account.email,
+                "tier": getattr(account, "tier", "free"),
+                "health_status": getattr(account, "health_status", "unknown"),
+                "health_reason": getattr(account, "health_reason", None),
+                "last_health_check": getattr(account, "last_health_check", None),
+                "isolated_until": getattr(account, "isolated_until", None),
                 "requests": stats.requests,
                 "success": stats.success,
                 "rate_limited": stats.rate_limited,
                 "errors": stats.errors,
                 "last_used": datetime.fromtimestamp(stats.last_used, tz=timezone.utc).isoformat() if stats.last_used else None,
                 "last_rate_limited": datetime.fromtimestamp(stats.last_rate_limited, tz=timezone.utc).isoformat() if stats.last_rate_limited else None,
-                "is_available": stats.is_available(),
+                "is_available": stats.is_available() and not account.is_isolated,
                 "cooldown_remaining": max(0, int(stats.cooldown_until - time.time())),
             }
         return result
@@ -125,8 +134,42 @@ class AccountRotator:
         available = []
         for account in accounts:
             stats = self._stats.get(account.id, AccountStats(account_id=account.id))
-            if stats.is_available():
+            if stats.is_available() and not account.is_isolated:
                 available.append((account, stats))
+        return available
+
+    def model_prefers_premium(self, model: str | None) -> bool:
+        if not model:
+            return False
+        try:
+            return get_model_capabilities(model, strict=True).image_output
+        except ValueError:
+            return "image" in model.lower()
+
+    def has_available_preferred_account(self, model: str | None) -> bool:
+        if not self.model_prefers_premium(model):
+            return bool(self._get_available_accounts())
+        return any(account.is_premium for account, _ in self._get_available_accounts())
+
+    def _filter_for_model(
+        self,
+        available: list[tuple[AccountMeta, AccountStats]],
+        model: str | None,
+        *,
+        require_preferred: bool = False,
+    ) -> list[tuple[AccountMeta, AccountStats]]:
+        if not self.model_prefers_premium(model):
+            self.last_selection_reason = "text model can use any healthy account"
+            return available
+        premium = [(account, stats) for account, stats in available if account.is_premium]
+        if premium:
+            self.last_selection_reason = "image model selected a Pro/Ultra account"
+            return premium
+        if require_preferred:
+            self.last_selection_reason = "image model requires Pro/Ultra but none are currently available"
+            return []
+        self.last_selection_reason = "image model fell back to a non-premium account because no Pro/Ultra account is available"
+        logger.warning("Image model account selection fallback: no healthy Pro/Ultra account is available")
         return available
 
     def _pick_round_robin(self, available: list[tuple[AccountMeta, AccountStats]]) -> tuple[AccountMeta, AccountStats] | None:
@@ -149,7 +192,7 @@ class AccountRotator:
         """最久未用优先。"""
         if not available:
             return None
-        return min(available, key=lambda x: x[1].last_used if x[1].last_used > 0 else float("inf"))
+        return min(available, key=lambda x: x[1].last_used or 0.0)
 
     def _pick_least_rl(self, available: list[tuple[AccountMeta, AccountStats]]) -> tuple[AccountMeta, AccountStats] | None:
         """最少限流优先。"""
@@ -157,15 +200,19 @@ class AccountRotator:
             return None
         return min(available, key=lambda x: x[1].rate_limited)
 
-    async def get_next_account(self) -> AccountMeta | None:
+    async def get_next_account(self, model: str | None = None, *, require_preferred: bool = False) -> AccountMeta | None:
         """获取下一个可用的账号。"""
         async with self._lock:
             available = self._get_available_accounts()
+            available = self._filter_for_model(available, model, require_preferred=require_preferred)
 
             if not available:
+                if require_preferred and self.model_prefers_premium(model):
+                    return None
                 # 所有账号都在冷却期，找一个冷却时间最短的
-                all_accounts = self._store.list_accounts()
+                all_accounts = [account for account in self._store.list_accounts() if not account.is_isolated]
                 if not all_accounts:
+                    self.last_selection_reason = "no healthy accounts are available"
                     return None
                 # 选冷却结束最早的
                 earliest = min(
@@ -174,7 +221,7 @@ class AccountRotator:
                 )
                 account, stats = earliest
                 wait_time = max(0, stats.cooldown_until - time.time())
-                logger.warning("所有账号都在冷却期，等待 %.1fs 使用 %s", wait_time, account.name)
+                logger.warning("All healthy accounts are cooling down; waiting %.1fs before retry", wait_time)
                 await asyncio.sleep(wait_time)
                 return account
 
@@ -192,16 +239,20 @@ class AccountRotator:
                 return None
 
             account, stats = pick
-            logger.info("轮询选择账号: %s (mode=%s)", account.name, self._mode)
+            logger.info("Account selected for model=%s tier=%s mode=%s reason=%s", model or "<any>", account.tier, self._mode.value, self.last_selection_reason)
             return account
 
-    async def get_next_account_with_stats(self) -> tuple[AccountMeta, AccountStats] | None:
+    async def get_next_account_with_stats(self, model: str | None = None, *, require_preferred: bool = False) -> tuple[AccountMeta, AccountStats] | None:
         """获取下一个可用的账号及其统计。"""
         async with self._lock:
             available = self._get_available_accounts()
+            available = self._filter_for_model(available, model, require_preferred=require_preferred)
             if not available:
-                all_accounts = self._store.list_accounts()
+                if require_preferred and self.model_prefers_premium(model):
+                    return None
+                all_accounts = [account for account in self._store.list_accounts() if not account.is_isolated]
                 if not all_accounts:
+                    self.last_selection_reason = "no healthy accounts are available"
                     return None
                 earliest = min(
                     [(a, self._stats.get(a.id, AccountStats(account_id=a.id))) for a in all_accounts],
@@ -227,19 +278,37 @@ class AccountRotator:
         if account_id not in self._stats:
             self._stats[account_id] = AccountStats(account_id=account_id)
         self._stats[account_id].record_success()
+        self._store.set_account_health(account_id, "healthy", "last request succeeded")
 
     def record_rate_limited(self, account_id: str) -> None:
         """记录 429 限流。"""
         if account_id not in self._stats:
             self._stats[account_id] = AccountStats(account_id=account_id)
         self._stats[account_id].record_rate_limited(self._cooldown_seconds)
-        logger.warning("账号 %s 被限流，冷却 %ds", account_id, self._cooldown_seconds)
+        cooldown_until = datetime.fromtimestamp(self._stats[account_id].cooldown_until, tz=timezone.utc).isoformat()
+        self._store.set_account_health(
+            account_id,
+            "rate_limited",
+            "upstream returned rate limit; account is cooling down",
+            isolated_until=cooldown_until,
+        )
+        logger.warning("Account was rate-limited; cooling down for %ds", self._cooldown_seconds)
 
     def record_error(self, account_id: str) -> None:
         """记录错误。"""
         if account_id not in self._stats:
             self._stats[account_id] = AccountStats(account_id=account_id)
         self._stats[account_id].record_error()
+        stats = self._stats[account_id]
+        if stats.errors >= self._error_isolation_threshold:
+            self._store.isolate_account(
+                account_id,
+                f"isolated after {stats.errors} gateway errors",
+                self._cooldown_seconds,
+            )
+            logger.warning("Account automatically isolated after repeated gateway errors")
+        else:
+            self._store.set_account_health(account_id, "error", "last request failed")
 
     def add_account(self, account_id: str) -> None:
         """添加新账号时初始化统计。"""

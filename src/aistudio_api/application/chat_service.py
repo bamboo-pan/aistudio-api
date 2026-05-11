@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import os
 import re
 import uuid
@@ -11,6 +12,7 @@ from typing import Optional
 import httpx
 
 from aistudio_api.config import DEFAULT_IMAGE_MODEL
+from aistudio_api.application.validation import validate_number_range
 from aistudio_api.domain.errors import RequestError
 from aistudio_api.domain.model_capabilities import require_model_capabilities
 from aistudio_api.infrastructure.gateway.request_rewriter import TOOLS_TEMPLATES
@@ -25,6 +27,11 @@ SCHEMA_TYPE_CODES = {
     "array": 5,
     "object": 6,
 }
+
+
+MAX_INLINE_IMAGE_BYTES = 20 * 1024 * 1024
+OPENAI_CHAT_ROLES = {"system", "developer", "user", "assistant", "tool"}
+GEMINI_CONTENT_ROLES = {"user", "model"}
 
 
 GENERATION_CONFIG_FIELD_NAMES = {
@@ -44,6 +51,16 @@ GENERATION_CONFIG_FIELD_NAMES = {
 }
 
 
+def _decode_image_base64(data: str, label: str) -> bytes:
+    try:
+        decoded = base64.b64decode(data, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError(f"{label} must contain valid base64 image data") from exc
+    if len(decoded) > MAX_INLINE_IMAGE_BYTES:
+        raise ValueError(f"{label} is too large; maximum size is {MAX_INLINE_IMAGE_BYTES // (1024 * 1024)} MB")
+    return decoded
+
+
 def data_uri_to_file(uri: str, tmp_dir: str = "/tmp") -> str:
     match = re.match(r"data:(.+?);base64,(.+)", uri, re.DOTALL)
     if not match:
@@ -51,8 +68,9 @@ def data_uri_to_file(uri: str, tmp_dir: str = "/tmp") -> str:
     mime, b64 = match.group(1), match.group(2)
     ext = mime.split("/")[-1].replace("jpeg", "jpg")
     path = os.path.join(tmp_dir, f"aistudio_img_{uuid.uuid4().hex[:8]}.{ext}")
+    decoded = _decode_image_base64(b64, "image data URI")
     with open(path, "wb") as file:
-        file.write(base64.b64decode(b64))
+        file.write(decoded)
     return path
 
 
@@ -61,78 +79,102 @@ def url_to_file(url: str, tmp_dir: str = "/tmp") -> str:
     with httpx.Client(timeout=30) as http:
         resp = http.get(url)
         resp.raise_for_status()
+        if len(resp.content) > MAX_INLINE_IMAGE_BYTES:
+            raise ValueError(f"image URL is too large; maximum size is {MAX_INLINE_IMAGE_BYTES // (1024 * 1024)} MB")
         with open(path, "wb") as file:
             file.write(resp.content)
     return path
 
 
 def normalize_chat_request(messages, requested_model: str, tmp_dir: str = "/tmp") -> dict:
+    if not messages:
+        raise ValueError("messages must contain at least one message")
+
     system_texts: list[str] = []
     contents: list[AistudioContent] = []
     capture_texts: list[str] = []
     capture_images: list[str] = []
     cleanup_paths: list[str] = []
     saw_images = False
+    success = False
 
-    for msg in messages:
-        role = (msg.role or "user").lower()
-        if role in ("system", "developer"):
-            text = _message_text_content(msg.content)
-            if text:
-                system_texts.append(text)
-                capture_texts.append(text)
-            continue
+    try:
+        for msg in messages:
+            role = (msg.role or "").strip().lower()
+            if role not in OPENAI_CHAT_ROLES:
+                raise ValueError(f"unsupported message role: {msg.role}")
+            if role in ("system", "developer"):
+                text = _message_text_content(msg.content)
+                if text:
+                    system_texts.append(text)
+                    capture_texts.append(text)
+                continue
 
-        parts: list[AistudioPart] = []
-        text_parts: list[str] = []
-        image_paths: list[str] = []
+            parts: list[AistudioPart] = []
+            text_parts: list[str] = []
+            image_paths: list[str] = []
 
-        if isinstance(msg.content, str):
-            if msg.content:
-                parts.append(AistudioPart(text=msg.content))
-                text_parts.append(msg.content)
-        elif isinstance(msg.content, list):
-            for part in msg.content:
-                if part.type == "text" and part.text:
-                    parts.append(AistudioPart(text=part.text))
-                    text_parts.append(part.text)
-                elif part.type == "image_url" and part.image_url:
-                    url = part.image_url["url"] if isinstance(part.image_url, dict) else part.image_url.url
-                    if url.startswith("data:"):
-                        path = data_uri_to_file(url, tmp_dir=tmp_dir)
-                        image_paths.append(path)
-                        cleanup_paths.append(path)
-                    elif url.startswith("http"):
-                        path = url_to_file(url, tmp_dir=tmp_dir)
-                        image_paths.append(path)
-                        cleanup_paths.append(path)
+            if isinstance(msg.content, str):
+                if msg.content:
+                    parts.append(AistudioPart(text=msg.content))
+                    text_parts.append(msg.content)
+            elif isinstance(msg.content, list):
+                for part in msg.content:
+                    if part.type == "text" and part.text:
+                        parts.append(AistudioPart(text=part.text))
+                        text_parts.append(part.text)
+                    elif part.type == "image_url":
+                        if not part.image_url:
+                            raise ValueError("image_url.url is required")
+                        url = part.image_url.get("url") if isinstance(part.image_url, dict) else part.image_url.url
+                        if not isinstance(url, str) or not url:
+                            raise ValueError("image_url.url is required")
+                        if url.startswith("data:"):
+                            path = data_uri_to_file(url, tmp_dir=tmp_dir)
+                            image_paths.append(path)
+                            cleanup_paths.append(path)
+                        elif url.startswith("http"):
+                            path = url_to_file(url, tmp_dir=tmp_dir)
+                            image_paths.append(path)
+                            cleanup_paths.append(path)
+                        else:
+                            raise ValueError("image_url.url must be a data URI or HTTP URL")
+                    elif part.type not in ("text", "image_url"):
+                        raise ValueError(f"unsupported message content type: {part.type}")
 
-        for image_path in image_paths:
-            parts.append(_image_path_to_part(image_path))
+            for image_path in image_paths:
+                parts.append(_image_path_to_part(image_path))
 
-        if not parts:
-            continue
+            if not parts:
+                continue
 
-        mapped_role = "model" if role == "assistant" else "user"
-        contents.append(AistudioContent(role=mapped_role, parts=parts))
-        capture_texts.extend(text_parts)
-        if image_paths:
-            saw_images = True
-            capture_images.extend(image_paths)
+            mapped_role = "model" if role == "assistant" else "user"
+            contents.append(AistudioContent(role=mapped_role, parts=parts))
+            capture_texts.extend(text_parts)
+            if image_paths:
+                saw_images = True
+                capture_images.extend(image_paths)
 
-    capture_prompt = "\n".join(capture_texts) if capture_texts else "你好"
-    model = requested_model
-    if model.startswith("gpt-") or model.startswith("openai/"):
-        model = DEFAULT_IMAGE_MODEL if saw_images else requested_model
+        if not contents:
+            raise ValueError("messages must contain at least one non-empty content part")
 
-    return {
-        "model": model,
-        "system_instruction": "\n".join(system_texts) if system_texts else None,
-        "contents": contents or [AistudioContent(role="user", parts=[AistudioPart(text="你好")])],
-        "capture_prompt": capture_prompt,
-        "capture_images": capture_images,
-        "cleanup_paths": cleanup_paths,
-    }
+        capture_prompt = "\n".join(capture_texts) if capture_texts else "你好"
+        model = requested_model
+        if model.startswith("gpt-") or model.startswith("openai/"):
+            model = DEFAULT_IMAGE_MODEL if saw_images else requested_model
+
+        success = True
+        return {
+            "model": model,
+            "system_instruction": "\n".join(system_texts) if system_texts else None,
+            "contents": contents or [AistudioContent(role="user", parts=[AistudioPart(text="你好")])],
+            "capture_prompt": capture_prompt,
+            "capture_images": capture_images,
+            "cleanup_paths": cleanup_paths,
+        }
+    finally:
+        if not success:
+            cleanup_files(cleanup_paths)
 
 
 def _message_text_content(content) -> str | None:
@@ -165,9 +207,22 @@ def cleanup_files(paths: list[str]):
 def inline_data_to_file(mime_type: str, data: str, tmp_dir: str = "/tmp") -> str:
     ext = mime_type.split("/")[-1].replace("jpeg", "jpg")
     path = os.path.join(tmp_dir, f"aistudio_img_{uuid.uuid4().hex[:8]}.{ext}")
+    decoded = _decode_image_base64(data, "inlineData")
     with open(path, "wb") as file:
-        file.write(base64.b64decode(data))
+        file.write(decoded)
     return path
+
+
+def _validate_gemini_generation_config(generation_config) -> None:
+    if generation_config is None:
+        return
+    validate_number_range("generationConfig.temperature", generation_config.temperature, minimum=0, maximum=2)
+    validate_number_range("generationConfig.topP", generation_config.topP, minimum=0, maximum=1)
+    validate_number_range("generationConfig.topK", generation_config.topK, minimum=1, integer=True)
+    validate_number_range("generationConfig.maxOutputTokens", generation_config.maxOutputTokens, minimum=1, integer=True)
+    validate_number_range("generationConfig.presencePenalty", generation_config.presencePenalty, minimum=-2, maximum=2)
+    validate_number_range("generationConfig.frequencyPenalty", generation_config.frequencyPenalty, minimum=-2, maximum=2)
+    validate_number_range("generationConfig.logprobs", generation_config.logprobs, minimum=0, integer=True)
 
 
 def encode_schema_to_wire(schema: dict) -> list:
@@ -246,6 +301,10 @@ def normalize_openai_tools(tools) -> list[list] | None:
 
 
 def normalize_gemini_request(req, requested_model: str, tmp_dir: str = "/tmp", *, stream: bool = False) -> dict:
+    if req.cachedContent:
+        raise ValueError("cachedContent is not supported by AI Studio browser replay mode yet")
+    if req.safetySettings:
+        raise ValueError("safetySettings are not supported by AI Studio browser replay mode yet")
     if not req.contents:
         raise ValueError("contents is required")
 
@@ -255,132 +314,160 @@ def normalize_gemini_request(req, requested_model: str, tmp_dir: str = "/tmp", *
     cleanup_paths: list[str] = []
     capture_prompt = "你好"
     capture_images: list[str] = []
+    success = False
 
-    for content in req.contents:
-        role = content.role or "user"
-        parts: list[AistudioPart] = []
-        text_parts: list[str] = []
-        content_images: list[str] = []
+    try:
+        for content in req.contents:
+            role = (content.role or "user").strip().lower()
+            if role not in GEMINI_CONTENT_ROLES:
+                raise ValueError(f"unsupported content role: {content.role}")
+            if not content.parts:
+                raise ValueError("contents[].parts must contain at least one part")
+            parts: list[AistudioPart] = []
+            text_parts: list[str] = []
+            content_images: list[str] = []
 
-        for part in content.parts:
-            if part.text is not None:
-                parts.append(AistudioPart(text=part.text))
-                text_parts.append(part.text)
-                continue
-            if part.inlineData is not None:
-                parts.append(AistudioPart(inline_data=(part.inlineData.mimeType, part.inlineData.data)))
-                image_path = inline_data_to_file(part.inlineData.mimeType, part.inlineData.data, tmp_dir=tmp_dir)
-                content_images.append(image_path)
-                cleanup_paths.append(image_path)
-                continue
-            if part.fileData is not None:
-                raise ValueError("fileData is not supported yet")
+            for part in content.parts:
+                if part.text is not None:
+                    parts.append(AistudioPart(text=part.text))
+                    text_parts.append(part.text)
+                    continue
+                if part.inlineData is not None:
+                    image_path = inline_data_to_file(part.inlineData.mimeType, part.inlineData.data, tmp_dir=tmp_dir)
+                    parts.append(AistudioPart(inline_data=(part.inlineData.mimeType, part.inlineData.data)))
+                    content_images.append(image_path)
+                    cleanup_paths.append(image_path)
+                    continue
+                if part.fileData is not None:
+                    raise ValueError("fileData is not supported by AI Studio browser replay mode yet; use inlineData")
 
-        contents.append(AistudioContent(role=role, parts=parts))
+            if not parts:
+                raise ValueError("contents[].parts must contain text or inlineData")
 
-        if role == "user":
-            if text_parts:
-                capture_prompt = "\n".join(text_parts)
-            if content_images:
-                capture_images = content_images
+            contents.append(AistudioContent(role=role, parts=parts))
 
-    system_instruction = None
-    if req.systemInstruction is not None:
-        system_instruction = AistudioContent(
-            role=req.systemInstruction.role or "user",
-            parts=[
-                AistudioPart(text=part.text)
-                if part.text is not None
-                else AistudioPart(inline_data=(part.inlineData.mimeType, part.inlineData.data))
-                for part in req.systemInstruction.parts
-                if part.text is not None or part.inlineData is not None
-            ],
-        )
+            if role == "user":
+                if text_parts:
+                    capture_prompt = "\n".join(text_parts)
+                if content_images:
+                    capture_images = content_images
 
-    tools = None
-    uses_function_tools = False
-    uses_search = False
-    if req.tools:
-        tools = []
-        for tool in req.tools:
-            if tool.codeExecution is not None:
-                uses_function_tools = True
-                tools.append(TOOLS_TEMPLATES["code_execution"])
-            if tool.functionDeclarations:
-                uses_function_tools = True
-                tools.append([None, [encode_function_declaration_to_wire(decl) for decl in tool.functionDeclarations]])
-            if tool.googleSearch is not None or tool.googleSearchRetrieval is not None:
-                uses_search = True
-                tools.append(TOOLS_TEMPLATES["google_search"])
-
-    # Gemma 4 小模型默认开启 Google Search
-    if tools is None and any(m in model for m in ("gemma-4-26b-a4b-it", "gemma-4-31b-it")):
-        uses_search = True
-        tools = [TOOLS_TEMPLATES["google_search"]]
-
-    generation_config = req.generationConfig
-    generation_config_overrides = None
-    if generation_config is not None:
-        generation_config_overrides = {}
-        if generation_config.stopSequences is not None:
-            generation_config_overrides["stop_sequences"] = generation_config.stopSequences
-        if generation_config.maxOutputTokens is not None:
-            generation_config_overrides["max_tokens"] = generation_config.maxOutputTokens
-        if generation_config.temperature is not None:
-            generation_config_overrides["temperature"] = generation_config.temperature
-        if generation_config.topP is not None:
-            generation_config_overrides["top_p"] = generation_config.topP
-        if generation_config.topK is not None:
-            generation_config_overrides["top_k"] = generation_config.topK
-        if generation_config.responseMimeType is not None:
-            generation_config_overrides["response_mime_type"] = generation_config.responseMimeType
-        if generation_config.responseSchema is not None:
-            generation_config_overrides["response_schema"] = (
-                encode_schema_to_wire(generation_config.responseSchema)
-                if isinstance(generation_config.responseSchema, dict)
-                else generation_config.responseSchema
+        system_instruction = None
+        if req.systemInstruction is not None:
+            system_role = (req.systemInstruction.role or "user").strip().lower()
+            if system_role not in GEMINI_CONTENT_ROLES:
+                raise ValueError(f"unsupported systemInstruction role: {req.systemInstruction.role}")
+            if not req.systemInstruction.parts:
+                raise ValueError("systemInstruction.parts must contain at least one part")
+            system_parts: list[AistudioPart] = []
+            for part in req.systemInstruction.parts:
+                if part.text is not None:
+                    system_parts.append(AistudioPart(text=part.text))
+                    continue
+                if part.inlineData is not None:
+                    _decode_image_base64(part.inlineData.data, "systemInstruction.inlineData")
+                    system_parts.append(AistudioPart(inline_data=(part.inlineData.mimeType, part.inlineData.data)))
+                    continue
+                if part.fileData is not None:
+                    raise ValueError("systemInstruction.fileData is not supported by AI Studio browser replay mode yet; use inlineData")
+            if not system_parts:
+                raise ValueError("systemInstruction.parts must contain text or inlineData")
+            system_instruction = AistudioContent(
+                role=system_role,
+                parts=system_parts,
             )
-        if generation_config.presencePenalty is not None:
-            generation_config_overrides["presence_penalty"] = generation_config.presencePenalty
-        if generation_config.frequencyPenalty is not None:
-            generation_config_overrides["frequency_penalty"] = generation_config.frequencyPenalty
-        if generation_config.responseLogprobs is not None:
-            generation_config_overrides["response_logprobs"] = generation_config.responseLogprobs
-        if generation_config.logprobs is not None:
-            generation_config_overrides["logprobs"] = generation_config.logprobs
-        if generation_config.mediaResolution is not None:
-            generation_config_overrides["media_resolution"] = generation_config.mediaResolution
-        if generation_config.thinkingConfig is not None:
-            generation_config_overrides["thinking_config"] = generation_config.thinkingConfig
 
-    if capture_images and not capabilities.image_input:
-        raise ValueError(f"Model '{model}' does not support image input")
-    if stream and not capabilities.streaming:
-        raise ValueError(f"Model '{model}' does not support streaming responses")
-    if uses_function_tools and not capabilities.tools:
-        raise ValueError(f"Model '{model}' does not support tool calls")
-    if uses_search and not capabilities.search:
-        raise ValueError(f"Model '{model}' does not support Google Search grounding")
-    if generation_config_overrides:
-        unsupported = set(capabilities.unsupported_generation_fields)
-        if "thinking_config" in generation_config_overrides and not capabilities.thinking:
-            unsupported.add("thinking_config")
-        blocked = [field for field in generation_config_overrides if field in unsupported]
-        if blocked:
-            field_names = ", ".join(GENERATION_CONFIG_FIELD_NAMES.get(field, field) for field in blocked)
-            raise ValueError(f"Model '{model}' does not support generationConfig field(s): {field_names}")
+        tools = None
+        uses_function_tools = False
+        uses_search = False
+        if req.tools:
+            tools = []
+            for tool in req.tools:
+                if tool.codeExecution is not None:
+                    uses_function_tools = True
+                    tools.append(TOOLS_TEMPLATES["code_execution"])
+                if tool.functionDeclarations:
+                    uses_function_tools = True
+                    tools.append([None, [encode_function_declaration_to_wire(decl) for decl in tool.functionDeclarations]])
+                if tool.googleSearch is not None or tool.googleSearchRetrieval is not None:
+                    uses_search = True
+                    tools.append(TOOLS_TEMPLATES["google_search"])
 
-    return {
-        "model": model,
-        "contents": contents,
-        "system_instruction": system_instruction,
-        "tools": tools or None,
-        "capture_prompt": capture_prompt,
-        "capture_images": capture_images or None,
-        "cleanup_paths": cleanup_paths,
-        "temperature": generation_config.temperature if generation_config else None,
-        "top_p": generation_config.topP if generation_config else None,
-        "top_k": generation_config.topK if generation_config else None,
-        "max_tokens": generation_config.maxOutputTokens if generation_config else None,
-        "generation_config_overrides": generation_config_overrides or None,
-    }
+        # Gemma 4 小模型默认开启 Google Search
+        if tools is None and any(m in model for m in ("gemma-4-26b-a4b-it", "gemma-4-31b-it")):
+            uses_search = True
+            tools = [TOOLS_TEMPLATES["google_search"]]
+
+        generation_config = req.generationConfig
+        _validate_gemini_generation_config(generation_config)
+        generation_config_overrides = None
+        if generation_config is not None:
+            generation_config_overrides = {}
+            if generation_config.stopSequences is not None:
+                generation_config_overrides["stop_sequences"] = generation_config.stopSequences
+            if generation_config.maxOutputTokens is not None:
+                generation_config_overrides["max_tokens"] = generation_config.maxOutputTokens
+            if generation_config.temperature is not None:
+                generation_config_overrides["temperature"] = generation_config.temperature
+            if generation_config.topP is not None:
+                generation_config_overrides["top_p"] = generation_config.topP
+            if generation_config.topK is not None:
+                generation_config_overrides["top_k"] = generation_config.topK
+            if generation_config.responseMimeType is not None:
+                generation_config_overrides["response_mime_type"] = generation_config.responseMimeType
+            if generation_config.responseSchema is not None:
+                generation_config_overrides["response_schema"] = (
+                    encode_schema_to_wire(generation_config.responseSchema)
+                    if isinstance(generation_config.responseSchema, dict)
+                    else generation_config.responseSchema
+                )
+            if generation_config.presencePenalty is not None:
+                generation_config_overrides["presence_penalty"] = generation_config.presencePenalty
+            if generation_config.frequencyPenalty is not None:
+                generation_config_overrides["frequency_penalty"] = generation_config.frequencyPenalty
+            if generation_config.responseLogprobs is not None:
+                generation_config_overrides["response_logprobs"] = generation_config.responseLogprobs
+            if generation_config.logprobs is not None:
+                generation_config_overrides["logprobs"] = generation_config.logprobs
+            if generation_config.mediaResolution is not None:
+                generation_config_overrides["media_resolution"] = generation_config.mediaResolution
+            if generation_config.thinkingConfig is not None:
+                generation_config_overrides["thinking_config"] = generation_config.thinkingConfig
+
+        if capture_images and not capabilities.image_input:
+            raise ValueError(f"Model '{model}' does not support image input")
+        if stream and not capabilities.streaming:
+            raise ValueError(f"Model '{model}' does not support streaming responses")
+        if uses_function_tools and not capabilities.tools:
+            raise ValueError(f"Model '{model}' does not support tool calls")
+        if uses_search and not capabilities.search:
+            raise ValueError(f"Model '{model}' does not support Google Search grounding")
+        if generation_config is not None and (generation_config.responseMimeType is not None or generation_config.responseSchema is not None) and not capabilities.structured_output:
+            raise ValueError(f"Model '{model}' does not support structured output")
+        if generation_config_overrides:
+            unsupported = set(capabilities.unsupported_generation_fields)
+            if "thinking_config" in generation_config_overrides and not capabilities.thinking:
+                unsupported.add("thinking_config")
+            blocked = [field for field in generation_config_overrides if field in unsupported]
+            if blocked:
+                field_names = ", ".join(GENERATION_CONFIG_FIELD_NAMES.get(field, field) for field in blocked)
+                raise ValueError(f"Model '{model}' does not support generationConfig field(s): {field_names}")
+
+        success = True
+        return {
+            "model": model,
+            "contents": contents,
+            "system_instruction": system_instruction,
+            "tools": tools or None,
+            "capture_prompt": capture_prompt,
+            "capture_images": capture_images or None,
+            "cleanup_paths": cleanup_paths,
+            "temperature": generation_config.temperature if generation_config else None,
+            "top_p": generation_config.topP if generation_config else None,
+            "top_k": generation_config.topK if generation_config else None,
+            "max_tokens": generation_config.maxOutputTokens if generation_config else None,
+            "generation_config_overrides": generation_config_overrides or None,
+        }
+    finally:
+        if not success:
+            cleanup_files(cleanup_paths)

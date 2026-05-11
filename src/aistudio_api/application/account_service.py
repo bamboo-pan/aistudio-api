@@ -99,9 +99,17 @@ class AccountService:
         """删除账号。"""
         return self._store.delete_account(account_id)
 
-    def update_account(self, account_id: str, name: str) -> AccountMeta | None:
+    def update_account(self, account_id: str, name: str | None = None, tier: str | None = None) -> AccountMeta | None:
         """更新账号名称。"""
-        return self._store.update_account(account_id, name)
+        return self._store.update_account(account_id, name, tier)
+
+    def test_account(self, account_id: str) -> dict[str, Any] | None:
+        """执行不会发送外部请求的账号健康检查。"""
+        return self._store.test_account_health(account_id)
+
+    def isolate_account(self, account_id: str, reason: str, seconds: int | None = None) -> AccountMeta | None:
+        """隔离账号，供轮询器在连续失败时调用。"""
+        return self._store.isolate_account(account_id, reason, seconds)
 
     def export_credentials(self, account_id: str | None = None) -> dict[str, Any]:
         """导出账号凭证备份包。"""

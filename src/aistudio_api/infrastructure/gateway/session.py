@@ -406,7 +406,13 @@ class BrowserSession:
         from camoufox.sync_api import Camoufox
 
         self._close_sync()
-        self._cf = Camoufox(headless=settings.camoufox_headless, main_world_eval=True)
+        browser_options: dict[str, Any] = {
+            "headless": settings.camoufox_headless,
+            "main_world_eval": True,
+        }
+        if settings.proxy_server:
+            browser_options["proxy"] = {"server": settings.proxy_server}
+        self._cf = Camoufox(**browser_options)
         self._browser = self._cf.__enter__()
         self._ctx = self._new_context_sync()
         self._hook_page = self._ctx.pages[0] if self._ctx.pages else self._ctx.new_page()
@@ -809,7 +815,7 @@ mw:((hash) => {
             route_started_at = _t.time()
             goto_error = None
             try:
-                page.goto(url, wait_until="networkidle", timeout=30000)
+                page.goto(url, wait_until="domcontentloaded", timeout=60000)
                 log.debug(f"[timing] goto {url} took {_t.time()-route_started_at:.1f}s")
             except Exception as exc:
                 goto_error = exc

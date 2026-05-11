@@ -22,6 +22,14 @@ logger = logging.getLogger("aistudio")
 
 _snapshot_cache = SnapshotCache()
 
+PURE_HTTP_GENERATE_CONTENT_UNSUPPORTED = (
+    "Pure HTTP mode is experimental and currently supports only single-turn "
+    "non-streaming plain-text prompts; it does not support images, tools, "
+    "thinking, system instructions, multi-turn conversations, safety overrides, "
+    "or structured generation config. Disable AISTUDIO_USE_PURE_HTTP or use browser mode "
+    "for full compatibility"
+)
+
 
 class AIStudioClient:
     def __init__(self, port: int = DEFAULT_CAMOUFOX_PORT, use_pure_http: bool = False):
@@ -42,6 +50,10 @@ class AIStudioClient:
             self._replay_service = RequestReplayService(session=self._session)
         
         self._streaming_gateway = StreamingGateway(session=self._session)
+
+    @property
+    def is_pure_http(self) -> bool:
+        return self._use_pure_http
 
     async def warmup(self) -> None:
         """预热浏览器，启动 Camoufox 并加载 AI Studio 页面。"""
@@ -155,6 +167,8 @@ class AIStudioClient:
         safety_off: bool = False,
         enable_thinking: bool = True,
     ):
+        if self._use_pure_http:
+            raise RequestError(501, "Pure HTTP mode is experimental and does not support streaming; disable AISTUDIO_USE_PURE_HTTP or use browser mode")
         captured = await self.capture_request(
             prompt=capture_prompt,
             model=model,
@@ -236,6 +250,18 @@ class AIStudioClient:
         safety_off: bool = False,
         enable_thinking: bool = True,
     ) -> ModelOutput:
+        if self._use_pure_http and not self._pure_http_generate_content_supported(
+            capture_images=capture_images,
+            contents=contents,
+            system_instruction_content=system_instruction_content,
+            tools=tools,
+            generation_config_overrides=generation_config_overrides,
+            safety_off=safety_off,
+        ):
+            raise RequestError(
+                501,
+                PURE_HTTP_GENERATE_CONTENT_UNSUPPORTED,
+            )
         logger.info("拦截请求: %r", f"{capture_prompt[:20]}...")
         captured = await self.capture_request(capture_prompt, model=model, images=capture_images, contents=contents)
         if not captured:
@@ -254,7 +280,7 @@ class AIStudioClient:
             generation_config_overrides=generation_config_overrides,
             sanitize_plain_text=sanitize_plain_text,
             safety_off=safety_off,
-            enable_thinking=enable_thinking,
+            enable_thinking=False if self._use_pure_http else enable_thinking,
         )
 
         status, raw = await self._replay_service.replay(captured, body=modified_body)
@@ -279,6 +305,8 @@ class AIStudioClient:
         save_path: Optional[str] = None,
         generation_config_overrides: dict | None = None,
     ) -> ModelOutput:
+        if self._use_pure_http:
+            raise RequestError(501, "Pure HTTP mode is experimental and does not support image generation; use browser mode")
         logger.info("生图请求: %r", f"{prompt[:20]}...")
         captured = await self.capture_request(prompt, model=model)
         if not captured:
@@ -317,6 +345,24 @@ class AIStudioClient:
             logger.info("图片已保存: %s (%s bytes)", path, img.size)
 
         return output
+
+    def _pure_http_generate_content_supported(
+        self,
+        *,
+        capture_images: Optional[list[str]],
+        contents: Optional[list[AistudioContent]],
+        system_instruction_content: AistudioContent | None,
+        tools: list[list] | None,
+        generation_config_overrides: dict | None,
+        safety_off: bool,
+    ) -> bool:
+        if capture_images or system_instruction_content or tools or generation_config_overrides or safety_off:
+            return False
+        if contents is None:
+            return True
+        if len(contents) != 1 or contents[0].role != "user":
+            return False
+        return all(part.text is not None and part.inline_data is None and part.file_id is None for part in contents[0].parts)
 
     def _build_user_content(self, prompt: str, images: Optional[list[str]] = None) -> AistudioContent:
         import base64

@@ -11,6 +11,10 @@ def test_model_metadata_exposes_capabilities_and_image_sizes():
     metadata = get_model_metadata("gemini-3.1-flash-image-preview")
 
     assert metadata["capabilities"]["image_output"] is True
+    assert metadata["capabilities"]["structured_output"] is False
+    assert metadata["capabilities"]["tool_calls"] is False
+    assert "media_resolution" in metadata["capabilities"]["unsupported_generation_fields"]
+    assert "media_resolution" in metadata["unsupported_generation_fields"]
     assert metadata["image_generation"]["response_formats"] == ["b64_json", "url"]
     assert {item["size"] for item in metadata["image_generation"]["sizes"]} >= {
         "1024x1024",
@@ -28,6 +32,27 @@ def test_chat_capability_validation_rejects_image_input_for_gemma():
             uses_search=False,
             uses_thinking=False,
             stream=False,
+        )
+
+
+def test_model_metadata_exposes_structured_output_for_text_model():
+    metadata = get_model_metadata("gemini-3-flash-preview")
+
+    assert metadata["capabilities"]["text_output"] is True
+    assert metadata["capabilities"]["structured_output"] is True
+    assert metadata["capabilities"]["tool_calls"] is True
+
+
+def test_chat_capability_validation_rejects_structured_output_when_unavailable():
+    with pytest.raises(ValueError, match="structured output"):
+        validate_chat_capabilities(
+            "gemini-3.1-flash-tts-preview",
+            has_image_input=False,
+            uses_tools=False,
+            uses_search=False,
+            uses_thinking=False,
+            stream=False,
+            uses_structured_output=True,
         )
 
 

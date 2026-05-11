@@ -1,0 +1,53 @@
+{
+  "id": "p0-p1-actual-verification",
+  "name": "p0-p1-actual-verification",
+  "title": "P0 P1 actual verification implementation",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "your-name",
+  "assignee": "your-name",
+  "createdAt": "2026-05-11",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "prd_status": "confirmed",
+    "workflow": {
+      "version": 1,
+      "current_step": "awaiting_commit",
+      "vcs": {
+        "kind": "git",
+        "commit_required": true
+      },
+      "implement": {
+        "dispatched_at": null,
+        "completed_at": null
+      },
+      "check": {
+        "completed_at": "2026-05-11",
+        "fingerprint": null,
+        "head": null
+      },
+      "spec_update": {
+        "reviewed_at": "2026-05-11",
+        "result": "updated"
+      },
+      "commit": {
+        "hash": null,
+        "recorded_at": null
+      }
+    }
+  }
+}

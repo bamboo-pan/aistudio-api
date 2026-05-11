@@ -15,6 +15,11 @@ DEFAULT_TEXT_MODEL = os.getenv("AISTUDIO_DEFAULT_TEXT_MODEL", "gemma-4-31b-it")
 DEFAULT_IMAGE_MODEL = os.getenv("AISTUDIO_DEFAULT_IMAGE_MODEL", "gemini-3.1-flash-image-preview")
 DEFAULT_CAMOUFOX_PORT = 9222
 
+
+def _proxy_server() -> str | None:
+    value = os.getenv("AISTUDIO_PROXY_SERVER")
+    return value.strip() if value else None
+
 _AUTH_SEARCH_ROOTS = [
     Path(__file__).resolve().parents[2] / "data",  # 项目内 data/ 目录
 ]
@@ -42,6 +47,7 @@ class Settings:
     tmp_dir: str = os.getenv("AISTUDIO_TMP_DIR", "/tmp")
     camoufox_headless: bool = os.getenv("AISTUDIO_CAMOUFOX_HEADLESS", "1") not in ("0", "false", "False")
     camoufox_python: str | None = os.getenv("AISTUDIO_CAMOUFOX_PYTHON")
+    proxy_server: str | None = _proxy_server()
     timeout_replay: int = int(os.getenv("AISTUDIO_TIMEOUT_REPLAY", "120"))
     timeout_stream: int = int(os.getenv("AISTUDIO_TIMEOUT_STREAM", "120"))
     timeout_capture: int = int(os.getenv("AISTUDIO_TIMEOUT_CAPTURE", "30"))

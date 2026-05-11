@@ -6,8 +6,8 @@ Self-hosted OpenAI-compatible API proxy for Google AI Studio. No API key needed 
 
 ## Features
 
-- **OpenAI-compatible** — `/v1/chat/completions`, `/v1/models`, `/v1/images/generations`
-- **Gemini-native API** — `/v1beta/models/{model}:generateContent`
+- **OpenAI-compatible** — `/v1/chat/completions`, `/v1/responses`, `/v1/messages`, `/v1/models`, `/v1/images/generations`
+- **Gemini-native API** — `/v1beta/models`, `generateContent`, `streamGenerateContent`, `countTokens`, with clear unsupported errors for embeddings, `cachedContent`, and `fileData`
 - **Streaming** — SSE streaming for both API formats
 - **Multi-turn** — proper user/model alternating conversation history
 - **Image input** — base64 inline or HTTP URL, single or multiple images
@@ -74,6 +74,15 @@ curl http://localhost:8080/v1/chat/completions \
 # List models
 curl http://localhost:8080/v1/models
 
+# Responses API with response_format/json_schema
+curl http://localhost:8080/v1/responses \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini-3-flash-preview",
+    "input": "Return JSON",
+    "text": {"format": {"type": "json_schema", "name": "Answer", "schema": {"type": "object", "properties": {"ok": {"type": "boolean"}}}}}
+  }'
+
 # Image generation (OpenAI-compatible)
 curl http://localhost:8080/v1/images/generations \
   -H "Content-Type: application/json" \
@@ -96,6 +105,11 @@ curl http://localhost:8080/v1beta/models/gemini-3-flash-preview:generateContent 
     "contents": [{"role": "user", "parts": [{"text": "What is the latest news?"}]}],
     "tools": [{"googleSearchRetrieval": {}}]
   }'
+
+# Estimate tokens
+curl http://localhost:8080/v1beta/models/gemini-3-flash-preview:countTokens \
+  -H "Content-Type: application/json" \
+  -d '{"contents": [{"role": "user", "parts": [{"text": "Hello"}]}]}'
 ```
 
 ### Python (OpenAI SDK)
@@ -144,7 +158,7 @@ python3 main.py client "Draw a cat" --image --save cat.png
 | Gemini Flash Latest | `gemini-flash-latest` | ❌ | Alias |
 | Gemini Flash Lite Latest | `gemini-flash-lite-latest` | ❌ | Alias |
 
-`/v1/models` returns capability metadata for every registered model. `/v1/images/generations` supports `b64_json` and also accepts client requests for `response_format=url` by returning a data URL plus base64 fallback. It validates `size` through model metadata and returns 400 for unsupported model/size combinations. When `/v1/chat/completions` is called with an image model, the server uses image-generation semantics and ignores incompatible `stream=true` requests.
+`/v1/models` returns capability metadata for every registered model. OpenAI-compatible routes return standard `{ "error": ... }` envelopes where practical. `/v1/chat/completions`, `/v1/responses`, and `/v1/messages` support `response_format` / `json_schema` structured output when the selected model supports it, plus tool-call mapping. `/v1/images/generations` supports `b64_json` and also accepts client requests for `response_format=url` by returning a data URL plus base64 fallback. It validates `size` through model metadata and returns 400 for unsupported model/size combinations. When `/v1/chat/completions` is called with an image model, the server uses image-generation semantics and ignores incompatible `stream=true` requests.
 
 ## Configuration
 
@@ -157,6 +171,7 @@ Environment variables or `.env` file:
 | `AISTUDIO_DEFAULT_TEXT_MODEL` | `gemma-4-31b-it` | Default chat model |
 | `AISTUDIO_DEFAULT_IMAGE_MODEL` | `gemini-3.1-flash-image-preview` | Default image model |
 | `AISTUDIO_CAMOUFOX_HEADLESS` | `1` | Run browser headless |
+| `AISTUDIO_PROXY_SERVER` | empty | Camoufox browser proxy, for example `http://<WSL gateway IP>:7890` when WSL must use a Windows proxy |
 | `AISTUDIO_TIMEOUT_REPLAY` | `120` | Request timeout (seconds) |
 | `AISTUDIO_TIMEOUT_STREAM` | `120` | Stream timeout (seconds) |
 | `AISTUDIO_SNAPSHOT_CACHE_TTL` | `3600` | BotGuard snapshot cache TTL |
@@ -164,6 +179,8 @@ Environment variables or `.env` file:
 | `AISTUDIO_ACCOUNT_COOLDOWN_SECONDS` | `60` | Cooldown after rate limit |
 | `AISTUDIO_USE_PURE_HTTP` | `0` | Pure HTTP mode (no browser) |
 | `AISTUDIO_DUMP_RAW_RESPONSE` | `0` | Dump raw responses to disk |
+
+> `AISTUDIO_USE_PURE_HTTP=1` is still experimental. It only attempts single-turn, non-streaming plain-text requests today. Streaming, images, tools, image input, thinking, system instructions, multi-turn conversations, safety overrides, structured output, and missing BotGuard snapshot support return clear `501` unsupported errors. Use the default browser mode for production or full compatibility.
 
 ## Architecture
 

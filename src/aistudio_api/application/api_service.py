@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import base64
+import asyncio
 import json
 import logging
 import time
+import uuid
 from typing import Any
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse
+from pydantic import ValidationError
 
-from aistudio_api.application.chat_service import cleanup_files, normalize_chat_request, normalize_gemini_request, normalize_openai_tools
+from aistudio_api.application.chat_service import cleanup_files, encode_schema_to_wire, normalize_chat_request, normalize_gemini_request, normalize_openai_tools
+from aistudio_api.application.validation import validate_number_range
 from aistudio_api.domain.errors import AistudioError, AuthError, RequestError, UsageLimitExceeded
 from aistudio_api.domain.model_capabilities import IMAGE_RESPONSE_FORMATS, get_model_capabilities, plan_image_generation, validate_chat_capabilities
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
@@ -39,8 +43,165 @@ THINKING_LEVELS = {
 }
 
 
-def _bad_request(message: str) -> HTTPException:
-    return HTTPException(400, detail={"message": message, "type": "bad_request"})
+def _bad_request(message: str, error_type: str = "bad_request") -> HTTPException:
+    return HTTPException(400, detail={"message": message, "type": error_type})
+
+
+def _upstream_exception(exc: AistudioError) -> HTTPException:
+    if isinstance(exc, AuthError):
+        return HTTPException(401, detail={"message": str(exc), "type": "authentication_error"})
+    if isinstance(exc, RequestError) and exc.status == 501:
+        return HTTPException(501, detail={"message": exc.message or str(exc), "type": "unsupported_feature"})
+    return HTTPException(502, detail={"message": str(exc), "type": "upstream_error"})
+
+
+def _unsupported(message: str) -> HTTPException:
+    return HTTPException(501, detail={"message": message, "type": "unsupported_feature"})
+
+
+def _client_is_pure_http(client: AIStudioClient) -> bool:
+    return bool(getattr(client, "is_pure_http", False))
+
+
+def _pure_http_streaming_message() -> str:
+    return "Pure HTTP mode is experimental and does not support streaming; disable AISTUDIO_USE_PURE_HTTP or use browser mode"
+
+
+def _exception_message(exc: BaseException) -> str:
+    if isinstance(exc, HTTPException):
+        detail = exc.detail
+        if isinstance(detail, dict):
+            return str(detail.get("message") or detail)
+        return str(detail)
+    if isinstance(exc, RequestError) and exc.message:
+        return exc.message
+    return str(exc)
+
+
+def _openai_stream_error_detail(exc: BaseException) -> tuple[str, str, str | None]:
+    message = _exception_message(exc)
+    if isinstance(exc, RequestError) and exc.status == 501:
+        return message, "unsupported_feature", "unsupported_feature"
+    if isinstance(exc, AuthError):
+        return message, "authentication_error", "authentication_error"
+    if isinstance(exc, UsageLimitExceeded):
+        return message, "rate_limit_exceeded", "rate_limit_exceeded"
+    if isinstance(exc, AistudioError):
+        return message, "upstream_error", "upstream_error"
+    return message, "server_error", "server_error"
+
+
+def _gemini_stream_error_payload(exc: BaseException) -> dict[str, Any]:
+    message = _exception_message(exc)
+    if isinstance(exc, RequestError) and exc.status == 501:
+        return {"error": {"code": 501, "message": message, "status": "UNIMPLEMENTED"}}
+    if isinstance(exc, AuthError):
+        return {"error": {"code": 401, "message": message, "status": "UNAUTHENTICATED"}}
+    if isinstance(exc, UsageLimitExceeded):
+        return {"error": {"code": 429, "message": message, "status": "RESOURCE_EXHAUSTED"}}
+    if isinstance(exc, AistudioError):
+        return {"error": {"code": 502, "message": message, "status": "BAD_GATEWAY"}}
+    return {"error": {"code": 500, "message": message, "status": "INTERNAL"}}
+
+
+async def _request_disconnected(request: Request | None) -> bool:
+    if request is None:
+        return False
+    try:
+        return await request.is_disconnected()
+    except Exception:
+        return False
+
+
+async def _close_async_iterator(iterator: Any) -> None:
+    close = getattr(iterator, "aclose", None)
+    if close is not None:
+        await close()
+
+
+def _merge_generation_overrides(*overrides: dict | None) -> dict | None:
+    merged: dict[str, Any] = {}
+    for override in overrides:
+        if override:
+            merged.update(override)
+    return merged or None
+
+
+def _schema_from_json_schema_format(response_format: dict[str, Any]) -> dict[str, Any]:
+    schema_payload = response_format.get("json_schema")
+    if schema_payload is not None:
+        if not isinstance(schema_payload, dict):
+            raise ValueError("response_format.json_schema must be an object")
+        schema = schema_payload.get("schema")
+        if isinstance(schema, dict):
+            return schema
+        if any(key in schema_payload for key in ("type", "properties", "$schema", "items")):
+            return schema_payload
+        raise ValueError("response_format.json_schema.schema must be an object")
+
+    schema = response_format.get("schema")
+    if isinstance(schema, dict):
+        return schema
+    raise ValueError("response_format json_schema requires a schema object")
+
+
+def _response_format_overrides(response_format: dict[str, Any] | str | None) -> dict | None:
+    if response_format is None:
+        return None
+    if isinstance(response_format, str):
+        response_type = response_format.strip().lower()
+        if response_type in ("", "text"):
+            return None
+        if response_type == "json_object":
+            return {"response_mime_type": "application/json"}
+        raise ValueError("response_format must be 'text', 'json_object', or an object")
+    if not isinstance(response_format, dict):
+        raise ValueError("response_format must be a JSON object")
+    if "type" not in response_format and isinstance(response_format.get("format"), dict):
+        return _response_format_overrides(response_format["format"])
+
+    response_type = str(response_format.get("type") or "text").lower()
+    if response_type == "text":
+        return None
+    if response_type == "json_object":
+        return {"response_mime_type": "application/json"}
+    if response_type == "json_schema":
+        schema = _schema_from_json_schema_format(response_format)
+        return {"response_mime_type": "application/json", "response_schema": encode_schema_to_wire(schema)}
+    raise ValueError("response_format.type must be one of: text, json_object, json_schema")
+
+
+def _validate_chat_request(req: ChatRequest) -> dict | None:
+    validate_number_range("temperature", req.temperature, minimum=0, maximum=2)
+    validate_number_range("top_p", req.top_p, minimum=0, maximum=1)
+    validate_number_range("top_k", req.top_k, minimum=1, integer=True)
+    validate_number_range("max_tokens", req.max_tokens, minimum=1, integer=True)
+    return _response_format_overrides(req.response_format)
+
+
+def _validate_image_model_chat_options(req: ChatRequest) -> None:
+    unsupported = []
+    if req.temperature is not None:
+        unsupported.append("temperature")
+    if req.top_p is not None:
+        unsupported.append("top_p")
+    if req.top_k is not None:
+        unsupported.append("top_k")
+    if req.max_tokens is not None:
+        unsupported.append("max_tokens")
+    if req.tools:
+        unsupported.append("tools")
+    if req.grounding:
+        unsupported.append("grounding")
+    if _explicit_thinking_enabled(req.thinking):
+        unsupported.append("thinking")
+    if req.safety_off:
+        unsupported.append("safety_off")
+    if req.response_format is not None:
+        unsupported.append("response_format")
+    if unsupported:
+        fields = ", ".join(unsupported)
+        raise ValueError(f"Image generation models do not support chat field(s): {fields}")
 
 
 def _explicit_thinking_enabled(value: str | bool | None) -> bool:
@@ -151,6 +312,8 @@ def _chat_image_request(req: ChatRequest) -> tuple[ImageRequest, list[str]]:
 
 
 def _validate_image_request(req: ImageRequest):
+    if not req.prompt or not req.prompt.strip():
+        raise ValueError("prompt is required")
     if req.n < 1:
         raise ValueError("n must be at least 1")
     if req.n > 10:
@@ -159,14 +322,14 @@ def _validate_image_request(req: ImageRequest):
     return plan_image_generation(req.model, req.size), response_format
 
 
-async def _try_switch_account() -> bool:
+async def _try_switch_account(model: str | None = None, *, require_preferred: bool = False) -> bool:
     """尝试切换到下一个可用账号。返回是否成功切换。"""
     rotator = runtime_state.rotator
     if rotator is None:
         return False
 
     # 获取下一个账号
-    next_account = await rotator.get_next_account()
+    next_account = await rotator.get_next_account(model, require_preferred=require_preferred)
     if next_account is None:
         return False
 
@@ -184,7 +347,27 @@ async def _try_switch_account() -> bool:
         None,  # skip lock — caller already holds it
         keep_snapshot_cache=False,
     )
+    if result is not None:
+        logger.info("Account switched for model=%s reason=%s", model or "<any>", getattr(rotator, "last_selection_reason", None))
     return result is not None
+
+
+async def _ensure_account_for_model(model: str | None) -> None:
+    account_service = runtime_state.account_service
+    rotator = runtime_state.rotator
+    if account_service is None or rotator is None:
+        return
+
+    active = account_service.get_active_account()
+    if active is None or getattr(active, "is_isolated", False):
+        await _try_switch_account(model)
+        return
+
+    if rotator.model_prefers_premium(model) and not getattr(active, "is_premium", False):
+        if rotator.has_available_preferred_account(model):
+            await _try_switch_account(model, require_preferred=True)
+            return
+        logger.warning("Image model is using a non-premium account because no healthy Pro/Ultra account is available")
 
 
 def health_response() -> dict:
@@ -206,17 +389,382 @@ def stats_response() -> dict:
     return {"models": stats, "totals": totals}
 
 
+def _coerce_openai_content_blocks(content: Any) -> str | list[dict[str, Any]]:
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        raise ValueError("message content must be a string or content block array")
+    blocks: list[dict[str, Any]] = []
+    for block in content:
+        if isinstance(block, str):
+            blocks.append({"type": "text", "text": block})
+            continue
+        if not isinstance(block, dict):
+            raise ValueError("message content blocks must be objects")
+        block_type = str(block.get("type") or "text")
+        if block_type in ("text", "input_text"):
+            text = block.get("text")
+            if not isinstance(text, str):
+                raise ValueError("text content blocks require text")
+            blocks.append({"type": "text", "text": text})
+        elif block_type in ("image_url", "input_image"):
+            image_url = block.get("image_url") or block.get("url")
+            if isinstance(image_url, dict):
+                image_url = image_url.get("url")
+            if not isinstance(image_url, str) or not image_url:
+                raise ValueError("image content blocks require image_url")
+            blocks.append({"type": "image_url", "image_url": {"url": image_url}})
+        elif block_type == "image":
+            source = block.get("source")
+            if not isinstance(source, dict):
+                raise ValueError("image content blocks require source")
+            source_type = source.get("type")
+            if source_type == "base64":
+                media_type = source.get("media_type") or "image/png"
+                data = source.get("data")
+                if not isinstance(data, str) or not data:
+                    raise ValueError("image source.data is required")
+                blocks.append({"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{data}"}})
+            elif source_type == "url":
+                url = source.get("url")
+                if not isinstance(url, str) or not url:
+                    raise ValueError("image source.url is required")
+                blocks.append({"type": "image_url", "image_url": {"url": url}})
+            else:
+                raise ValueError("image source.type must be base64 or url")
+        elif block_type in ("tool_result", "input_tool_result"):
+            content_value = block.get("content", "")
+            if isinstance(content_value, str):
+                blocks.append({"type": "text", "text": content_value})
+            elif isinstance(content_value, list):
+                blocks.extend(_coerce_openai_content_blocks(content_value))
+            else:
+                blocks.append({"type": "text", "text": json.dumps(content_value, ensure_ascii=False)})
+        else:
+            raise ValueError(f"unsupported content block type: {block_type}")
+    return blocks
+
+
+def _messages_from_responses_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = []
+    instructions = payload.get("instructions")
+    if isinstance(instructions, str) and instructions.strip():
+        messages.append({"role": "system", "content": instructions})
+
+    input_value = payload.get("input")
+    if isinstance(input_value, str):
+        messages.append({"role": "user", "content": input_value})
+        return messages
+    if not isinstance(input_value, list) or not input_value:
+        raise ValueError("input must be a non-empty string or message array")
+
+    for item in input_value:
+        if isinstance(item, str):
+            messages.append({"role": "user", "content": item})
+            continue
+        if not isinstance(item, dict):
+            raise ValueError("input array items must be strings or objects")
+        item_type = str(item.get("type") or "message")
+        if item_type == "message" or "role" in item:
+            role = str(item.get("role") or "user")
+            messages.append({"role": role, "content": _coerce_openai_content_blocks(item.get("content", ""))})
+        elif item_type in ("input_text", "text"):
+            text = item.get("text")
+            if not isinstance(text, str):
+                raise ValueError("input_text items require text")
+            messages.append({"role": "user", "content": text})
+        elif item_type == "input_image":
+            messages.append({"role": "user", "content": _coerce_openai_content_blocks([item])})
+        else:
+            raise ValueError(f"unsupported input item type: {item_type}")
+    return messages
+
+
+def _chat_text(chat_response: dict[str, Any]) -> str:
+    message = _chat_message(chat_response)
+    content = message.get("content", "")
+    return content if isinstance(content, str) else ""
+
+
+def _chat_message(chat_response: dict[str, Any]) -> dict[str, Any]:
+    choices = chat_response.get("choices") if isinstance(chat_response, dict) else None
+    if not choices:
+        return {}
+    message = choices[0].get("message", {}) if isinstance(choices[0], dict) else {}
+    return message if isinstance(message, dict) else {}
+
+
+def _chat_tool_calls(chat_response: dict[str, Any]) -> list[dict[str, Any]]:
+    tool_calls = _chat_message(chat_response).get("tool_calls")
+    return tool_calls if isinstance(tool_calls, list) else []
+
+
+def _parse_tool_arguments(arguments: Any) -> Any:
+    if isinstance(arguments, str):
+        try:
+            return json.loads(arguments)
+        except json.JSONDecodeError:
+            return arguments
+    return arguments if arguments is not None else {}
+
+
+def _responses_output_items(chat_response: dict[str, Any]) -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = []
+    text = _chat_text(chat_response)
+    if text:
+        output.append(
+            {
+                "id": f"msg_{uuid.uuid4().hex[:24]}",
+                "type": "message",
+                "status": "completed",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": text, "annotations": []}],
+            }
+        )
+    for tool_call in _chat_tool_calls(chat_response):
+        function = tool_call.get("function") if isinstance(tool_call, dict) else None
+        if not isinstance(function, dict):
+            continue
+        output.append(
+            {
+                "id": f"fc_{uuid.uuid4().hex[:24]}",
+                "type": "function_call",
+                "status": "completed",
+                "call_id": tool_call.get("id"),
+                "name": function.get("name") or "unknown",
+                "arguments": function.get("arguments") or "{}",
+            }
+        )
+    if output:
+        return output
+    return [
+        {
+            "id": f"msg_{uuid.uuid4().hex[:24]}",
+            "type": "message",
+            "status": "completed",
+            "role": "assistant",
+            "content": [{"type": "output_text", "text": "", "annotations": []}],
+        }
+    ]
+
+
+def _message_content_blocks(chat_response: dict[str, Any]) -> list[dict[str, Any]]:
+    blocks: list[dict[str, Any]] = []
+    text = _chat_text(chat_response)
+    if text:
+        blocks.append({"type": "text", "text": text})
+    for tool_call in _chat_tool_calls(chat_response):
+        function = tool_call.get("function") if isinstance(tool_call, dict) else None
+        if not isinstance(function, dict):
+            continue
+        blocks.append(
+            {
+                "type": "tool_use",
+                "id": tool_call.get("id"),
+                "name": function.get("name") or "unknown",
+                "input": _parse_tool_arguments(function.get("arguments")),
+            }
+        )
+    return blocks or [{"type": "text", "text": ""}]
+
+
+def _messages_tools_from_payload(tools: Any) -> Any:
+    if not tools:
+        return None
+    if not isinstance(tools, list):
+        raise ValueError("tools must be an array")
+    converted = []
+    for tool in tools:
+        if not isinstance(tool, dict):
+            raise ValueError("tools items must be objects")
+        if tool.get("type") == "function" and isinstance(tool.get("function"), dict):
+            converted.append(tool)
+            continue
+        if tool.get("type") not in (None, "function"):
+            converted.append(tool)
+            continue
+        name = tool.get("name")
+        if not isinstance(name, str) or not name:
+            raise ValueError("tools[].name is required")
+        parameters = tool.get("input_schema") if isinstance(tool.get("input_schema"), dict) else None
+        if parameters is None and isinstance(tool.get("parameters"), dict):
+            parameters = tool.get("parameters")
+        converted.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": tool.get("description") if isinstance(tool.get("description"), str) else None,
+                    "parameters": parameters,
+                },
+            }
+        )
+    return converted or None
+
+
+async def handle_openai_responses(payload: dict[str, Any], client: AIStudioClient) -> dict[str, Any]:
+    if not payload.get("model"):
+        raise _bad_request("model is required", "invalid_request_error")
+    if payload.get("stream"):
+        raise _bad_request("/v1/responses streaming is not supported yet; use /v1/chat/completions for streaming", "invalid_request_error")
+    response_format = payload.get("response_format")
+    text_config = payload.get("text")
+    if response_format is None and isinstance(text_config, dict):
+        response_format = text_config.get("format")
+    try:
+        chat_req = ChatRequest(
+            model=str(payload["model"]),
+            messages=_messages_from_responses_payload(payload),
+            temperature=payload.get("temperature"),
+            top_p=payload.get("top_p"),
+            max_tokens=payload.get("max_output_tokens") or payload.get("max_tokens"),
+            tools=_messages_tools_from_payload(payload.get("tools")),
+            thinking=payload.get("thinking"),
+            response_format=response_format,
+        )
+    except (ValueError, ValidationError) as exc:
+        raise _bad_request(str(exc), "invalid_request_error") from exc
+    chat_response = await handle_chat(chat_req, client)
+    text = _chat_text(chat_response)
+    return {
+        "id": f"resp_{uuid.uuid4().hex[:24]}",
+        "object": "response",
+        "created_at": int(time.time()),
+        "status": "completed",
+        "model": chat_response.get("model", payload["model"]),
+        "output": _responses_output_items(chat_response),
+        "output_text": text,
+        "usage": chat_response.get("usage"),
+    }
+
+
+def _messages_from_messages_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    messages: list[dict[str, Any]] = []
+    system = payload.get("system")
+    if isinstance(system, str) and system.strip():
+        messages.append({"role": "system", "content": system})
+    raw_messages = payload.get("messages")
+    if not isinstance(raw_messages, list) or not raw_messages:
+        raise ValueError("messages must be a non-empty array")
+    for item in raw_messages:
+        if not isinstance(item, dict):
+            raise ValueError("messages items must be objects")
+        messages.append(
+            {
+                "role": str(item.get("role") or "user"),
+                "content": _coerce_openai_content_blocks(item.get("content", "")),
+            }
+        )
+    return messages
+
+
+async def handle_messages(payload: dict[str, Any], client: AIStudioClient) -> dict[str, Any]:
+    if not payload.get("model"):
+        raise _bad_request("model is required", "invalid_request_error")
+    if payload.get("stream"):
+        raise _bad_request("/v1/messages streaming is not supported yet; use /v1/chat/completions for streaming", "invalid_request_error")
+    try:
+        chat_req = ChatRequest(
+            model=str(payload["model"]),
+            messages=_messages_from_messages_payload(payload),
+            temperature=payload.get("temperature"),
+            top_p=payload.get("top_p"),
+            max_tokens=payload.get("max_tokens"),
+            tools=_messages_tools_from_payload(payload.get("tools")),
+            response_format=payload.get("response_format"),
+        )
+    except (ValueError, ValidationError) as exc:
+        raise _bad_request(str(exc), "invalid_request_error") from exc
+    chat_response = await handle_chat(chat_req, client)
+    usage = chat_response.get("usage") or {}
+    return {
+        "id": f"msg_{uuid.uuid4().hex[:24]}",
+        "type": "message",
+        "role": "assistant",
+        "model": chat_response.get("model", payload["model"]),
+        "content": _message_content_blocks(chat_response),
+        "stop_reason": "tool_use" if _chat_tool_calls(chat_response) else "end_turn",
+        "stop_sequence": None,
+        "usage": {
+            "input_tokens": usage.get("prompt_tokens", 0),
+            "output_tokens": usage.get("completion_tokens", 0),
+        },
+    }
+
+
+def gemini_model_dict(model_id: str) -> dict[str, Any]:
+    metadata = get_model_capabilities(model_id, strict=True).to_model_dict()
+    capabilities = metadata["capabilities"]
+    methods = ["generateContent", "countTokens"]
+    if capabilities.get("streaming"):
+        methods.append("streamGenerateContent")
+    return {
+        "name": f"models/{metadata['id']}",
+        "version": "001",
+        "displayName": metadata["id"],
+        "description": "AI Studio replay-backed model metadata",
+        "inputTokenLimit": 1048576,
+        "outputTokenLimit": 65536,
+        "supportedGenerationMethods": methods,
+    }
+
+
+def list_gemini_models_response() -> dict[str, Any]:
+    from aistudio_api.domain.model_capabilities import MODEL_CAPABILITIES
+
+    return {"models": [gemini_model_dict(model_id) for model_id in MODEL_CAPABILITIES]}
+
+
+def _estimate_text_tokens(text: str) -> int:
+    if not text:
+        return 0
+    return max(1, (len(text) + 3) // 4)
+
+
+def _estimate_content_tokens(contents: list[AistudioContent]) -> int:
+    total = 0
+    for content in contents:
+        for part in content.parts:
+            if part.text is not None:
+                total += _estimate_text_tokens(part.text)
+            elif part.inline_data is not None:
+                total += 258 + max(1, len(part.inline_data[1]) // 1024)
+    return total
+
+
+def gemini_count_tokens_response(model_path: str, payload: dict[str, Any]) -> dict[str, Any]:
+    request_payload = payload.get("generateContentRequest") if isinstance(payload.get("generateContentRequest"), dict) else payload
+    req = GeminiGenerateContentRequest.model_validate(request_payload)
+    normalized = None
+    try:
+        normalized = normalize_gemini_request(req, model_path, stream=False)
+        total_tokens = _estimate_content_tokens(normalized["contents"])
+        if normalized.get("system_instruction") is not None:
+            total_tokens += _estimate_content_tokens([normalized["system_instruction"]])
+        return {"totalTokens": total_tokens}
+    finally:
+        if normalized is not None:
+            cleanup_files(normalized["cleanup_paths"])
+
+
 def _build_chat_image_streaming_response(
     image_req: ImageRequest,
     client: AIStudioClient,
     cleanup_paths: list[str],
     *,
     include_usage: bool,
+    request: Request | None = None,
 ) -> StreamingResponse:
     async def stream_response():
         try:
+            if await _request_disconnected(request):
+                logger.info("Chat image stream disconnected before downstream call")
+                return
             chat_id = new_chat_id()
             image_response = await handle_image_generation(image_req, client)
+            if await _request_disconnected(request):
+                logger.info("Chat image stream disconnected before response write")
+                return
             content = _image_chat_content(image_response["data"])
             if content:
                 yield sse_chunk(chat_id, image_req.model, content, include_usage=include_usage)
@@ -224,12 +772,18 @@ def _build_chat_image_streaming_response(
             if include_usage:
                 yield sse_usage_chunk(chat_id, image_req.model)
             yield "data: [DONE]\n\n"
+        except asyncio.CancelledError:
+            logger.info("Chat image stream cancelled by client")
+            raise
         except HTTPException as exc:
             detail = exc.detail.get("message") if isinstance(exc.detail, dict) else str(exc.detail)
             yield sse_error(detail)
+            yield "data: [DONE]\n\n"
         except Exception as exc:
             logger.error("Chat image stream error: %s", exc, exc_info=True)
-            yield sse_error(str(exc))
+            message, error_type, code = _openai_stream_error_detail(exc)
+            yield sse_error(message, error_type=error_type, code=code)
+            yield "data: [DONE]\n\n"
         finally:
             cleanup_files(cleanup_paths)
 
@@ -240,22 +794,30 @@ def _build_chat_image_streaming_response(
     )
 
 
-async def handle_chat(req: ChatRequest, client: AIStudioClient):
+async def handle_chat(req: ChatRequest, client: AIStudioClient, request: Request | None = None):
+    try:
+        response_format_overrides = _validate_chat_request(req)
+    except ValueError as exc:
+        raise _bad_request(str(exc)) from exc
+
     busy_lock = runtime_state.busy_lock
     if busy_lock is None:
         raise HTTPException(503, detail={"message": "Server not ready", "type": "service_unavailable"})
     if busy_lock.locked():
         raise HTTPException(429, detail={"message": "Server is busy", "type": "rate_limit_exceeded"})
+    if req.stream and _client_is_pure_http(client):
+        raise _unsupported(_pure_http_streaming_message())
 
     if _is_image_output_chat_model(req.model):
         cleanup_paths: list[str] = []
         try:
+            _validate_image_model_chat_options(req)
             image_req, cleanup_paths = _chat_image_request(req)
             if req.stream:
                 include_usage = True
                 if req.stream_options is not None:
                     include_usage = req.stream_options.include_usage
-                return _build_chat_image_streaming_response(image_req, client, cleanup_paths, include_usage=include_usage)
+                return _build_chat_image_streaming_response(image_req, client, cleanup_paths, include_usage=include_usage, request=request)
 
             image_response = await handle_image_generation(image_req, client)
             return chat_completion_response(
@@ -273,16 +835,13 @@ async def handle_chat(req: ChatRequest, client: AIStudioClient):
 
     for attempt in range(max_retries):
         async with busy_lock:
-            # 首次尝试时，仅在没有活跃账号时才轮询（避免每次请求都重建浏览器）
-            if attempt == 0:
-                account_svc = runtime_state.account_service
-                if account_svc and not account_svc.get_active_account():
-                    await _try_switch_account()
-            normalized = normalize_chat_request(req.messages, req.model)
-            model = normalized["model"]
-            tmp_files = list(normalized["cleanup_paths"])
+            model = req.model
+            tmp_files: list[str] = []
 
             try:
+                normalized = normalize_chat_request(req.messages, req.model)
+                model = normalized["model"]
+                tmp_files = list(normalized["cleanup_paths"])
                 tools = normalize_openai_tools(req.tools)
                 has_image_input = bool(normalized["capture_images"])
                 validate_chat_capabilities(
@@ -292,7 +851,10 @@ async def handle_chat(req: ChatRequest, client: AIStudioClient):
                     uses_search=bool(req.grounding),
                     uses_thinking=_explicit_thinking_enabled(req.thinking),
                     stream=req.stream,
+                    uses_structured_output=response_format_overrides is not None,
                 )
+                if attempt == 0:
+                    await _ensure_account_for_model(model)
 
                 logger.info(
                     "Chat: model=%s, contents=%s, capture_prompt=%s..., images=%s, stream=%s, attempt=%d",
@@ -314,7 +876,10 @@ async def handle_chat(req: ChatRequest, client: AIStudioClient):
                     from aistudio_api.infrastructure.gateway.request_rewriter import TOOLS_TEMPLATES
                     tools = [TOOLS_TEMPLATES["google_search"]]
 
-                generation_config_overrides = _thinking_overrides(req.thinking)
+                generation_config_overrides = _merge_generation_overrides(
+                    response_format_overrides,
+                    _thinking_overrides(req.thinking),
+                )
                 enable_thinking = _thinking_enabled(req.thinking)
 
                 if req.stream:
@@ -338,6 +903,8 @@ async def handle_chat(req: ChatRequest, client: AIStudioClient):
                         generation_config_overrides=generation_config_overrides,
                         safety_off=bool(req.safety_off),
                         enable_thinking=enable_thinking,
+                        sanitize_plain_text=response_format_overrides is None,
+                        request=request,
                     )
 
                 output = await client.generate_content(
@@ -358,7 +925,7 @@ async def handle_chat(req: ChatRequest, client: AIStudioClient):
                     generation_config_overrides=generation_config_overrides,
                     safety_off=bool(req.safety_off),
                     enable_thinking=enable_thinking,
-                    sanitize_plain_text=True,
+                    sanitize_plain_text=response_format_overrides is None,
                 )
 
                 # 记录成功
@@ -388,7 +955,7 @@ async def handle_chat(req: ChatRequest, client: AIStudioClient):
                         rotator.record_rate_limited(account.id)
 
                 # 尝试切换账号
-                if await _try_switch_account():
+                if await _try_switch_account(model):
                     logger.info("429 限流，已切换账号，重试 %d/%d", attempt + 1, max_retries)
                     continue
                 else:
@@ -396,6 +963,14 @@ async def handle_chat(req: ChatRequest, client: AIStudioClient):
                     raise HTTPException(429, detail={"message": str(exc), "type": "rate_limit_exceeded"}) from exc
             except ValueError as exc:
                 raise _bad_request(str(exc)) from exc
+            except (AuthError, RequestError) as exc:
+                runtime_state.record(model, "errors")
+                rotator = runtime_state.rotator
+                if rotator:
+                    account = runtime_state.account_service.get_active_account() if runtime_state.account_service else None
+                    if account:
+                        rotator.record_error(account.id)
+                raise _upstream_exception(exc) from exc
             except AistudioError as exc:
                 runtime_state.record(model, "errors")
                 rotator = runtime_state.rotator
@@ -403,7 +978,7 @@ async def handle_chat(req: ChatRequest, client: AIStudioClient):
                     account = runtime_state.account_service.get_active_account() if runtime_state.account_service else None
                     if account:
                         rotator.record_error(account.id)
-                raise HTTPException(500, detail={"message": str(exc), "type": "server_error"}) from exc
+                raise _upstream_exception(exc) from exc
             except Exception as exc:
                 runtime_state.record(model, "errors")
                 logger.error("Chat error: %s", exc, exc_info=True)
@@ -433,11 +1008,9 @@ async def handle_image_generation(req: ImageRequest, client: AIStudioClient):
 
     for attempt in range(max_retries):
         async with busy_lock:
-            if attempt == 0:
-                account_svc = runtime_state.account_service
-                if account_svc and not account_svc.get_active_account():
-                    await _try_switch_account()
             try:
+                if attempt == 0:
+                    await _ensure_account_for_model(image_plan.model)
                 logger.info(
                     "Image: model=%s, size=%s, n=%d, prompt=%s..., attempt=%d",
                     image_plan.model,
@@ -454,6 +1027,8 @@ async def handle_image_generation(req: ImageRequest, client: AIStudioClient):
                         model=image_plan.model,
                         generation_config_overrides=image_plan.generation_config_overrides,
                     )
+                    if not output.images:
+                        raise RequestError(0, "AI Studio returned no image data")
                     _merge_usage(usage_total, output.usage)
                     for img in output.images:
                         b64 = base64.b64encode(img.data).decode("ascii")
@@ -486,12 +1061,20 @@ async def handle_image_generation(req: ImageRequest, client: AIStudioClient):
                         rotator.record_rate_limited(account.id)
 
                 # 尝试切换账号
-                if await _try_switch_account():
+                if await _try_switch_account(image_plan.model):
                     logger.info("Image 429 限流，已切换账号，重试 %d/%d", attempt + 1, max_retries)
                     continue
                 else:
                     logger.warning("Image 429 限流，无法切换账号")
                     raise HTTPException(429, detail={"message": str(exc), "type": "rate_limit_exceeded"}) from exc
+            except (AuthError, RequestError) as exc:
+                runtime_state.record(image_plan.model, "errors")
+                rotator = runtime_state.rotator
+                if rotator:
+                    account = runtime_state.account_service.get_active_account() if runtime_state.account_service else None
+                    if account:
+                        rotator.record_error(account.id)
+                raise _upstream_exception(exc) from exc
             except AistudioError as exc:
                 runtime_state.record(image_plan.model, "errors")
                 rotator = runtime_state.rotator
@@ -499,7 +1082,7 @@ async def handle_image_generation(req: ImageRequest, client: AIStudioClient):
                     account = runtime_state.account_service.get_active_account() if runtime_state.account_service else None
                     if account:
                         rotator.record_error(account.id)
-                raise HTTPException(500, detail={"message": str(exc), "type": "server_error"}) from exc
+                raise _upstream_exception(exc) from exc
             except Exception as exc:
                 runtime_state.record(image_plan.model, "errors")
                 logger.error("Image error: %s", exc, exc_info=True)
@@ -527,6 +1110,8 @@ def _build_streaming_response(
     generation_config_overrides: dict | None = None,
     safety_off: bool = False,
     enable_thinking: bool = True,
+    sanitize_plain_text: bool = True,
+    request: Request | None = None,
 ) -> StreamingResponse:
     async def stream_response():
         busy_lock = runtime_state.busy_lock
@@ -541,43 +1126,56 @@ def _build_streaming_response(
                 final_usage = None
                 saw_tool_calls = False
                 for stream_attempt in range(2):
+                    if await _request_disconnected(request):
+                        logger.info("OpenAI stream disconnected before downstream call")
+                        return
+                    upstream = None
                     try:
-                        async for event_type, text in client.stream_generate_content(
-                            model=model,
-                            capture_prompt=capture_prompt,
-                            capture_images=capture_images,
-                            contents=contents,
-                            system_instruction_content=(
-                                AistudioContent(role="user", parts=[AistudioPart(text=system_instruction)])
-                                if system_instruction
-                                else None
-                            ),
-                            temperature=temperature,
-                            top_p=top_p,
-                            top_k=top_k,
-                            max_tokens=max_tokens,
-                            tools=tools,
-                            generation_config_overrides=generation_config_overrides,
-                            safety_off=safety_off,
-                            enable_thinking=enable_thinking,
-                            force_refresh_capture=stream_attempt > 0,
-                        ):
-                            if event_type == "body" and text:
-                                yield sse_chunk(chat_id, model, text, include_usage=include_usage)
-                            elif event_type == "thinking" and text:
-                                yield sse_chunk(chat_id, model, "", thinking=text, include_usage=include_usage)
-                            elif event_type == "tool_calls" and text:
-                                saw_tool_calls = True
-                                yield sse_chunk(
-                                    chat_id,
-                                    model,
-                                    "",
-                                    tool_calls=to_openai_tool_calls(text if isinstance(text, list) else []),
-                                    include_usage=include_usage,
-                                )
-                            elif event_type == "usage":
-                                final_usage = text if isinstance(text, dict) else None
-                        break
+                        try:
+                            upstream = client.stream_generate_content(
+                                model=model,
+                                capture_prompt=capture_prompt,
+                                capture_images=capture_images,
+                                contents=contents,
+                                system_instruction_content=(
+                                    AistudioContent(role="user", parts=[AistudioPart(text=system_instruction)])
+                                    if system_instruction
+                                    else None
+                                ),
+                                temperature=temperature,
+                                top_p=top_p,
+                                top_k=top_k,
+                                max_tokens=max_tokens,
+                                tools=tools,
+                                generation_config_overrides=generation_config_overrides,
+                                sanitize_plain_text=sanitize_plain_text,
+                                safety_off=safety_off,
+                                enable_thinking=enable_thinking,
+                                force_refresh_capture=stream_attempt > 0,
+                            )
+                            async for event_type, text in upstream:
+                                if await _request_disconnected(request):
+                                    logger.info("OpenAI stream disconnected during downstream replay")
+                                    return
+                                if event_type == "body" and text:
+                                    yield sse_chunk(chat_id, model, text, include_usage=include_usage)
+                                elif event_type == "thinking" and text:
+                                    yield sse_chunk(chat_id, model, "", thinking=text, include_usage=include_usage)
+                                elif event_type == "tool_calls" and text:
+                                    saw_tool_calls = True
+                                    yield sse_chunk(
+                                        chat_id,
+                                        model,
+                                        "",
+                                        tool_calls=to_openai_tool_calls(text if isinstance(text, list) else []),
+                                        include_usage=include_usage,
+                                    )
+                                elif event_type == "usage":
+                                    final_usage = text if isinstance(text, dict) else None
+                            break
+                        finally:
+                            if upstream is not None:
+                                await _close_async_iterator(upstream)
                     except RequestError as exc:
                         if exc.status == 204 and stream_attempt == 0:
                             logger.warning("Stream 收到 204，清理 snapshot 缓存后重试一次")
@@ -596,10 +1194,18 @@ def _build_streaming_response(
                 if include_usage:
                     yield sse_usage_chunk(chat_id, model, final_usage)
                 yield "data: [DONE]\n\n"
+            except asyncio.CancelledError:
+                logger.info("OpenAI stream cancelled by client")
+                raise
             except Exception as exc:
-                logger.error("Stream error: %s", exc, exc_info=True)
                 runtime_state.record(model, "errors")
-                yield sse_error(str(exc))
+                message, error_type, code = _openai_stream_error_detail(exc)
+                if error_type == "unsupported_feature":
+                    logger.warning("OpenAI stream unsupported: %s", message)
+                else:
+                    logger.error("Stream error: %s", exc, exc_info=True)
+                yield sse_error(message, error_type=error_type, code=code)
+                yield "data: [DONE]\n\n"
             finally:
                 cleanup_files(cleanup_paths)
 
@@ -616,25 +1222,26 @@ async def handle_gemini_generate_content(
     client: AIStudioClient,
     *,
     stream: bool,
+    request: Request | None = None,
 ):
     busy_lock = runtime_state.busy_lock
     if busy_lock is None:
         raise HTTPException(503, detail={"message": "Server not ready", "type": "service_unavailable"})
     if busy_lock.locked():
         raise HTTPException(429, detail={"message": "Server is busy", "type": "rate_limit_exceeded"})
+    if stream and _client_is_pure_http(client):
+        raise _unsupported(_pure_http_streaming_message())
 
     max_retries = 3
     last_error = None
 
     for attempt in range(max_retries):
         async with busy_lock:
-            if attempt == 0:
-                account_svc = runtime_state.account_service
-                if account_svc and not account_svc.get_active_account():
-                    await _try_switch_account()
             normalized = None
             try:
                 normalized = normalize_gemini_request(req, model_path, stream=stream)
+                if attempt == 0:
+                    await _ensure_account_for_model(normalized["model"])
                 logger.info(
                     "Gemini: model=%s, contents=%s, stream=%s, attempt=%d",
                     normalized["model"],
@@ -644,7 +1251,7 @@ async def handle_gemini_generate_content(
                 )
 
                 if stream:
-                    return _build_gemini_streaming_response(client=client, normalized=normalized)
+                    return _build_gemini_streaming_response(client=client, normalized=normalized, request=request)
 
                 output = await client.generate_content(
                     model=normalized["model"],
@@ -700,12 +1307,20 @@ async def handle_gemini_generate_content(
                         rotator.record_rate_limited(account.id)
 
                 # 尝试切换账号
-                if await _try_switch_account():
+                if await _try_switch_account(normalized["model"] if normalized else model_path):
                     logger.info("Gemini 429 限流，已切换账号，重试 %d/%d", attempt + 1, max_retries)
                     continue
                 else:
                     logger.warning("Gemini 429 限流，无法切换账号")
                     raise HTTPException(429, detail={"message": str(exc), "type": "rate_limit_exceeded"}) from exc
+            except (AuthError, RequestError) as exc:
+                runtime_state.record(model_path, "errors")
+                rotator = runtime_state.rotator
+                if rotator:
+                    account = runtime_state.account_service.get_active_account() if runtime_state.account_service else None
+                    if account:
+                        rotator.record_error(account.id)
+                raise _upstream_exception(exc) from exc
             except AistudioError as exc:
                 runtime_state.record(model_path, "errors")
                 rotator = runtime_state.rotator
@@ -713,7 +1328,7 @@ async def handle_gemini_generate_content(
                     account = runtime_state.account_service.get_active_account() if runtime_state.account_service else None
                     if account:
                         rotator.record_error(account.id)
-                raise HTTPException(500, detail={"message": str(exc), "type": "server_error"}) from exc
+                raise _upstream_exception(exc) from exc
             except Exception as exc:
                 runtime_state.record(model_path, "errors")
                 logger.error("Gemini error: %s", exc, exc_info=True)
@@ -725,7 +1340,7 @@ async def handle_gemini_generate_content(
     raise HTTPException(429, detail={"message": str(last_error), "type": "rate_limit_exceeded"}) from last_error
 
 
-def _build_gemini_streaming_response(*, client: AIStudioClient, normalized: dict) -> StreamingResponse:
+def _build_gemini_streaming_response(*, client: AIStudioClient, normalized: dict, request: Request | None = None) -> StreamingResponse:
     async def stream_response():
         busy_lock = runtime_state.busy_lock
         if busy_lock is None:
@@ -736,53 +1351,85 @@ def _build_gemini_streaming_response(*, client: AIStudioClient, normalized: dict
         async with busy_lock:
             try:
                 final_usage = None
+                saw_tool_calls = False
                 for stream_attempt in range(2):
+                    if await _request_disconnected(request):
+                        logger.info("Gemini stream disconnected before downstream call")
+                        return
+                    upstream = None
                     try:
-                        async for event_type, text in client.stream_generate_content(
-                            model=normalized["model"],
-                            capture_prompt=normalized["capture_prompt"],
-                            capture_images=normalized["capture_images"],
-                            contents=normalized["contents"],
-                            system_instruction_content=normalized["system_instruction"],
-                            tools=normalized["tools"],
-                            temperature=normalized["temperature"],
-                            top_p=normalized["top_p"],
-                            top_k=normalized["top_k"],
-                            max_tokens=normalized["max_tokens"],
-                            generation_config_overrides=normalized["generation_config_overrides"],
-                            sanitize_plain_text=False,
-                            force_refresh_capture=stream_attempt > 0,
-                        ):
-                            if event_type == "body" and text:
-                                yield "data: " + json.dumps(
-                                    {
-                                        "candidates": [
-                                            {
-                                                "content": {"role": "model", "parts": [{"text": text}]},
-                                                "finishReason": None,
-                                            }
-                                        ]
-                                    },
-                                    ensure_ascii=False,
-                                ) + "\n\n"
-                            elif event_type == "thinking" and text:
-                                yield "data: " + json.dumps(
-                                    {
-                                        "candidates": [
-                                            {
-                                                "content": {
-                                                    "role": "model",
-                                                    "parts": [{"text": text, "thought": True}],
-                                                },
-                                                "finishReason": None,
-                                            }
-                                        ]
-                                    },
-                                    ensure_ascii=False,
-                                ) + "\n\n"
-                            elif event_type == "usage":
-                                final_usage = text if isinstance(text, dict) else None
-                        break
+                        try:
+                            upstream = client.stream_generate_content(
+                                model=normalized["model"],
+                                capture_prompt=normalized["capture_prompt"],
+                                capture_images=normalized["capture_images"],
+                                contents=normalized["contents"],
+                                system_instruction_content=normalized["system_instruction"],
+                                tools=normalized["tools"],
+                                temperature=normalized["temperature"],
+                                top_p=normalized["top_p"],
+                                top_k=normalized["top_k"],
+                                max_tokens=normalized["max_tokens"],
+                                generation_config_overrides=normalized["generation_config_overrides"],
+                                sanitize_plain_text=False,
+                                force_refresh_capture=stream_attempt > 0,
+                            )
+                            async for event_type, text in upstream:
+                                if await _request_disconnected(request):
+                                    logger.info("Gemini stream disconnected during downstream replay")
+                                    return
+                                if event_type == "body" and text:
+                                    yield "data: " + json.dumps(
+                                        {
+                                            "candidates": [
+                                                {
+                                                    "content": {"role": "model", "parts": [{"text": text}]},
+                                                    "finishReason": None,
+                                                }
+                                            ]
+                                        },
+                                        ensure_ascii=False,
+                                    ) + "\n\n"
+                                elif event_type == "thinking" and text:
+                                    yield "data: " + json.dumps(
+                                        {
+                                            "candidates": [
+                                                {
+                                                    "content": {
+                                                        "role": "model",
+                                                        "parts": [{"text": text, "thought": True}],
+                                                    },
+                                                    "finishReason": None,
+                                                }
+                                            ]
+                                        },
+                                        ensure_ascii=False,
+                                    ) + "\n\n"
+                                elif event_type == "tool_calls" and text:
+                                    saw_tool_calls = True
+                                    yield "data: " + json.dumps(
+                                        {
+                                            "candidates": [
+                                                {
+                                                    "content": {
+                                                        "role": "model",
+                                                        "parts": to_gemini_parts(
+                                                            "",
+                                                            function_calls=text if isinstance(text, list) else [],
+                                                        ),
+                                                    },
+                                                    "finishReason": None,
+                                                }
+                                            ]
+                                        },
+                                        ensure_ascii=False,
+                                    ) + "\n\n"
+                                elif event_type == "usage":
+                                    final_usage = text if isinstance(text, dict) else None
+                            break
+                        finally:
+                            if upstream is not None:
+                                await _close_async_iterator(upstream)
                     except RequestError as exc:
                         if exc.status == 204 and stream_attempt == 0:
                             logger.warning("Gemini stream 收到 204，清理 snapshot 缓存后重试一次")
@@ -797,19 +1444,25 @@ def _build_gemini_streaming_response(*, client: AIStudioClient, normalized: dict
                         raise
 
                 runtime_state.record(normalized["model"], "success", final_usage)
+                finish_payload: dict[str, Any] = {
+                    "candidates": [{"finishReason": "FUNCTION_CALL" if saw_tool_calls else "STOP"}]
+                }
                 if final_usage:
-                    yield "data: " + json.dumps(
-                        {
-                            "candidates": [],
-                            "usageMetadata": to_gemini_usage_metadata(final_usage),
-                        },
-                        ensure_ascii=False,
-                    ) + "\n\n"
+                    finish_payload["usageMetadata"] = to_gemini_usage_metadata(final_usage)
+                yield "data: " + json.dumps(finish_payload, ensure_ascii=False) + "\n\n"
                 yield "data: [DONE]\n\n"
+            except asyncio.CancelledError:
+                logger.info("Gemini stream cancelled by client")
+                raise
             except Exception as exc:
-                logger.error("Gemini stream error: %s", exc, exc_info=True)
                 runtime_state.record(normalized["model"], "errors")
-                yield "data: " + json.dumps({"error": {"message": str(exc)}}, ensure_ascii=False) + "\n\n"
+                error_payload = _gemini_stream_error_payload(exc)
+                if error_payload.get("error", {}).get("status") == "UNIMPLEMENTED":
+                    logger.warning("Gemini stream unsupported: %s", error_payload["error"].get("message"))
+                else:
+                    logger.error("Gemini stream error: %s", exc, exc_info=True)
+                yield "data: " + json.dumps(error_payload, ensure_ascii=False) + "\n\n"
+                yield "data: [DONE]\n\n"
             finally:
                 cleanup_files(normalized["cleanup_paths"])
 

@@ -1,7 +1,8 @@
 import pytest
 
 from aistudio_api.api.schemas import GeminiContent, GeminiGenerateContentRequest, GeminiGenerationConfig, GeminiPart
-from aistudio_api.application.chat_service import normalize_gemini_request, normalize_openai_tools
+import aistudio_api.application.chat_service as chat_service
+from aistudio_api.application.chat_service import normalize_chat_request, normalize_gemini_request, normalize_openai_tools
 from aistudio_api.api.schemas import ChatRequest
 
 
@@ -56,6 +57,91 @@ def test_normalize_gemini_request_rejects_media_resolution_for_image_model():
 
     with pytest.raises(ValueError, match="mediaResolution"):
         normalize_gemini_request(req, "models/gemini-3.1-flash-image-preview")
+
+
+def test_normalize_gemini_request_rejects_invalid_numeric_generation_config():
+    req = GeminiGenerateContentRequest(
+        contents=[GeminiContent(role="user", parts=[GeminiPart(text="hello")])],
+        generationConfig=GeminiGenerationConfig(topP=1.5),
+    )
+
+    with pytest.raises(ValueError, match="topP"):
+        normalize_gemini_request(req, "models/gemini-3-flash-preview")
+
+
+def test_normalize_gemini_request_uses_structured_output_capability():
+    req = GeminiGenerateContentRequest(
+        contents=[GeminiContent(role="user", parts=[GeminiPart(text="hello")])],
+        generationConfig=GeminiGenerationConfig(responseMimeType="application/json"),
+    )
+
+    with pytest.raises(ValueError, match="structured output"):
+        normalize_gemini_request(req, "models/gemini-3.1-flash-tts-preview")
+
+
+def test_normalize_gemini_request_rejects_oversized_inline_image(monkeypatch):
+    monkeypatch.setattr(chat_service, "MAX_INLINE_IMAGE_BYTES", 4)
+    req = GeminiGenerateContentRequest(
+        contents=[
+            GeminiContent(
+                role="user",
+                parts=[GeminiPart(inlineData={"mimeType": "image/png", "data": "aGVsbG8="})],
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError, match="too large"):
+        normalize_gemini_request(req, "models/gemini-3-flash-preview")
+
+
+def test_normalize_gemini_request_rejects_oversized_system_instruction_inline_image(monkeypatch):
+    monkeypatch.setattr(chat_service, "MAX_INLINE_IMAGE_BYTES", 4)
+    req = GeminiGenerateContentRequest(
+        contents=[GeminiContent(role="user", parts=[GeminiPart(text="hello")])],
+        systemInstruction=GeminiContent(
+            role="user",
+            parts=[GeminiPart(inlineData={"mimeType": "image/png", "data": "aGVsbG8="})],
+        ),
+    )
+
+    with pytest.raises(ValueError, match="systemInstruction.inlineData is too large"):
+        normalize_gemini_request(req, "models/gemini-3-flash-preview")
+
+
+def test_normalize_gemini_request_cleans_inline_image_file_after_late_validation_error(tmp_path):
+    req = GeminiGenerateContentRequest(
+        contents=[
+            GeminiContent(
+                role="user",
+                parts=[GeminiPart(inlineData={"mimeType": "image/png", "data": "aGVsbG8="})],
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError, match="image input"):
+        normalize_gemini_request(req, "models/gemma-4-31b-it", tmp_dir=str(tmp_path))
+
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_normalize_chat_request_cleans_image_file_after_late_validation_error(tmp_path):
+    req = ChatRequest(
+        model="gemini-3-flash-preview",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": "data:image/png;base64,aGVsbG8="}},
+                    {"type": "unsupported", "text": "later failure"},
+                ],
+            }
+        ],
+    )
+
+    with pytest.raises(ValueError, match="unsupported message content type"):
+        normalize_chat_request(req.messages, req.model, tmp_dir=str(tmp_path))
+
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_normalize_gemini_request_rejects_streaming_for_image_model():

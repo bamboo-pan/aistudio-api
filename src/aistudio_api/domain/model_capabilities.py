@@ -41,6 +41,8 @@ class ModelCapabilities:
     tools: bool = False
     thinking: bool = False
     streaming: bool = True
+    structured_output: bool = False
+    safety_settings: bool = True
     owned_by: str = "google"
     unsupported_generation_fields: tuple[str, ...] = ()
     image_sizes: dict[str, ImageSizeCapability] = field(default_factory=dict)
@@ -52,8 +54,12 @@ class ModelCapabilities:
             "image_output": self.image_output,
             "search": self.search,
             "tools": self.tools,
+            "tool_calls": self.tools,
             "thinking": self.thinking,
             "streaming": self.streaming,
+            "structured_output": self.structured_output,
+            "safety_settings": self.safety_settings,
+            "unsupported_generation_fields": list(self.unsupported_generation_fields),
         }
         data: dict[str, Any] = {
             "id": self.id,
@@ -112,6 +118,7 @@ def _text_model(
     tools: bool = True,
     thinking: bool = True,
     streaming: bool = True,
+    structured_output: bool = True,
 ) -> ModelCapabilities:
     return ModelCapabilities(
         id=model_id,
@@ -122,6 +129,7 @@ def _text_model(
         tools=tools,
         thinking=thinking,
         streaming=streaming,
+        structured_output=structured_output,
     )
 
 
@@ -135,6 +143,8 @@ def _image_model(model_id: str) -> ModelCapabilities:
         tools=False,
         thinking=False,
         streaming=False,
+        structured_output=False,
+        safety_settings=False,
         unsupported_generation_fields=IMAGE_MODEL_UNSUPPORTED_FIELDS,
         image_sizes=DEFAULT_IMAGE_SIZES,
     )
@@ -151,7 +161,7 @@ MODEL_CAPABILITIES: dict[str, ModelCapabilities] = {
     "gemini-3.1-flash-image-preview": _image_model("gemini-3.1-flash-image-preview"),
     "gemini-3-pro-image-preview": _image_model("gemini-3-pro-image-preview"),
     "gemini-3.1-flash-live-preview": _text_model("gemini-3.1-flash-live-preview", tools=False, streaming=True),
-    "gemini-3.1-flash-tts-preview": _text_model("gemini-3.1-flash-tts-preview", image_input=False, search=False, tools=False, thinking=False),
+    "gemini-3.1-flash-tts-preview": _text_model("gemini-3.1-flash-tts-preview", image_input=False, search=False, tools=False, thinking=False, structured_output=False),
     # Latest aliases
     "gemini-pro-latest": _text_model("gemini-pro-latest"),
     "gemini-flash-latest": _text_model("gemini-flash-latest"),
@@ -168,6 +178,7 @@ GENERIC_TEXT_CAPABILITIES = ModelCapabilities(
     tools=True,
     thinking=True,
     streaming=True,
+    structured_output=True,
 )
 
 GENERIC_IMAGE_CAPABILITIES = ModelCapabilities(
@@ -179,6 +190,8 @@ GENERIC_IMAGE_CAPABILITIES = ModelCapabilities(
     tools=False,
     thinking=False,
     streaming=False,
+    structured_output=False,
+    safety_settings=False,
     unsupported_generation_fields=IMAGE_MODEL_UNSUPPORTED_FIELDS,
     image_sizes=DEFAULT_IMAGE_SIZES,
 )
@@ -205,6 +218,8 @@ def get_model_capabilities(model: str, *, strict: bool = False) -> ModelCapabili
         tools=generic.tools,
         thinking=generic.thinking,
         streaming=generic.streaming,
+        structured_output=generic.structured_output,
+        safety_settings=generic.safety_settings,
         unsupported_generation_fields=generic.unsupported_generation_fields,
         image_sizes=generic.image_sizes,
     )
@@ -260,6 +275,7 @@ def validate_chat_capabilities(
     uses_search: bool,
     uses_thinking: bool,
     stream: bool,
+    uses_structured_output: bool = False,
 ) -> ModelCapabilities:
     capabilities = require_model_capabilities(model)
     if not capabilities.text_output:
@@ -272,6 +288,8 @@ def validate_chat_capabilities(
         raise ValueError(f"Model '{model}' does not support Google Search grounding")
     if uses_thinking and not capabilities.thinking:
         raise ValueError(f"Model '{model}' does not support thinking configuration")
+    if uses_structured_output and not capabilities.structured_output:
+        raise ValueError(f"Model '{model}' does not support structured output")
     if stream and not capabilities.streaming:
         raise ValueError(f"Model '{model}' does not support streaming responses")
     return capabilities

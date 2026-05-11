@@ -459,3 +459,442 @@ if req.response_format != "b64_json":
 response_format = normalize_image_response_format(req.response_format)
 return build_image_generation_response(output, response_format=response_format)
 ```
+
+---
+
+## Scenario: Capability-Driven Model Validation And UI Controls
+
+### 1. Scope / Trigger
+
+- Trigger: Backend changes model metadata, request validation, or frontend model
+	controls for chat, image generation, tools, search, thinking, streaming, safety,
+	or structured output.
+- Applies across `GET /v1/models`, OpenAI-compatible routes, Gemini-compatible
+	routes, and the static Alpine.js frontend.
+
+### 2. Signatures
+
+- `GET /v1/models` -> each item includes `capabilities` and optional
+	`image_generation` metadata.
+- `get_model_capabilities(model, strict=True) -> ModelCapabilities` is the
+	backend source of truth for feature support.
+- Frontend model records from `/v1/models` drive model picker options and
+	settings controls.
+
+### 3. Contracts
+
+- Capability metadata must include text output, image input, image output, tool
+	calls, search, thinking, streaming, structured output, safety settings, and
+	unsupported generation fields when known.
+- Backend validation must reject unsupported model/field combinations before
+	replay/capture whenever the unsupported behavior can be detected locally.
+- Frontend controls must be hidden, disabled, or reset when the selected model
+	does not support the feature.
+- Image-output models should route image-generation semantics instead of falling
+	through to text-only chat validation.
+
+### 4. Validation & Error Matrix
+
+- Unknown model on strict public routes -> `404` or `400` with a model message.
+- Image input sent to a text-only model -> `400` before gateway calls.
+- Tools/search/thinking requested for a model without that capability -> `400`
+	before gateway calls.
+- Streaming requested for a non-streaming model -> normalize only when the route
+	has an explicit compatibility behavior; otherwise return a clear `400`.
+- Structured output requested for a model without structured output -> clear
+	validation error, not a downstream wire failure.
+
+### 5. Good/Base/Bad Cases
+
+- Good: User selects an image model; text-only chat controls that do not apply
+	are hidden or disabled, and image controls become available.
+- Base: A model that supports search and thinking exposes both controls and the
+	backend accepts the matching request fields.
+- Bad: UI offers Search for an image model, sends `grounding=true`, then the
+	gateway fails with a low-level wire error.
+
+### 6. Tests Required
+
+- Unit-test public model metadata includes every required capability field.
+- Unit-test backend validation rejects unsupported combinations before the fake
+	client/gateway is called.
+- Static frontend tests or smoke checks must assert controls depend on
+	capability metadata, not hardcoded model names.
+- Run `node --check src/aistudio_api/static/app.js` when static JS changes.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```javascript
+if (model.includes('image')) cfg.stream = 'off';
+```
+
+#### Correct
+
+```javascript
+const capabilities = selectedModel.capabilities || {};
+if (!capabilities.streaming) cfg.stream = 'off';
+```
+
+---
+
+## Scenario: Real-Environment WSL Verification With Credentials
+
+### 1. Scope / Trigger
+
+- Trigger: A task changes account credentials, gateway replay/capture, model
+	routing, frontend flows, or compatibility surfaces that need more confidence
+	than unit tests alone.
+- Applies when the user requests actual verification against the WSL home test
+	environment.
+
+### 2. Signatures
+
+- WSL home root: `/home/bamboo`.
+- Real credentials env: `AISTUDIO_ACCOUNTS_DIR=/home/bamboo/aistudio-api/data/accounts`.
+- Verification record: `.trellis/tasks/<task>/verification.md`.
+
+### 3. Contracts
+
+- Create a fresh temporary directory under `/home/bamboo` for each real-environment
+	verification pass.
+- Use the real credential path only through environment variables or path
+	existence checks.
+- Do not print auth JSON, cookies, tokens, account IDs, or real account emails.
+- Prefer non-destructive smoke tests. When mutation behavior needs coverage, use
+	synthetic temp accounts unless the user explicitly asks to mutate real accounts.
+- Record commands, pass/fail summaries, temp directory, and limitations in the
+	task verification log.
+
+### 4. Validation & Error Matrix
+
+- WSL unavailable -> record blocker and run the closest local automated checks.
+- Real credential directory missing -> record blocker; do not fabricate success.
+- Node unavailable in WSL -> record limitation and use Windows `node --check` as
+	the frontend syntax fallback.
+- Live external request would consume quota or create content -> avoid by
+	default; record that no live generation was sent.
+
+### 5. Good/Base/Bad Cases
+
+- Good: Full test suite runs in a WSL temp copy with `AISTUDIO_ACCOUNTS_DIR`
+	pointing at the real credential directory, and smoke output is sanitized.
+- Base: Read-only credential shape checks plus synthetic account mutations verify
+	account logic without touching the real registry.
+- Bad: Print a storage-state JSON snippet to prove the credential exists.
+
+### 6. Tests Required
+
+- Run the full relevant automated test suite in both the normal workspace and WSL
+	when practical.
+- Run focused smoke scripts for the changed feature area.
+- Include `python -m compileall -q src tests` for backend changes.
+- Include frontend syntax checks when static JS changes.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```powershell
+wsl cat /home/bamboo/aistudio-api/data/accounts/*/auth.json
+```
+
+#### Correct
+
+```powershell
+wsl env AISTUDIO_ACCOUNTS_DIR=/home/bamboo/aistudio-api/data/accounts \
+  python verify_feature.py --redact-secrets
+```
+
+---
+
+## Scenario: Pure HTTP Experimental Boundary
+
+### 1. Scope / Trigger
+
+- Trigger: `AISTUDIO_USE_PURE_HTTP` behavior, snapshot generation, browserless
+	replay, streaming, image, tool, or structured-output support changes.
+- Applies to gateway client/capture/replay code and user-facing docs.
+
+### 2. Signatures
+
+- `AISTUDIO_USE_PURE_HTTP=1` enables experimental browserless mode.
+- `AIStudioClient(..., use_pure_http=True)` must expose clear support boundaries.
+
+### 3. Contracts
+
+- Pure HTTP mode is experimental unless a task fully proves browserless parity.
+- Supported paths must be listed explicitly in README/docs.
+- Unsupported paths must return clear `501`/unsupported errors, not generic
+	`captured request is required`, missing session, or internal snapshot failures.
+- Browser-required streaming must not silently run in pure HTTP mode.
+
+### 4. Validation & Error Matrix
+
+- Streaming in pure HTTP mode -> clear unsupported error.
+- Image generation or image input in pure HTTP mode -> clear unsupported error.
+- Tools, thinking, safety overrides, multi-turn, system instructions, or
+	structured output not supported by the mode -> clear unsupported error.
+- Missing BotGuard snapshot -> clear capture/snapshot error with no secret output.
+
+### 5. Good/Base/Bad Cases
+
+- Good: Plain single-turn non-streaming text requests are attempted only when all
+	required snapshot inputs are available; everything else fails early with a
+	clear message.
+- Base: Docs and tests agree on what pure HTTP supports.
+- Bad: A streaming request reaches `StreamingGateway` with `session=None` and
+	exposes `browser session is required for streaming xhr replay` to users.
+
+### 6. Tests Required
+
+- Unit-test each unsupported route/feature boundary returns the documented error.
+- Unit-test the supported plain-text request body shape when pure HTTP capture is
+	available.
+- WSL smoke should run focused pure HTTP boundary tests without live secret output.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+return await streaming_gateway.stream_chat(captured=captured, session=None)
+```
+
+#### Correct
+
+```python
+if self._use_pure_http and stream:
+    raise UnsupportedFeatureError("pure HTTP mode does not support streaming")
+```
+
+---
+
+## Scenario: Account Health And Model-Tier Account Selection
+
+### 1. Scope / Trigger
+
+- Trigger: Backend changes account metadata, health checks, rotation, model-based
+	account selection, or the account management UI.
+- Applies to account store, account service, account rotator, public account
+	routes, image generation, chat generation, and static account controls.
+
+### 2. Signatures
+
+- `AccountMeta` includes `tier`, `health_status`, `health_reason`,
+	`last_health_check`, and `isolated_until`.
+- `POST /accounts/{account_id}/test` -> sanitized account health result.
+- `PUT /accounts/{account_id}` accepts `{ "name"?: string, "tier"?: "free" | "pro" | "ultra" }`.
+- `AccountRotator.get_next_account(model=None, require_preferred=False)` selects
+	a healthy account and may prefer Pro/Ultra accounts for image-output models.
+
+### 3. Contracts
+
+- Manual account tests must validate storage-state shape without returning or
+	logging cookies, tokens, auth JSON, account ids, or real emails.
+- Missing auth, expired cookies, repeated gateway errors, and active rate-limit
+	cooldowns make an account unavailable for rotation.
+- Image-output models prefer Pro/Ultra accounts when a healthy premium account is
+	available; text models may use any healthy account.
+- Fallback to a free account for image models is allowed only when no healthy
+	premium account is available, and the fallback reason must be logged without
+	identifying the account.
+
+### 4. Validation & Error Matrix
+
+- Unknown account on manual test/update -> `404`.
+- Invalid tier -> `400` listing `free`, `pro`, and `ultra`.
+- Missing auth file -> health status `missing_auth`, unavailable for rotation.
+- Expired Google cookies -> health status `expired`, unavailable for rotation.
+- Repeated gateway errors -> isolate the account for the configured cooldown or
+	until explicitly repaired.
+
+### 5. Good/Base/Bad Cases
+
+- Good: An image request starts on a free active account, detects a healthy Pro
+	account, switches auth once, clears snapshot cache, and sends the request.
+- Base: A text request uses the active healthy free account.
+- Bad: Image generation repeatedly uses a known expired account because the
+	rotator only looks at round-robin position.
+
+### 6. Tests Required
+
+- Unit-test valid, expired, and missing-auth health checks.
+- Route-test `/accounts/{id}/test` response is sanitized.
+- Unit-test tier updates and invalid-tier rejection.
+- Unit-test premium preference, free fallback logging, rate-limit availability,
+	error isolation, and image-request auth switching.
+- WSL verification must inspect real credentials read-only and use synthetic
+	accounts for mutation/isolation checks.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+return await rotator.get_next_account()
+```
+
+#### Correct
+
+```python
+await _ensure_account_for_model(model)
+```
+
+---
+
+## Scenario: Compatibility Routes With Clear Unsupported Boundaries
+
+### 1. Scope / Trigger
+
+- Trigger: Backend changes OpenAI-compatible `/v1/*` routes or Gemini-native
+	`/v1beta/*` compatibility surfaces.
+- Applies to `/v1/responses`, `/v1/messages`, `/v1/chat/completions`,
+	`/v1beta/models`, `countTokens`, embeddings, cached content, safety settings,
+	and file data handling.
+
+### 2. Signatures
+
+- `POST /v1/responses` accepts `model`, `input`, optional `text.format`,
+	`response_format`, and non-streaming tool-compatible payloads.
+- `POST /v1/messages` accepts Anthropic-style `system`, `messages`, and `tools`
+	then maps them to chat generation.
+- `GET /v1beta/models` returns Gemini-style model records and supported methods.
+- `POST /v1beta/{model}:countTokens` returns an estimated `totalTokens` without
+	downstream replay.
+
+### 3. Contracts
+
+- OpenAI-compatible routes should return OpenAI-style `{ "error": ... }` envelopes
+	for request errors.
+- Structured output must be gated by model capabilities and mapped to generation
+	config overrides only for models that support it.
+- Tool-call arguments exposed through OpenAI or Anthropic-compatible responses
+	must be JSON strings or parsed JSON according to the target API shape.
+- Unsupported Gemini-native surfaces such as embeddings, `cachedContent`,
+	`safetySettings`, and `fileData` must fail early with a clear unsupported or bad
+	request message instead of reaching browser replay.
+
+### 4. Validation & Error Matrix
+
+- Missing `model` on OpenAI compatibility routes -> `400` OpenAI-style error.
+- `/v1/responses` or `/v1/messages` with `stream=true` -> clear `400` until
+	streaming variants are implemented.
+- Structured output requested for a model without support -> `400` before replay.
+- Gemini embeddings/batch embeddings -> `501 unsupported_feature`.
+- `cachedContent`, `safetySettings`, or `fileData` in browser replay mode -> clear
+	`400` explaining the unsupported field.
+
+### 5. Good/Base/Bad Cases
+
+- Good: `/v1/responses` with `text.format.type=json_schema` produces JSON output
+	and passes schema overrides to the gateway.
+- Base: `/v1beta/models` advertises `generateContent`, `streamGenerateContent`,
+	and `countTokens` according to model capability.
+- Bad: A `fileData` Gemini request enters replay and fails with an opaque wire
+	decode error.
+
+### 6. Tests Required
+
+- Route-test `/v1/responses`, `/v1/messages`, and OpenAI error envelopes.
+- Unit-test response-format/json-schema override mapping and model capability
+	rejection.
+- Route-test Gemini model listing, count tokens, embeddings unsupported errors,
+	and unsupported Gemini fields.
+- WSL smoke may use fake clients for compatibility routes to avoid quota use.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+return await handle_chat(ChatRequest(**payload), client)
+```
+
+#### Correct
+
+```python
+chat_req = ChatRequest(model=model, messages=coerced_messages, response_format=response_format)
+return await handle_chat(chat_req, client)
+```
+
+---
+
+## Scenario: Streaming Response Stability
+
+### 1. Scope / Trigger
+
+- Trigger: Backend changes OpenAI SSE streaming, Gemini streaming, tool-call
+	deltas, usage trailers, disconnect handling, or temporary image cleanup.
+- Applies to stream builders, gateway streaming clients, and request normalizers
+	that create temporary files.
+
+### 2. Signatures
+
+- `_build_streaming_response(..., request=None)` returns OpenAI-compatible SSE.
+- `_build_gemini_streaming_response(..., request=None)` returns Gemini-compatible
+	SSE.
+- Streaming gateway iterators should support `aclose()` cleanup when available.
+
+### 3. Contracts
+
+- Stream error chunks must be SDK-compatible and terminate with `data: [DONE]`.
+- Tool-call streaming deltas must include stable indexes and JSON string
+	arguments for OpenAI-compatible chunks.
+- Gemini streaming tool calls must emit `functionCall` parts and finish with
+	`FUNCTION_CALL` when tool calls were seen.
+- Client disconnects before or during upstream streaming must close upstream
+	iterators and remove temporary image files.
+- Normalizers that create temp files from data URLs or inline data must clean
+	them if later validation rejects the request.
+
+### 4. Validation & Error Matrix
+
+- Upstream `RequestError(501, ...)` during stream -> unsupported error payload and
+	`[DONE]`.
+- Upstream auth/rate-limit/gateway error during stream -> typed error payload and
+	`[DONE]`.
+- Disconnect before downstream call -> no downstream call and temp files removed.
+- Disconnect during downstream stream -> upstream `aclose()` invoked and temp
+	files removed.
+
+### 5. Good/Base/Bad Cases
+
+- Good: A tool-call stream emits delta, usage trailer, function-call finish, and
+	then `[DONE]`.
+- Base: A plain text stream yields body chunks and cleans uploaded image temp
+	files on normal completion.
+- Bad: A client disconnect leaves an async generator blocked and an uploaded
+	image temp file on disk.
+
+### 6. Tests Required
+
+- Unit-test OpenAI stream error shape and `[DONE]` marker.
+- Unit-test OpenAI and Gemini tool-call chunks and usage trailers.
+- Unit-test stream iterator close/disconnect cleanup for OpenAI and Gemini paths.
+- Unit-test normalizer cleanup after late validation failures.
+- WSL smoke can use fake streaming clients and direct iterator disconnect
+	simulation; do not require live external generation.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+async for event in client.stream_generate_content(...):
+    yield event
+```
+
+#### Correct
+
+```python
+upstream = client.stream_generate_content(...)
+try:
+    async for event in upstream:
+        if await _request_disconnected(request):
+            return
+        yield convert(event)
+finally:
+    await _close_async_iterator(upstream)
+```

@@ -28,6 +28,11 @@ class AccountResponse(BaseModel):
     email: str | None
     created_at: str
     last_used: str | None
+    tier: str = "free"
+    health_status: str = "unknown"
+    health_reason: str | None = None
+    last_health_check: str | None = None
+    isolated_until: str | None = None
 
 
 class LoginStatusResponse(BaseModel):
@@ -39,7 +44,8 @@ class LoginStatusResponse(BaseModel):
 
 
 class UpdateAccountRequest(BaseModel):
-    name: str
+    name: str | None = None
+    tier: str | None = None
 
 
 class CredentialImportResponse(BaseModel):
@@ -47,9 +53,23 @@ class CredentialImportResponse(BaseModel):
     count: int
 
 
+class AccountHealthResponse(BaseModel):
+    ok: bool
+    account: AccountResponse
+    status: str
+    reason: str | None = None
+    tier: str
+    last_health_check: str | None = None
+    isolated_until: str | None = None
+
+
 def _mark_sensitive_response(response: Response) -> None:
     response.headers["Cache-Control"] = "no-store"
     response.headers["Pragma"] = "no-cache"
+
+
+def _error_detail(message: str, error_type: str = "bad_request") -> dict[str, str]:
+    return {"message": message, "type": error_type}
 
 
 def _to_account_response(account) -> AccountResponse:
@@ -59,6 +79,38 @@ def _to_account_response(account) -> AccountResponse:
         email=account.email,
         created_at=account.created_at,
         last_used=account.last_used,
+        tier=getattr(account, "tier", "free"),
+        health_status=getattr(account, "health_status", "unknown"),
+        health_reason=getattr(account, "health_reason", None),
+        last_health_check=getattr(account, "last_health_check", None),
+        isolated_until=getattr(account, "isolated_until", None),
+    )
+
+
+def _account_response_from_dict(data: dict[str, Any]) -> AccountResponse:
+    return AccountResponse(
+        id=data["id"],
+        name=data["name"],
+        email=data.get("email"),
+        created_at=data["created_at"],
+        last_used=data.get("last_used"),
+        tier=data.get("tier", "free"),
+        health_status=data.get("health_status", "unknown"),
+        health_reason=data.get("health_reason"),
+        last_health_check=data.get("last_health_check"),
+        isolated_until=data.get("isolated_until"),
+    )
+
+
+def _to_health_response(result: dict[str, Any]) -> AccountHealthResponse:
+    return AccountHealthResponse(
+        ok=bool(result.get("ok")),
+        account=_account_response_from_dict(result["account"]),
+        status=str(result.get("status") or "unknown"),
+        reason=result.get("reason") if isinstance(result.get("reason"), str) else None,
+        tier=str(result.get("tier") or "free"),
+        last_health_check=result.get("last_health_check") if isinstance(result.get("last_health_check"), str) else None,
+        isolated_until=result.get("isolated_until") if isinstance(result.get("isolated_until"), str) else None,
     )
 
 
@@ -81,7 +133,7 @@ async def login_status(
     """查询登录状态。"""
     session = account_service.get_login_status(session_id)
     if session is None:
-        raise HTTPException(status_code=404, detail="登录会话不存在")
+        raise HTTPException(status_code=404, detail=_error_detail("登录会话不存在", "not_found"))
     if session.status == LoginStatus.COMPLETED and session.account_id and not session.auth_activated:
         browser_session = runtime_state.client._session if runtime_state.client else None
         if browser_session is not None:
@@ -126,7 +178,7 @@ async def get_active_account(
     """获取当前活跃账号。"""
     account = account_service.get_active_account()
     if account is None:
-        raise HTTPException(status_code=404, detail="没有活跃账号")
+        raise HTTPException(status_code=404, detail=_error_detail("没有活跃账号", "not_found"))
     return _to_account_response(account)
 
 
@@ -140,9 +192,9 @@ async def export_all_credentials(
     try:
         return account_service.export_credentials()
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=400, detail=f"账号 {exc} 缺少 auth.json，无法导出") from exc
+        raise HTTPException(status_code=400, detail=_error_detail(f"账号 {exc} 缺少 auth.json，无法导出")) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=_error_detail(str(exc))) from exc
 
 
 @router.get("/{account_id}/export")
@@ -156,11 +208,11 @@ async def export_account_credentials(
     try:
         return account_service.export_credentials(account_id)
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail="账号不存在") from exc
+        raise HTTPException(status_code=404, detail=_error_detail("账号不存在", "not_found")) from exc
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=400, detail=f"账号 {exc} 缺少 auth.json，无法导出") from exc
+        raise HTTPException(status_code=400, detail=_error_detail(f"账号 {exc} 缺少 auth.json，无法导出")) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=_error_detail(str(exc))) from exc
 
 
 @router.post("/import", response_model=CredentialImportResponse)
@@ -174,15 +226,15 @@ async def import_credentials(
     try:
         payload = await request.json()
     except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=400, detail="无效的 JSON 凭证内容") from exc
+        raise HTTPException(status_code=400, detail=_error_detail("无效的 JSON 凭证内容")) from exc
 
     if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="凭证内容必须是 JSON 对象")
+        raise HTTPException(status_code=400, detail=_error_detail("凭证内容必须是 JSON 对象"))
 
     try:
         imported = account_service.import_credentials(payload, name=name, activate=activate)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=_error_detail(str(exc))) from exc
 
     return CredentialImportResponse(
         imported=[_to_account_response(account) for account in imported],
@@ -203,14 +255,26 @@ async def activate_account(
     busy_lock = runtime_state.busy_lock
 
     if browser_session is None:
-        raise HTTPException(status_code=503, detail="服务未就绪")
+        raise HTTPException(status_code=503, detail=_error_detail("服务未就绪", "service_unavailable"))
 
     account = await account_service.activate_account(
         account_id, browser_session, snapshot_cache, busy_lock
     )
     if account is None:
-        raise HTTPException(status_code=404, detail="账号不存在或切换失败")
+        raise HTTPException(status_code=404, detail=_error_detail("账号不存在或切换失败", "not_found"))
     return _to_account_response(account)
+
+
+@router.post("/{account_id}/test", response_model=AccountHealthResponse)
+async def test_account(
+    account_id: str,
+    account_service=Depends(get_account_service),
+):
+    """执行非破坏性的账号健康检查。"""
+    result = account_service.test_account(account_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail=_error_detail("账号不存在", "not_found"))
+    return _to_health_response(result)
 
 
 @router.delete("/{account_id}")
@@ -221,7 +285,7 @@ async def delete_account(
     """删除账号。"""
     success = account_service.delete_account(account_id)
     if not success:
-        raise HTTPException(status_code=404, detail="账号不存在")
+        raise HTTPException(status_code=404, detail=_error_detail("账号不存在", "not_found"))
     return {"ok": True}
 
 
@@ -232,7 +296,12 @@ async def update_account(
     account_service=Depends(get_account_service),
 ):
     """更新账号名称。"""
-    account = account_service.update_account(account_id, req.name)
+    if req.name is None and req.tier is None:
+        raise HTTPException(status_code=400, detail=_error_detail("name or tier is required"))
+    try:
+        account = account_service.update_account(account_id, req.name, req.tier)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=_error_detail(str(exc))) from exc
     if account is None:
-        raise HTTPException(status_code=404, detail="账号不存在")
+        raise HTTPException(status_code=404, detail=_error_detail("账号不存在", "not_found"))
     return _to_account_response(account)

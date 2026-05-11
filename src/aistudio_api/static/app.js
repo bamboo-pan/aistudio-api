@@ -6,20 +6,34 @@ function app(){return{
   accountBusy:{},renameId:'',renameDraft:'',deleteConfirmId:'',
   credentialImportText:'',credentialImportName:'',credentialImporting:false,credentialExporting:false,credentialExportText:'',credentialError:'',
   loginStarting:false,loginPollTimer:null,loginSession:{id:'',status:'',email:'',error:''},
-  models:[],model:'',
-  msgs:[],draft:'',busy:false,
+  models:[],model:'',modelError:'',
+  msgs:[],draft:'',busy:false,chatImages:[],chatImageError:'',
   cfg:{thinking:'off',search:'off',stream:'on',temperature:1.0,topP:1.0,maxTokens:8192,safety:'on'},
+  imageModel:'',imagePrompt:'',imageSize:'1024x1024',imageCount:1,imageBusy:false,imageError:'',imageResults:[],imageHistory:[],imageLastRequest:null,
   toast:{show:false,msg:'',t:null},
 
-  init(){this.loadModels();this.loadStats();this.loadAccounts();this.loadRotation();document.addEventListener('click',()=>this.openSelect=null)},
-  go(v){this.view=v;this.sidebarOpen=false;if(v==='dashboard')this.loadStats();if(v==='accounts'){this.loadAccounts();this.loadRotation()}},
+  init(){this.loadImageHistory();this.loadModels();this.loadStats();this.loadAccounts();this.loadRotation();document.addEventListener('click',()=>this.openSelect=null)},
+  go(v){this.view=v;this.sidebarOpen=false;if(v==='dashboard')this.loadStats();if(v==='accounts'){this.loadAccounts();this.loadRotation()}if(v==='images')this.ensureImageDefaults()},
   showToast(m){this.toast.msg=m;this.toast.show=true;if(this.toast.t)clearTimeout(this.toast.t);this.toast.t=setTimeout(()=>this.toast.show=false,3000)},
   toggleSelect(k,e){e.stopPropagation();this.openSelect=this.openSelect===k?null:k},
   selectOpt(k,model,val){this[model]=val;this.openSelect=null},
 
-  async loadModels(){try{const r=await fetch('/v1/models');const d=await r.json();this.models=d.data||[];if(!this.model&&this.models.length)this.model=this.models[0].id}catch(e){}},
+  async loadModels(){this.modelError='';try{const r=await fetch('/v1/models');const d=await r.json();this.models=d.data||[];if(!this.model&&this.models.length)this.model=this.models[0].id;this.applyModelCapabilities();this.ensureImageDefaults()}catch(e){this.modelError='模型列表加载失败'}},
+  get selectedModel(){return this.models.find(m=>m.id===this.model)||{}},
+  get selectedCaps(){return this.selectedModel.capabilities||{}},
+  get imageModels(){return this.models.filter(m=>m.capabilities?.image_output)},
+  get selectedImageModel(){return this.models.find(m=>m.id===this.imageModel)||this.imageModels[0]||{}},
+  get imageSizes(){return this.selectedImageModel.image_generation?.sizes||[]},
+  cap(k){return this.selectedCaps[k]===true},
+  controlAvailable(k){if(!this.model)return false;if(k==='thinking')return this.cap('thinking');if(k==='search')return this.cap('search');if(k==='stream')return this.cap('streaming');if(k==='safety')return this.selectedCaps.safety_settings!==false;if(['temperature','top_p','max_tokens'].includes(k))return this.cap('text_output')&&!this.cap('image_output');return true},
+  get chatImageUploadEnabled(){return !!this.model&&this.selectedCaps.image_input===true&&!this.busy},
+  get chatCanSend(){return !this.busy&&!!this.model&&(!!this.draft.trim()||this.chatImages.length>0)&&(this.chatImages.length===0||this.selectedCaps.image_input===true)},
+  applyModelCapabilities(){if(!this.controlAvailable('thinking'))this.cfg.thinking='off';if(!this.controlAvailable('search'))this.cfg.search='off';if(!this.controlAvailable('stream'))this.cfg.stream='off';if(!this.controlAvailable('safety'))this.cfg.safety='on'},
+  selectModel(id){this.model=id;this.openSelect=null;this.applyModelCapabilities();this.chatImageError=this.chatImages.length&&!this.selectedCaps.image_input?'当前模型不支持图片输入':''},
+  ensureImageDefaults(){if(!this.imageModels.length){this.imageModel='';return}if(!this.imageModel||!this.imageModels.some(model=>model.id===this.imageModel))this.imageModel=this.imageModels[0].id;if(this.imageSizes.length&&!this.imageSizes.some(size=>size.size===this.imageSize))this.imageSize=this.imageSizes[0].size;this.normalizeImageCount()},
+  selectImageModel(id){this.imageModel=id;this.openSelect=null;this.ensureImageDefaults()},
   async loadStats(){try{const r=await fetch('/stats');const d=await r.json();this.stats=d.models||{}}catch(e){}},
-  async fetchJson(url,opts){const r=await fetch(url,opts);let d=null;try{d=await r.json()}catch(e){}if(!r.ok){const detail=d?.detail;const msg=typeof detail==='string'?detail:(detail?JSON.stringify(detail):r.statusText||`HTTP ${r.status}`);const err=new Error(msg);err.status=r.status;throw err}return d},
+  async fetchJson(url,opts){const r=await fetch(url,opts);let d=null;try{d=await r.json()}catch(e){}if(!r.ok){const detail=d?.detail;const msg=typeof detail==='string'?detail:(detail?.message||d?.error?.message||detail?.error?.message||(detail?JSON.stringify(detail):r.statusText||`HTTP ${r.status}`));const err=new Error(msg);err.status=r.status;throw err}return d},
   errMsg(e,fallback){return e?.message||fallback},
   async refreshAccountData(){await Promise.all([this.loadAccounts(),this.loadRotation()])},
   async loadAccounts(){this.accountsLoading=true;this.accountsError='';this.activeAccountNote='';try{this.accounts=await this.fetchJson('/accounts')||[]}catch(e){this.accounts=[];this.accountsError='账号列表加载失败：'+this.errMsg(e,'请求失败')}try{const a=await this.fetchJson('/accounts/active');this.activeId=a?.id||'';this.activeAccount=a||{}}catch(e){this.activeId='';this.activeAccount={};this.activeAccountNote=e.status===404?'当前没有激活账号':'活跃账号加载失败：'+this.errMsg(e,'请求失败')}finally{this.accountsLoading=false}},
@@ -33,14 +47,19 @@ function app(){return{
   get totalRL(){return Object.values(this.stats).reduce((s,v)=>s+(v.rate_limited||0),0)},
 
   accountLabel(a){return a?.email||a?.name||a?.id||'未知账号'},
+  tierLabel(t){return t==='ultra'?'Ultra':t==='pro'?'Pro':'Free'},
+  healthLabel(s){return {healthy:'健康',rate_limited:'冷却中',isolated:'已隔离',expired:'登录过期',missing_auth:'缺少凭证',error:'异常',unknown:'未知'}[s||'unknown']||s},
+  healthClass(s){if(s==='healthy')return'badge-green';if(['rate_limited','isolated','expired','missing_auth','error'].includes(s))return'badge-red';return'badge-gray'},
   setAccountBusy(action,id,busy){const key=`${action}:${id}`;const next={...this.accountBusy};if(busy)next[key]=true;else delete next[key];this.accountBusy=next},
   isAccountBusy(action,id){return !!this.accountBusy[`${action}:${id}`]},
-  isRowBusy(id){return this.isAccountBusy('activate',id)||this.isAccountBusy('rename',id)||this.isAccountBusy('delete',id)},
+  isRowBusy(id){return this.isAccountBusy('activate',id)||this.isAccountBusy('rename',id)||this.isAccountBusy('delete',id)||this.isAccountBusy('health',id)||this.isAccountBusy('tier',id)},
   loginStatusText(){const s=this.loginSession.status;if(s==='pending')return'等待浏览器登录';if(s==='completed')return'登录完成';if(s==='failed')return'登录失败';return'未开始'},
   loginStatusClass(){const s=this.loginSession.status;if(s==='completed')return'notice-success';if(s==='failed')return'notice-error';return'notice-info'},
   async saveRotation(){if(this.savingRotation)return;this.savingRotation=true;try{await this.fetchJson('/rotation/mode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:this.rotCfg.mode,cooldown_seconds:this.rotCfg.cooldown})});this.showToast('已保存');await this.loadRotation()}catch(e){this.showToast('保存失败：'+this.errMsg(e,'请求失败'))}finally{this.savingRotation=false}},
   async forceNext(){if(this.forcingNext)return;this.forcingNext=true;try{await this.fetchJson('/rotation/next',{method:'POST'});this.showToast('已切换账号');await this.refreshAccountData()}catch(e){this.showToast('切换失败：'+this.errMsg(e,'请求失败'))}finally{this.forcingNext=false}},
   async activateAccount(id){if(this.isAccountBusy('activate',id))return;this.setAccountBusy('activate',id,true);try{await this.fetchJson(`/accounts/${encodeURIComponent(id)}/activate`,{method:'POST'});this.showToast('已激活');await this.refreshAccountData()}catch(e){this.showToast('激活失败：'+this.errMsg(e,'请求失败'))}finally{this.setAccountBusy('activate',id,false)}},
+  async testAccount(a){const id=a.id;if(this.isAccountBusy('health',id))return;this.setAccountBusy('health',id,true);try{const d=await this.fetchJson(`/accounts/${encodeURIComponent(id)}/test`,{method:'POST'});this.showToast(d?.ok?'账号检查通过':'账号检查未通过：'+(d?.reason||d?.status||'未知原因'));await this.refreshAccountData()}catch(e){this.showToast('检查失败：'+this.errMsg(e,'请求失败'))}finally{this.setAccountBusy('health',id,false)}},
+  async updateTier(a,tier){const id=a.id;if(tier===a.tier||this.isAccountBusy('tier',id))return;this.setAccountBusy('tier',id,true);try{await this.fetchJson(`/accounts/${encodeURIComponent(id)}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({tier})});this.showToast('账号等级已更新');await this.refreshAccountData()}catch(e){this.showToast('等级更新失败：'+this.errMsg(e,'请求失败'))}finally{this.setAccountBusy('tier',id,false)}},
   beginRename(a){this.renameId=a.id;this.renameDraft=a.name||a.email||'';this.deleteConfirmId=''},
   cancelRename(){this.renameId='';this.renameDraft=''},
   async renameAccount(a){const id=a.id;const name=this.renameDraft.trim();if(!name){this.showToast('名称不能为空');return}if(name===a.name){this.cancelRename();return}if(this.isAccountBusy('rename',id))return;this.setAccountBusy('rename',id,true);try{await this.fetchJson(`/accounts/${encodeURIComponent(id)}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});this.showToast('已重命名');this.cancelRename();await this.refreshAccountData()}catch(e){this.showToast('重命名失败：'+this.errMsg(e,'请求失败'))}finally{this.setAccountBusy('rename',id,false)}},
@@ -53,34 +72,54 @@ function app(){return{
   async addAccount(){if(this.loginBusy)return;this.loginStarting=true;this.clearLoginPoll();try{const d=await this.fetchJson('/accounts/login/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});if(!d?.session_id)throw new Error('登录会话缺少 session_id');this.loginSession={id:d.session_id,status:'pending',email:'',error:''};this.showToast('登录已开始');this.pollLoginStatus()}catch(e){this.loginSession={id:'',status:'failed',email:'',error:this.errMsg(e,'启动登录失败')};this.showToast('启动登录失败：'+this.loginSession.error)}finally{this.loginStarting=false}},
   async pollLoginStatus(){const id=this.loginSession.id;if(!id)return;try{const d=await this.fetchJson(`/accounts/login/status/${encodeURIComponent(id)}`);const status=d?.status||'pending';this.loginSession={id:d?.session_id||id,status,email:d?.email||'',error:d?.error||''};if(status==='completed'){this.clearLoginPoll();this.showToast('登录完成');await this.refreshAccountData();return}if(status==='failed'){this.clearLoginPoll();this.showToast('登录失败：'+(d?.error||'请重试'));return}this.clearLoginPoll();this.loginPollTimer=setTimeout(()=>this.pollLoginStatus(),2000)}catch(e){this.clearLoginPoll();this.loginSession={...this.loginSession,status:'failed',error:this.errMsg(e,'状态查询失败')};this.showToast('登录状态查询失败：'+this.loginSession.error)}},
 
-  resizeTa(){const el=this.$refs.ta;el.style.height='auto';el.style.height=Math.min(el.scrollHeight,200)+'px'},
+  resizeTa(){const el=this.$refs.ta;if(!el)return;el.style.height='auto';el.style.height=Math.min(el.scrollHeight,200)+'px'},
   scrollDown(){setTimeout(()=>{const el=document.getElementById('chat-scroll');if(el)el.scrollTop=el.scrollHeight},50)},
+  fileToDataUrl(file){return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(reader.error||new Error('读取图片失败'));reader.readAsDataURL(file)})},
+  async attachChatImages(event){this.chatImageError='';if(!this.selectedCaps.image_input){this.chatImageError='当前模型不支持图片输入';this.showToast(this.chatImageError);event.target.value='';return}const files=Array.from(event.target.files||[]);for(const file of files){if(!file.type.startsWith('image/'))continue;if(file.size>20*1024*1024){this.chatImageError='单张图片不能超过 20 MB';continue}try{const url=await this.fileToDataUrl(file);this.chatImages.push({name:file.name,url})}catch(error){this.chatImageError='图片读取失败'}}event.target.value='';if(this.chatImageError)this.showToast(this.chatImageError)},
+  removeChatImage(index){this.chatImages.splice(index,1)},
 
-  async send(){const t=this.draft.trim();if(!t||this.busy||!this.model)return;
-    this.msgs.push({role:'user',content:t});this.draft='';this.busy=true;this.resizeTa();this.scrollDown();
-    const body={model:this.model,messages:this.msgs.map(m=>({role:m.role,content:m.content}))};
-    if(this.cfg.temperature!==1) body.temperature=this.cfg.temperature;
-    if(this.cfg.topP!==1) body.top_p=this.cfg.topP;
-    if(this.cfg.maxTokens!==8192) body.max_tokens=this.cfg.maxTokens;
-    if(this.cfg.stream==='on') body.stream=true;
-    if(this.cfg.thinking!=='off') body.thinking=this.cfg.thinking;
-    if(this.cfg.search==='on') body.grounding=true;
-    if(this.cfg.safety==='off') body.safety_off=true;
+  async send(){const t=this.draft.trim();if((!t&&!this.chatImages.length)||this.busy||!this.model)return;
+    if(this.chatImages.length&&!this.selectedCaps.image_input){this.chatImageError='当前模型不支持图片输入';this.showToast(this.chatImageError);return}
+    this.applyModelCapabilities();
+    const images=this.chatImages.map(img=>({...img}));
+    const apiContent=images.length?[...(t?[{type:'text',text:t}]:[]),...images.map(img=>({type:'image_url',image_url:{url:img.url}}))]:t;
+    this.msgs.push({role:'user',content:t,images,apiContent});this.draft='';this.chatImages=[];this.chatImageError='';this.busy=true;this.resizeTa();this.scrollDown();
+    const body={model:this.model,messages:this.msgs.map(m=>({role:m.role,content:m.apiContent||m.content}))};
+    if(this.controlAvailable('temperature')&&this.cfg.temperature!==1) body.temperature=this.cfg.temperature;
+    if(this.controlAvailable('top_p')&&this.cfg.topP!==1) body.top_p=this.cfg.topP;
+    if(this.controlAvailable('max_tokens')&&this.cfg.maxTokens!==8192) body.max_tokens=this.cfg.maxTokens;
+    if(this.controlAvailable('stream')&&this.cfg.stream==='on') body.stream=true;
+    if(this.controlAvailable('thinking')&&this.cfg.thinking!=='off') body.thinking=this.cfg.thinking;
+    if(this.controlAvailable('search')&&this.cfg.search==='on') body.grounding=true;
+    if(this.controlAvailable('safety')&&this.cfg.safety==='off') body.safety_off=true;
+    const useStream=!!body.stream;
 
     try{const r=await fetch('/v1/chat/completions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-      if(!r.ok){let e=r.statusText;try{const d=await r.json();if(d.detail)e=JSON.stringify(d.detail)}catch(x){};this.msgs.push({role:'assistant',content:'',error:`Error ${r.status}: ${e}`})}
-      else if(this.cfg.stream==='on'){
+      if(!r.ok){let e=r.statusText;try{const d=await r.json();if(d.detail)e=d.detail.message||JSON.stringify(d.detail);else if(d.error)e=d.error.message||JSON.stringify(d.error)}catch(x){};this.msgs.push({role:'assistant',content:'',error:`Error ${r.status}: ${e}`})}
+      else if(useStream){
         const reader=r.body.getReader();const dec=new TextDecoder();this.msgs.push({role:'assistant',content:'',thinking:'',showThinking:false});const idx=this.msgs.length-1;let buf='';
         while(true){const{done,value}=await reader.read();if(done)break;buf+=dec.decode(value,{stream:true});const lines=buf.split('\n');buf=lines.pop();
           for(const ln of lines){if(ln.startsWith('data: ')&&ln!=='data: [DONE]'){try{const d=JSON.parse(ln.slice(6));const delta=d.choices?.[0]?.delta||{};
             const c=delta.content;if(c)this.msgs[idx].content+=c;
             const th=delta.reasoning_content||delta.thinking||delta.reasoning;if(th)this.msgs[idx].thinking+=th;
+            if(delta.tool_calls)this.msgs[idx].content+='\n'+JSON.stringify(delta.tool_calls);
           }catch(e){}}}
           this.scrollDown()}
       }else{const d=await r.json();const msg=d.choices?.[0]?.message||{};
         this.msgs.push({role:'assistant',content:msg.content||'(无响应内容)',thinking:msg.reasoning_content||msg.thinking||msg.reasoning||'',showThinking:false})}}
     catch(e){this.msgs.push({role:'assistant',content:'',error:e.message})}
     finally{this.busy=false;this.scrollDown()}},
+
+  loadImageHistory(){try{this.imageHistory=JSON.parse(localStorage.getItem('aistudio.imageHistory')||'[]').slice(0,24)}catch(e){this.imageHistory=[]}},
+  saveImageHistory(){localStorage.setItem('aistudio.imageHistory',JSON.stringify(this.imageHistory.slice(0,24)))},
+  imageUrl(item){return item.url||((item.b64_json||item.b64)?`data:image/png;base64,${item.b64_json||item.b64}`:'')},
+  normalizeImageCount(){const count=Math.max(1,Math.min(10,Math.floor(Number(this.imageCount)||1)));this.imageCount=count;return count},
+  async generateImage(){const prompt=this.imagePrompt.trim();if(!prompt||this.imageBusy)return;this.ensureImageDefaults();if(!this.imageModel){this.imageError='没有可用的图像模型';return}const count=this.normalizeImageCount();this.imageBusy=true;this.imageError='';this.imageResults=[];const body={model:this.imageModel,prompt,size:this.imageSize,n:count,response_format:'url'};this.imageLastRequest={...body};try{const data=await this.fetchJson('/v1/images/generations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});this.imageResults=(data.data||[]).map((item,index)=>({...item,url:this.imageUrl(item),prompt,model:this.imageModel,size:this.imageSize,index:index+1,created:data.created||Date.now()/1000}));if(this.imageResults.length){this.imageHistory=[...this.imageResults,...this.imageHistory].slice(0,24);this.saveImageHistory()}else{this.imageError='没有返回图片'}this.showToast(`生成完成：${this.imageResults.length} 张`)}catch(error){this.imageError=this.errMsg(error,'生成失败');this.showToast('生成失败：'+this.imageError)}finally{this.imageBusy=false}},
+  retryLastImage(){if(!this.imageLastRequest||this.imageBusy)return;this.imagePrompt=this.imageLastRequest.prompt||this.imagePrompt;this.imageModel=this.imageLastRequest.model||this.imageModel;this.imageSize=this.imageLastRequest.size||this.imageSize;this.imageCount=this.imageLastRequest.n||this.imageCount;this.generateImage()},
+  retryImage(item){this.imagePrompt=item.prompt||this.imagePrompt;this.imageModel=item.model||this.imageModel;this.imageSize=item.size||this.imageSize;this.generateImage()},
+  downloadImage(item){const url=this.imageUrl(item);if(!url)return;const a=document.createElement('a');a.href=url;a.download=`aistudio-${Date.now()}.png`;document.body.appendChild(a);a.click();a.remove()},
+  clearImageHistory(){this.imageHistory=[];this.saveImageHistory()},
+  fmtImageTime(value){if(!value)return'-';try{return new Date(typeof value==='number'?value*1000:value).toLocaleString()}catch(error){return'-'}},
 
   fmtDate(s){if(!s)return'-';try{return new Date(s).toLocaleString()}catch(e){return s}}
 }}

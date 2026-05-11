@@ -31,6 +31,10 @@ class OpenAITool(BaseModel):
     function: Optional[OpenAIFunctionDefinition] = None
 
 
+class StreamOptions(BaseModel):
+    include_usage: bool = True
+
+
 class ChatRequest(BaseModel):
     model: str = DEFAULT_TEXT_MODEL
     messages: list[Message]
@@ -43,11 +47,8 @@ class ChatRequest(BaseModel):
     thinking: Optional[str | bool] = None
     grounding: Optional[bool] = None
     safety_off: Optional[bool] = None
-    stream_options: "StreamOptions | None" = None
-
-
-class StreamOptions(BaseModel):
-    include_usage: bool = True
+    response_format: Optional[dict[str, Any] | str] = None
+    stream_options: StreamOptions | None = None
 
 
 class ImageRequest(BaseModel):
@@ -116,3 +117,5 @@ class GeminiGenerateContentRequest(BaseModel):
     systemInstruction: Optional[GeminiContent] = None
     tools: Optional[list[GeminiTool]] = None
     generationConfig: Optional[GeminiGenerationConfig] = None
+    safetySettings: Optional[list[dict[str, Any]]] = None
+    cachedContent: Optional[str] = None

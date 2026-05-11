@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from aistudio_api.config import DEFAULT_TEXT_MODEL
+from aistudio_api.domain.errors import RequestError
 from aistudio_api.infrastructure.cache.snapshot_cache import SnapshotCache
 
 logger = logging.getLogger("aistudio")
@@ -37,6 +38,10 @@ class CapturedRequest:
 # Default API endpoint
 TARGET_HOST = "alkalimakersuite-pa.clients6.google.com"
 DEFAULT_URL = f"https://{TARGET_HOST}/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GenerateContent"
+PURE_HTTP_SNAPSHOT_UNSUPPORTED = (
+    "Pure HTTP mode is experimental and BotGuard snapshot generation is unavailable; "
+    "install/enable chromium_botguard support or disable AISTUDIO_USE_PURE_HTTP to use browser mode"
+)
 
 
 def compute_content_hash(prompt: str) -> str:
@@ -58,6 +63,9 @@ class PureHttpCaptureService:
         contents=None,
         force_refresh: bool = False,
     ) -> CapturedRequest | None:
+        if images:
+            raise RequestError(501, "Pure HTTP mode is experimental and does not support image prompts; use browser mode")
+
         # Check cache first
         if not images and not force_refresh:
             cached = self._snapshot_cache.get(prompt)
@@ -68,8 +76,8 @@ class PureHttpCaptureService:
         # Generate snapshot via chromium_botguard.py (no UI)
         snapshot = await self._generate_snapshot(prompt)
         if not snapshot:
-            logger.error("Failed to generate snapshot")
-            return None
+            logger.error("Pure HTTP snapshot generation returned no snapshot")
+            raise RequestError(501, PURE_HTTP_SNAPSHOT_UNSUPPORTED)
 
         # Build request body manually
         body = self._build_request_body(model, prompt, snapshot, images)
@@ -108,11 +116,13 @@ class PureHttpCaptureService:
                 logger.info("Snapshot generated: %d chars", len(snapshot))
                 return snapshot
             else:
-                logger.error("No snapshot in result: %s", result)
-                return None
+                logger.error("Pure HTTP snapshot generator returned no snapshot")
+                raise RequestError(501, PURE_HTTP_SNAPSHOT_UNSUPPORTED)
         except Exception as e:
-            logger.error("Snapshot generation failed: %s", e, exc_info=True)
-            return None
+            if isinstance(e, RequestError):
+                raise
+            logger.error("Pure HTTP snapshot generation failed: %s", e)
+            raise RequestError(501, PURE_HTTP_SNAPSHOT_UNSUPPORTED) from e
 
     def _build_request_body(
         self,
@@ -142,7 +152,7 @@ class PureHttpCaptureService:
             model,       # 0: model name
             contents,    # 1: contents
             None,        # 2: system instruction
-            None,        # 3: generation config
+            [],          # 3: generation config
             snapshot,    # 4: BotGuard snapshot
         ]
 

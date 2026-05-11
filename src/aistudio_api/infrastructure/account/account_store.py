@@ -7,7 +7,7 @@ import os
 import re
 import shutil
 from dataclasses import dataclass, asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +23,9 @@ BACKUP_WARNING = (
     "This backup contains sensitive browser cookies and tokens. Anyone with this file "
     "may be able to access the exported AI Studio accounts. Store it securely and do not share it."
 )
+EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}")
+ACCOUNT_TIERS = {"free", "pro", "ultra"}
+ACCOUNT_HEALTH_STATUSES = {"unknown", "healthy", "rate_limited", "isolated", "expired", "missing_auth", "error"}
 
 
 def _resolve_accounts_dir() -> Path:
@@ -57,6 +60,41 @@ def _is_safe_account_id(account_id: str) -> bool:
     return bool(re.fullmatch(r"[A-Za-z0-9_.-]+", account_id))
 
 
+def _normalize_email(value: Any) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("account email must be a string when present")
+    email = value.strip()
+    if not email:
+        return None
+    if not EMAIL_RE.fullmatch(email):
+        raise ValueError("account email is invalid")
+    return email
+
+
+def _extract_email_from_storage_state(storage_state: dict[str, Any]) -> str | None:
+    for origin in storage_state.get("origins", []):
+        if not isinstance(origin, dict):
+            continue
+        local_storage = origin.get("localStorage", [])
+        if not isinstance(local_storage, list):
+            continue
+        for item in local_storage:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "")
+            value = item.get("value")
+            if not isinstance(value, str):
+                continue
+            if "email" not in name.lower() and "@" not in value:
+                continue
+            match = EMAIL_RE.search(value)
+            if match:
+                return match.group(0)
+    return None
+
+
 @dataclass
 class AccountMeta:
     """账号元数据。"""
@@ -65,13 +103,73 @@ class AccountMeta:
     email: str | None
     created_at: str
     last_used: str | None = None
+    tier: str = "free"
+    health_status: str = "unknown"
+    health_reason: str | None = None
+    last_health_check: str | None = None
+    isolated_until: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AccountMeta:
-        return cls(**data)
+        return cls(
+            id=data["id"],
+            name=data["name"],
+            email=data.get("email"),
+            created_at=data["created_at"],
+            last_used=data.get("last_used"),
+            tier=_normalize_tier(data.get("tier", "free")),
+            health_status=_normalize_health_status(data.get("health_status", "unknown")),
+            health_reason=data.get("health_reason") if isinstance(data.get("health_reason"), str) else None,
+            last_health_check=data.get("last_health_check") if isinstance(data.get("last_health_check"), str) else None,
+            isolated_until=data.get("isolated_until") if isinstance(data.get("isolated_until"), str) else None,
+        )
+
+    @property
+    def is_premium(self) -> bool:
+        return self.tier in ("pro", "ultra")
+
+    @property
+    def is_isolated(self) -> bool:
+        if self.health_status in ("expired", "missing_auth"):
+            return True
+        if self.health_status == "rate_limited" and self.isolated_until:
+            try:
+                return datetime.fromisoformat(self.isolated_until) > datetime.now(timezone.utc)
+            except ValueError:
+                return False
+        if self.health_status != "isolated":
+            return False
+        if not self.isolated_until:
+            return True
+        try:
+            return datetime.fromisoformat(self.isolated_until) > datetime.now(timezone.utc)
+        except ValueError:
+            return True
+
+
+def _normalize_tier(value: Any) -> str:
+    if value is None:
+        return "free"
+    if not isinstance(value, str):
+        raise ValueError("account tier must be a string")
+    tier = value.strip().lower()
+    if tier not in ACCOUNT_TIERS:
+        raise ValueError("account tier must be one of: free, pro, ultra")
+    return tier
+
+
+def _normalize_health_status(value: Any) -> str:
+    if value is None:
+        return "unknown"
+    if not isinstance(value, str):
+        raise ValueError("account health status must be a string")
+    status = value.strip().lower()
+    if status not in ACCOUNT_HEALTH_STATUSES:
+        return "unknown"
+    return status
 
 
 @dataclass
@@ -206,6 +304,7 @@ class AccountStore:
         created_at: str | None = None,
         last_used: str | None = None,
         activate: bool = True,
+        tier: str = "free",
     ) -> AccountMeta:
         """保存新账号。"""
         now = datetime.now(timezone.utc).isoformat()
@@ -219,6 +318,7 @@ class AccountStore:
             email=email,
             created_at=created_at or now,
             last_used=last_used or (now if activate else None),
+            tier=_normalize_tier(tier),
         )
         account_dir = self._accounts_dir / account_id
         account_dir.mkdir(parents=True, exist_ok=True)
@@ -281,11 +381,11 @@ class AccountStore:
         """导入项目备份包或兼容的 Playwright storage state。"""
         if self._is_backup_package(payload):
             return self._import_backup_package(payload, activate=activate)
-        self._validate_storage_state(payload)
+        detected_email = self._validate_storage_state(payload)
         return [
             self.save_account(
-                name=name or "Imported account",
-                email=None,
+                name=name or detected_email or "Imported account",
+                email=detected_email,
                 storage_state=payload,
                 activate=activate,
             )
@@ -307,22 +407,74 @@ class AccountStore:
         self._save_registry(registry)
         return True
 
-    def update_account(self, account_id: str, name: str) -> AccountMeta | None:
+    def update_account(self, account_id: str, name: str | None = None, tier: str | None = None) -> AccountMeta | None:
         """更新账号名称。"""
         registry = self._load_registry()
         if account_id not in registry.accounts:
             return None
-        registry.accounts[account_id].name = name
-        # 同步更新 meta.json
-        account_dir = self._accounts_dir / account_id
-        meta_path = account_dir / "meta.json"
-        if meta_path.exists():
-            meta_path.write_text(
-                json.dumps(registry.accounts[account_id].to_dict(), ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
+        if name is not None:
+            registry.accounts[account_id].name = name
+        if tier is not None:
+            registry.accounts[account_id].tier = _normalize_tier(tier)
+        self._write_meta(registry.accounts[account_id])
         self._save_registry(registry)
         return registry.accounts[account_id]
+
+    def set_account_health(
+        self,
+        account_id: str,
+        status: str,
+        reason: str | None = None,
+        *,
+        isolated_until: str | None = None,
+        checked_at: str | None = None,
+    ) -> AccountMeta | None:
+        """更新账号健康状态。"""
+        registry = self._load_registry()
+        account = registry.accounts.get(account_id)
+        if account is None:
+            return None
+        account.health_status = _normalize_health_status(status)
+        account.health_reason = reason
+        account.last_health_check = checked_at or datetime.now(timezone.utc).isoformat()
+        account.isolated_until = isolated_until
+        self._write_meta(account)
+        self._save_registry(registry)
+        return account
+
+    def isolate_account(self, account_id: str, reason: str, seconds: int | None = None) -> AccountMeta | None:
+        until = None
+        if seconds is not None and seconds > 0:
+            until = (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+        return self.set_account_health(account_id, "isolated", reason, isolated_until=until)
+
+    def test_account_health(self, account_id: str) -> dict[str, Any] | None:
+        """执行不会发送外部请求的账号健康检查。"""
+        account = self.get_account(account_id)
+        if account is None:
+            return None
+        auth_path = self.get_auth_path(account_id)
+        if auth_path is None:
+            account = self.set_account_health(account_id, "missing_auth", "auth.json is missing") or account
+            return self._health_result(account, ok=False)
+        try:
+            storage_state = json.loads(auth_path.read_text(encoding="utf-8"))
+            detected_email = self._validate_storage_state(storage_state)
+            if detected_email and not account.email:
+                registry = self._load_registry()
+                registry.accounts[account_id].email = detected_email
+                account = registry.accounts[account_id]
+                self._write_meta(account)
+                self._save_registry(registry)
+            account = self.set_account_health(account_id, "healthy", "storage state is readable and Google cookies are not expired") or account
+            return self._health_result(account, ok=True)
+        except ValueError as exc:
+            status = "expired" if "expired" in str(exc).lower() else "error"
+            account = self.set_account_health(account_id, status, str(exc)) or account
+            return self._health_result(account, ok=False)
+        except Exception as exc:
+            account = self.set_account_health(account_id, "error", f"health check failed: {exc}") or account
+            return self._health_result(account, ok=False)
 
     def get_auth_path(self, account_id: str) -> Path | None:
         """获取指定账号的 auth.json 路径。"""
@@ -331,6 +483,25 @@ class AccountStore:
             return None
         path = self._accounts_dir / account_id / "auth.json"
         return path if path.exists() else None
+
+    def _write_meta(self, account: AccountMeta) -> None:
+        account_dir = self._accounts_dir / account.id
+        account_dir.mkdir(parents=True, exist_ok=True)
+        (account_dir / "meta.json").write_text(
+            json.dumps(account.to_dict(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def _health_result(self, account: AccountMeta, *, ok: bool) -> dict[str, Any]:
+        return {
+            "ok": ok,
+            "account": account.to_dict(),
+            "status": account.health_status,
+            "reason": account.health_reason,
+            "tier": account.tier,
+            "last_health_check": account.last_health_check,
+            "isolated_until": account.isolated_until,
+        }
 
     def _generate_unique_account_id(self) -> str:
         registry = self._load_registry()
@@ -358,25 +529,30 @@ class AccountStore:
         imported: list[AccountMeta] = []
         id_map: dict[str, str] = {}
 
-        validated_accounts: list[tuple[dict[str, Any], dict[str, Any], str | None]] = []
+        validated_accounts: list[tuple[dict[str, Any], dict[str, Any], str | None, str | None, str]] = []
         for entry in accounts:
             if not isinstance(entry, dict):
                 raise ValueError("credential backup account entries must be objects")
             meta_payload = entry.get("meta") if isinstance(entry.get("meta"), dict) else {}
             storage_state = entry.get("auth") or entry.get("storage_state") or entry.get("storageState")
-            self._validate_storage_state(storage_state)
+            detected_email = self._validate_storage_state(storage_state)
+            meta_email = _normalize_email(meta_payload.get("email")) if "email" in meta_payload else None
+            if meta_email and detected_email and meta_email.lower() != detected_email.lower():
+                raise ValueError("credential backup account email does not match storage state email")
             requested_id = meta_payload.get("id") if isinstance(meta_payload.get("id"), str) else None
-            validated_accounts.append((meta_payload, storage_state, requested_id))
+            tier = _normalize_tier(meta_payload.get("tier", "free"))
+            validated_accounts.append((meta_payload, storage_state, requested_id, meta_email or detected_email, tier))
 
-        for meta_payload, storage_state, requested_id in validated_accounts:
+        for meta_payload, storage_state, requested_id, account_email, tier in validated_accounts:
             account = self.save_account(
-                name=str(meta_payload.get("name") or meta_payload.get("email") or "Imported account"),
-                email=meta_payload.get("email") if isinstance(meta_payload.get("email"), str) else None,
+                name=str(meta_payload.get("name") or account_email or "Imported account"),
+                email=account_email,
                 storage_state=storage_state,
                 account_id=requested_id,
                 created_at=meta_payload.get("created_at") if isinstance(meta_payload.get("created_at"), str) else None,
                 last_used=meta_payload.get("last_used") if isinstance(meta_payload.get("last_used"), str) else None,
                 activate=False,
+                tier=tier,
             )
             if requested_id:
                 id_map[requested_id] = account.id
@@ -388,7 +564,7 @@ class AccountStore:
 
         return imported
 
-    def _validate_storage_state(self, storage_state: Any) -> None:
+    def _validate_storage_state(self, storage_state: Any) -> str | None:
         if not isinstance(storage_state, dict):
             raise ValueError("credential storage state must be a JSON object")
         cookies = storage_state.get("cookies")
@@ -399,14 +575,25 @@ class AccountStore:
             raise ValueError("credential storage state origins must be an array when present")
         required_cookie_fields = {"name", "value", "domain", "path"}
         has_google_cookie = False
+        has_valid_google_cookie = False
+        now = datetime.now(timezone.utc).timestamp()
         for cookie in cookies:
             if not isinstance(cookie, dict):
                 raise ValueError("credential storage state cookies must be objects")
-            missing = [field for field in required_cookie_fields if not isinstance(cookie.get(field), str)]
+            missing = [field for field in required_cookie_fields if not isinstance(cookie.get(field), str) or not cookie.get(field)]
             if missing:
                 raise ValueError(f"credential storage state cookie is missing fields: {', '.join(missing)}")
+            expires = cookie.get("expires")
+            if expires is not None and (isinstance(expires, bool) or not isinstance(expires, (int, float))):
+                raise ValueError("credential storage state cookie expires must be a number when present")
+            is_expired = isinstance(expires, (int, float)) and expires >= 0 and expires <= now
             domain = cookie["domain"].lstrip(".").lower()
             if domain == "google.com" or domain.endswith(".google.com"):
                 has_google_cookie = True
+                if not is_expired:
+                    has_valid_google_cookie = True
         if not has_google_cookie:
             raise ValueError("credential storage state must include at least one Google cookie")
+        if not has_valid_google_cookie:
+            raise ValueError("credential storage state Google cookies are expired")
+        return _extract_email_from_storage_state(storage_state)

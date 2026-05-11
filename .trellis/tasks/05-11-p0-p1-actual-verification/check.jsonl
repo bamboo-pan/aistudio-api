@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend spec index for final compliance review."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Quality, credential-safety, frontend static JS, and testing requirements for review."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Review API error behavior against backend error-handling expectations."}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Review logging and verification output for sensitive-data safety."}

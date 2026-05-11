@@ -6,7 +6,9 @@ import argparse
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -100,6 +102,61 @@ app.include_router(system_router)
 app.include_router(gemini_router)
 app.include_router(openai_router)
 app.include_router(accounts_router)
+
+
+def _is_openai_compat_path(request: Request) -> bool:
+    path = request.url.path
+    return path == "/v1" or path.startswith("/v1/")
+
+
+def _detail_from_exception(status_code: int, detail) -> dict:
+    if isinstance(detail, dict):
+        return detail
+    error_type = "bad_request"
+    if status_code == 401:
+        error_type = "authentication_error"
+    elif status_code == 404:
+        error_type = "not_found"
+    elif status_code == 429:
+        error_type = "rate_limit_exceeded"
+    elif status_code == 503:
+        error_type = "service_unavailable"
+    elif status_code >= 500:
+        error_type = "server_error"
+    return {"message": str(detail), "type": error_type}
+
+
+def _openai_error_content(detail: dict) -> dict:
+    error_type = detail.get("type") or "invalid_request_error"
+    if error_type in {"bad_request", "not_found", "unsupported_feature"}:
+        error_type = "invalid_request_error"
+    return {
+        "error": {
+            "message": detail.get("message", "Request failed"),
+            "type": error_type,
+            "param": detail.get("param"),
+            "code": detail.get("code"),
+        }
+    }
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    first = exc.errors()[0] if exc.errors() else {}
+    location = ".".join(str(part) for part in first.get("loc", []) if part != "body")
+    message = first.get("msg", "Invalid request body")
+    if location:
+        message = f"{location}: {message}"
+    detail = {"message": message, "type": "bad_request"}
+    content = _openai_error_content(detail) if _is_openai_compat_path(request) else {"detail": detail}
+    return JSONResponse(status_code=400, content=content)
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    detail = _detail_from_exception(exc.status_code, exc.detail)
+    content = _openai_error_content(detail) if _is_openai_compat_path(request) else {"detail": detail}
+    return JSONResponse(status_code=exc.status_code, content=content, headers=exc.headers)
 
 # 挂载静态文件
 import os

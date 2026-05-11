@@ -37,6 +37,21 @@ def to_gemini_usage_metadata(usage: dict | None = None) -> dict:
     }
 
 
+def _normalize_tool_call_delta(tool_call: dict[str, Any], index: int) -> dict[str, Any]:
+    delta = dict(tool_call)
+    delta.setdefault("index", index)
+    function = delta.get("function")
+    if isinstance(function, dict):
+        function = dict(function)
+        arguments = function.get("arguments")
+        if arguments is None:
+            function.setdefault("arguments", "")
+        elif not isinstance(arguments, str):
+            function["arguments"] = json.dumps(arguments, ensure_ascii=False)
+        delta["function"] = function
+    return delta
+
+
 def sse_chunk(
     chat_id: str,
     model: str,
@@ -52,7 +67,7 @@ def sse_chunk(
     if thinking:
         delta["thinking"] = thinking
     if tool_calls:
-        delta["tool_calls"] = tool_calls
+        delta["tool_calls"] = [_normalize_tool_call_delta(tool_call, index) for index, tool_call in enumerate(tool_calls)]
     choice = {"index": 0, "delta": delta, "finish_reason": finish}
     data = {
         "id": chat_id,
@@ -78,8 +93,14 @@ def sse_usage_chunk(chat_id: str, model: str, usage: dict | None = None) -> str:
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-def sse_error(message: str) -> str:
-    data = {"error": {"message": message, "type": "server_error"}}
+def sse_error(
+    message: str,
+    *,
+    error_type: str = "server_error",
+    param: str | None = None,
+    code: str | None = None,
+) -> str:
+    data = {"error": {"message": message, "type": error_type, "param": param, "code": code}}
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
@@ -87,7 +108,8 @@ def _function_call_arguments(function_call: dict[str, Any]) -> str:
     if "args" in function_call:
         return json.dumps(function_call["args"], ensure_ascii=False)
     if "arguments" in function_call:
-        return str(function_call["arguments"])
+        arguments = function_call["arguments"]
+        return arguments if isinstance(arguments, str) else json.dumps(arguments, ensure_ascii=False)
     raw = function_call.get("raw")
     if isinstance(raw, list) and len(raw) > 1:
         second = raw[1]
@@ -102,6 +124,7 @@ def to_openai_tool_calls(function_calls: list[dict[str, Any]]) -> list[dict[str,
     for idx, function_call in enumerate(function_calls):
         tool_calls.append(
             {
+                "index": idx,
                 "id": f"call_{uuid.uuid4().hex[:12]}_{idx}",
                 "type": "function",
                 "function": {

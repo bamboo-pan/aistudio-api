@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 
 import httpx
 import pytest
@@ -12,17 +13,26 @@ from aistudio_api.infrastructure.account.login_service import LoginService
 from aistudio_api.infrastructure.account.account_store import BACKUP_FORMAT, AccountStore
 
 
-def storage_state(cookie_name="sid", cookie_value="1", domain=".google.com"):
-    return {
-        "cookies": [
+def storage_state(cookie_name="sid", cookie_value="1", domain=".google.com", expires=None, email=None):
+    cookie = {
+        "name": cookie_name,
+        "value": cookie_value,
+        "domain": domain,
+        "path": "/",
+    }
+    if expires is not None:
+        cookie["expires"] = expires
+    origins = []
+    if email:
+        origins = [
             {
-                "name": cookie_name,
-                "value": cookie_value,
-                "domain": domain,
-                "path": "/",
+                "origin": "https://aistudio.google.com",
+                "localStorage": [{"name": "account_email", "value": email}],
             }
-        ],
-        "origins": [],
+        ]
+    return {
+        "cookies": [cookie],
+        "origins": origins,
     }
 
 
@@ -59,6 +69,15 @@ def test_import_credentials_accepts_single_storage_state(tmp_path):
     assert store.export_credentials(imported[0].id)["accounts"][0]["auth"]["cookies"][0]["value"] == "2"
 
 
+def test_import_credentials_infers_email_from_storage_state(tmp_path):
+    store = AccountStore(accounts_dir=tmp_path)
+
+    imported = store.import_credentials(storage_state(email="user@example.com"))
+
+    assert imported[0].email == "user@example.com"
+    assert imported[0].name == "user@example.com"
+
+
 def test_import_credentials_restores_backup_metadata_when_possible(tmp_path):
     source = AccountStore(accounts_dir=tmp_path / "source")
     account = source.save_account("main", "main@example.com", storage_state())
@@ -87,6 +106,14 @@ def test_import_credentials_rejects_non_google_storage_state(tmp_path):
         store.import_credentials(storage_state(domain="example.com"))
 
 
+def test_import_credentials_rejects_expired_google_cookie(tmp_path):
+    store = AccountStore(accounts_dir=tmp_path)
+    expired = datetime(2000, 1, 1, tzinfo=timezone.utc).timestamp()
+
+    with pytest.raises(ValueError, match="expired"):
+        store.import_credentials(storage_state(expires=expired))
+
+
 def test_import_credentials_rejects_malformed_backup_package(tmp_path):
     store = AccountStore(accounts_dir=tmp_path)
 
@@ -103,6 +130,20 @@ def test_import_credentials_validates_backup_before_saving_any_accounts(tmp_path
     target = AccountStore(accounts_dir=tmp_path / "target")
 
     with pytest.raises(ValueError, match="cookies"):
+        target.import_credentials(backup)
+
+    assert target.list_accounts() == []
+
+
+def test_import_credentials_validates_backup_email_metadata_before_saving(tmp_path):
+    source = AccountStore(accounts_dir=tmp_path / "source")
+    source.save_account("main", "main@example.com", storage_state(email="main@example.com"))
+    backup = source.export_credentials()
+    backup["accounts"][0]["auth"] = storage_state(email="other@example.com")
+
+    target = AccountStore(accounts_dir=tmp_path / "target")
+
+    with pytest.raises(ValueError, match="email"):
         target.import_credentials(backup)
 
     assert target.list_accounts() == []
@@ -138,4 +179,4 @@ def test_import_credentials_route_rejects_invalid_json(tmp_path):
     )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == "无效的 JSON 凭证内容"
+    assert response.json()["detail"] == {"message": "无效的 JSON 凭证内容", "type": "bad_request"}

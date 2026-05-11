@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 from aistudio_api.api.schemas import ChatRequest, ImageRequest
 from aistudio_api.api.state import runtime_state
 from aistudio_api.application.api_service import handle_chat, handle_image_generation
+from aistudio_api.domain.errors import RequestError
 from aistudio_api.domain.models import Candidate, GeneratedImage, ModelOutput
 
 
@@ -34,6 +35,33 @@ class FakeImageClient:
             ],
             usage={"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
         )
+
+
+class FakeEmptyImageClient(FakeImageClient):
+    async def generate_image(self, *, prompt, model, generation_config_overrides=None):
+        self.calls.append(
+            {
+                "prompt": prompt,
+                "model": model,
+                "generation_config_overrides": generation_config_overrides,
+            }
+        )
+        return ModelOutput(candidates=[Candidate(text="no image")])
+
+
+class FakeErrorImageClient(FakeImageClient):
+    async def generate_image(self, *, prompt, model, generation_config_overrides=None):
+        self.calls.append({"prompt": prompt, "model": model})
+        raise RequestError(0, "capture failed")
+
+
+class FakeChatClient:
+    def __init__(self):
+        self.calls = []
+
+    async def generate_content(self, **kwargs):
+        self.calls.append(kwargs)
+        return ModelOutput(candidates=[Candidate(text='{"ok":true}')], usage={"total_tokens": 1})
 
 
 def run_with_runtime(coro):
@@ -92,6 +120,42 @@ def test_image_generation_rejects_unsupported_size_before_client_call():
     assert client.calls == []
 
 
+def test_image_generation_rejects_non_image_model_before_client_call():
+    client = FakeImageClient()
+    req = ImageRequest(prompt="draw", model="gemini-3-flash-preview")
+
+    with pytest.raises(HTTPException) as error:
+        run_with_runtime(handle_image_generation(req, client))
+
+    assert error.value.status_code == 400
+    assert "image generation" in error.value.detail["message"]
+    assert client.calls == []
+
+
+def test_image_generation_rejects_empty_prompt_before_client_call():
+    client = FakeImageClient()
+    req = ImageRequest(prompt="   ", model="gemini-3.1-flash-image-preview")
+
+    with pytest.raises(HTTPException) as error:
+        run_with_runtime(handle_image_generation(req, client))
+
+    assert error.value.status_code == 400
+    assert "prompt" in error.value.detail["message"]
+    assert client.calls == []
+
+
+def test_image_generation_rejects_invalid_n_before_client_call():
+    client = FakeImageClient()
+    req = ImageRequest(prompt="draw", model="gemini-3.1-flash-image-preview", n=0)
+
+    with pytest.raises(HTTPException) as error:
+        run_with_runtime(handle_image_generation(req, client))
+
+    assert error.value.status_code == 400
+    assert "n" in error.value.detail["message"]
+    assert client.calls == []
+
+
 def test_image_generation_accepts_url_response_format_with_data_url_fallback():
     client = FakeImageClient()
     req = ImageRequest(prompt="draw", model="gemini-3.1-flash-image-preview", response_format="url")
@@ -116,6 +180,29 @@ def test_image_generation_rejects_unknown_response_format_before_client_call():
     assert client.calls == []
 
 
+def test_image_generation_returns_friendly_error_when_no_image_data():
+    client = FakeEmptyImageClient()
+    req = ImageRequest(prompt="draw", model="gemini-3.1-flash-image-preview")
+
+    with pytest.raises(HTTPException) as error:
+        run_with_runtime(handle_image_generation(req, client))
+
+    assert error.value.status_code == 502
+    assert error.value.detail["type"] == "upstream_error"
+    assert "no image data" in error.value.detail["message"]
+
+
+def test_image_generation_translates_low_level_request_error():
+    client = FakeErrorImageClient()
+    req = ImageRequest(prompt="draw", model="gemini-3.1-flash-image-preview")
+
+    with pytest.raises(HTTPException) as error:
+        run_with_runtime(handle_image_generation(req, client))
+
+    assert error.value.status_code == 502
+    assert error.value.detail["type"] == "upstream_error"
+
+
 def test_chat_completion_with_image_model_returns_markdown_image():
     client = FakeImageClient()
     req = ChatRequest(
@@ -129,6 +216,22 @@ def test_chat_completion_with_image_model_returns_markdown_image():
     assert client.calls[0]["prompt"] == "draw a city"
     content = response["choices"][0]["message"]["content"]
     assert content == "![generated image 1](data:image/png;base64,aW1hZ2UtMQ==)"
+
+
+def test_chat_completion_with_image_model_rejects_unsupported_chat_fields():
+    client = FakeImageClient()
+    req = ChatRequest(
+        model="gemini-3.1-flash-image-preview",
+        messages=[{"role": "user", "content": "draw a city"}],
+        temperature=0.5,
+    )
+
+    with pytest.raises(HTTPException) as error:
+        run_with_runtime(handle_chat(req, client))
+
+    assert error.value.status_code == 400
+    assert "temperature" in error.value.detail["message"]
+    assert client.calls == []
 
 
 def test_chat_completion_with_image_model_ignores_stream_true_and_returns_sse_image():
@@ -147,3 +250,86 @@ def test_chat_completion_with_image_model_ignores_stream_true_and_returns_sse_im
     payload = json.loads(stream.split("\n\n", 1)[0].removeprefix("data: "))
     assert payload["choices"][0]["delta"]["content"] == "![generated image 1](data:image/png;base64,aW1hZ2UtMQ==)"
     assert "data: [DONE]" in stream
+
+
+def test_chat_completion_rejects_empty_messages():
+    client = FakeChatClient()
+    req = ChatRequest(model="gemini-3-flash-preview", messages=[])
+
+    with pytest.raises(HTTPException) as error:
+        run_with_runtime(handle_chat(req, client))
+
+    assert error.value.status_code == 400
+    assert "messages" in error.value.detail["message"]
+    assert client.calls == []
+
+
+def test_chat_completion_rejects_illegal_role():
+    client = FakeChatClient()
+    req = ChatRequest(model="gemini-3-flash-preview", messages=[{"role": "alien", "content": "hello"}])
+
+    with pytest.raises(HTTPException) as error:
+        run_with_runtime(handle_chat(req, client))
+
+    assert error.value.status_code == 400
+    assert "role" in error.value.detail["message"]
+    assert client.calls == []
+
+
+def test_chat_completion_rejects_malformed_image_url_part_before_client_call():
+    client = FakeChatClient()
+    req = ChatRequest(
+        model="gemini-3-flash-preview",
+        messages=[{"role": "user", "content": [{"type": "image_url", "image_url": {"name": "missing-url"}}]}],
+    )
+
+    with pytest.raises(HTTPException) as error:
+        run_with_runtime(handle_chat(req, client))
+
+    assert error.value.status_code == 400
+    assert "image_url.url" in error.value.detail["message"]
+    assert client.calls == []
+
+
+def test_chat_completion_rejects_invalid_numeric_params():
+    client = FakeChatClient()
+    req = ChatRequest(model="gemini-3-flash-preview", messages=[{"role": "user", "content": "hello"}], top_p=1.5)
+
+    with pytest.raises(HTTPException) as error:
+        run_with_runtime(handle_chat(req, client))
+
+    assert error.value.status_code == 400
+    assert "top_p" in error.value.detail["message"]
+    assert client.calls == []
+
+
+def test_chat_completion_rejects_invalid_model_before_client_call():
+    client = FakeChatClient()
+    req = ChatRequest(model="not-registered", messages=[{"role": "user", "content": "hello"}])
+
+    with pytest.raises(HTTPException) as error:
+        run_with_runtime(handle_chat(req, client))
+
+    assert error.value.status_code == 400
+    assert "not registered" in error.value.detail["message"]
+    assert client.calls == []
+
+
+def test_chat_completion_passes_structured_response_format_to_gateway():
+    client = FakeChatClient()
+    req = ChatRequest(
+        model="gemini-3-flash-preview",
+        messages=[{"role": "user", "content": "return json"}],
+        response_format={
+            "type": "json_schema",
+            "json_schema": {"schema": {"type": "object", "properties": {"ok": {"type": "boolean"}}}},
+        },
+    )
+
+    response = run_with_runtime(handle_chat(req, client))
+
+    assert response["choices"][0]["message"]["content"] == '{"ok":true}'
+    call = client.calls[0]
+    assert call["generation_config_overrides"]["response_mime_type"] == "application/json"
+    assert call["generation_config_overrides"]["response_schema"] == [6, None, None, None, None, None, [["ok", [4]]]]
+    assert call["sanitize_plain_text"] is False

@@ -6,8 +6,8 @@ Google AIStudio Playgroud 反代，支持 Google 会员（Pro/Ultra），支持 
 
 ## 功能
 
-- **OpenAI 兼容** — 支持 `/v1/chat/completions`、`/v1/models`、`/v1/images/generations`
-- **Gemini 原生 API** — 同时支持 `/v1beta/models/{model}:generateContent`
+- **OpenAI 兼容** — 支持 `/v1/chat/completions`、`/v1/responses`、`/v1/messages`、`/v1/models`、`/v1/images/generations`
+- **Gemini 原生 API** — 支持 `/v1beta/models`、`generateContent`、`streamGenerateContent`、`countTokens`，并对暂不支持的 embeddings、`cachedContent`、`fileData` 返回清晰错误
 - **流式输出** — SSE 流式返回
 - **多轮对话** — 正确的 user/model 交替结构
 - **图片输入** — 支持 base64 内联和 HTTP URL，单图/多图
@@ -64,6 +64,15 @@ curl http://localhost:8080/v1/chat/completions \
 # 查看模型列表
 curl http://localhost:8080/v1/models
 
+# Responses API（支持 response_format/json_schema）
+curl http://localhost:8080/v1/responses \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini-3-flash-preview",
+    "input": "返回 JSON",
+    "text": {"format": {"type": "json_schema", "name": "Answer", "schema": {"type": "object", "properties": {"ok": {"type": "boolean"}}}}}
+  }'
+
 # 生图（OpenAI 兼容）
 curl http://localhost:8080/v1/images/generations \
   -H "Content-Type: application/json" \
@@ -86,6 +95,11 @@ curl http://localhost:8080/v1beta/models/gemini-3-flash-preview:generateContent 
     "contents": [{"role": "user", "parts": [{"text": "今天上海天气怎么样？"}]}],
     "tools": [{"googleSearchRetrieval": {}}]
   }'
+
+# 估算 token
+curl http://localhost:8080/v1beta/models/gemini-3-flash-preview:countTokens \
+  -H "Content-Type: application/json" \
+  -d '{"contents": [{"role": "user", "parts": [{"text": "你好"}]}]}'
 ```
 
 ### Python（OpenAI SDK）
@@ -130,7 +144,7 @@ python3 main.py client "画一只猫" --image --save cat.png
 | Gemini 3.1 Flash Image | `gemini-3.1-flash-image-preview` | ❌ | 默认图片模型，仅限 Pro/Ultra |
 | Gemini 3 Pro Image | `gemini-3-pro-image-preview` | ❌ | |
 
-`/v1/models` 会返回每个模型的 `capabilities` 元数据。`/v1/images/generations` 支持 `b64_json`，也兼容客户端请求的 `response_format=url`（返回 data URL 和 base64 兜底），并通过模型能力元数据校验 `size`；不支持的模型或尺寸会返回 400。通过 `/v1/chat/completions` 选择图片模型时，服务端会自动走生图语义并忽略不适用的 `stream=true`。
+`/v1/models` 会返回每个模型的 `capabilities` 元数据。OpenAI 兼容路由会尽量返回标准 `{ "error": ... }` 错误形状。`/v1/chat/completions`、`/v1/responses`、`/v1/messages` 支持 `response_format` / `json_schema` 结构化输出（取决于模型能力）和工具调用结果映射。`/v1/images/generations` 支持 `b64_json`，也兼容客户端请求的 `response_format=url`（返回 data URL 和 base64 兜底），并通过模型能力元数据校验 `size`；不支持的模型或尺寸会返回 400。通过 `/v1/chat/completions` 选择图片模型时，服务端会自动走生图语义并忽略不适用的 `stream=true`。
 
 
 ## 配置
@@ -144,6 +158,7 @@ python3 main.py client "画一只猫" --image --save cat.png
 | `AISTUDIO_DEFAULT_TEXT_MODEL` | `gemma-4-31b-it` | 默认对话模型 |
 | `AISTUDIO_DEFAULT_IMAGE_MODEL` | `gemini-3.1-flash-image-preview` | 默认图片模型 |
 | `AISTUDIO_CAMOUFOX_HEADLESS` | `1` | 无头模式运行浏览器 |
+| `AISTUDIO_PROXY_SERVER` | 空 | Camoufox 浏览器代理，例如 WSL 使用 Windows 代理时可设为 `http://<WSL 网关 IP>:7890` |
 | `AISTUDIO_TIMEOUT_REPLAY` | `120` | 请求超时（秒） |
 | `AISTUDIO_TIMEOUT_STREAM` | `120` | 流式超时（秒） |
 | `AISTUDIO_SNAPSHOT_CACHE_TTL` | `3600` | BotGuard snapshot 缓存时间 |
@@ -151,6 +166,8 @@ python3 main.py client "画一只猫" --image --save cat.png
 | `AISTUDIO_ACCOUNT_COOLDOWN_SECONDS` | `60` | 限流后冷却时间 |
 | `AISTUDIO_USE_PURE_HTTP` | `0` | 纯 HTTP 模式（不用浏览器） |
 | `AISTUDIO_DUMP_RAW_RESPONSE` | `0` | 保存原始响应到磁盘 |
+
+> `AISTUDIO_USE_PURE_HTTP=1` 仍是实验模式：目前只尝试单轮、非流式纯文本请求。流式、图片、工具、图片输入、Thinking、多轮对话、系统指令、安全覆盖、结构化输出以及 BotGuard snapshot 依赖缺失都会返回清晰的 `501` 不支持错误。生产或完整兼容场景请使用默认浏览器模式。
 
 ## 架构
 
@@ -250,7 +267,6 @@ snapshot 函数名随 Google bundle 更新持续变化（Mv → Ov → Sv → ..
 ## TODO
 - [ ] 完整 webui 支持
 - [ ] 完整真流式支持
-- [ ] 兼容 /v1/messages
 
 ## 致谢
 - https://github.com/LuanRT/BgUtils

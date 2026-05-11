@@ -109,8 +109,22 @@ def test_sse_chunk_can_emit_tool_calls_delta():
     )
     data = json.loads(payload.removeprefix("data: ").strip())
 
+    assert data["choices"][0]["delta"]["tool_calls"][0]["index"] == 0
     assert data["choices"][0]["delta"]["tool_calls"][0]["function"]["name"] == "getWeather"
     assert data["usage"] is None
+
+
+def test_sse_chunk_stringifies_tool_call_delta_arguments():
+    payload = sse_chunk(
+        "chatcmpl-test",
+        "models/gemma-4-31b-it",
+        "",
+        tool_calls=[{"type": "function", "function": {"name": "getWeather", "arguments": {"city": "Shanghai"}}}],
+    )
+    data = json.loads(payload.removeprefix("data: ").strip())
+
+    arguments = data["choices"][0]["delta"]["tool_calls"][0]["function"]["arguments"]
+    assert json.loads(arguments) == {"city": "Shanghai"}
 
 
 def test_to_gemini_parts_keeps_function_call_and_response_parts():
