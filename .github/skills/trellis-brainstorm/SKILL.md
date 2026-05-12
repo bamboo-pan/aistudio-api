@@ -35,6 +35,7 @@ Triggered from /start when the user describes a development task, especially whe
 
 3. **One question per message**
    Never overwhelm the user with a list of questions. Ask one, update PRD, repeat.
+   This limits batching, not the total number of questions; continue until all Blocking/Preference questions are resolved.
 
 4. **Prefer concrete options**
    For preference/decision questions, present 2–3 feasible, specific approaches with trade-offs.
@@ -192,48 +193,25 @@ Examples:
 * The user asks for "best practice", "how others do it", "recommendation"
 * The user can't reasonably enumerate options
 
-### Delegate external/technical discovery to `trellis-research` sub-agents
+### Research in the main session and persist findings
 
-For each research-heavy external/technical discovery topic, **spawn a `trellis-research` sub-agent via the Task tool** — don't do WebFetch / WebSearch / `gh api` inline in the main conversation on sub-agent-capable platforms.
+For each research-heavy external/technical discovery topic, do the research in the main session and write the durable result to `{TASK_DIR}/research/<topic-slug>.md`. Do not leave research only in chat.
 
 Why:
-- The sub-agent has its own context window → doesn't pollute brainstorm context with raw tool output
-- It persists findings to `{TASK_DIR}/research/<topic>.md` (the contract — see `workflow.md` Phase 1.2)
-- It returns only `{file path, one-line summary}` to the main agent
-- Independent topics can be **parallelized** — spawn multiple sub-agents in one tool call
+- Research files survive compaction and later resumes
+- The PRD can link to concise findings instead of duplicating raw tool output
+- Phase 1.3 can reference the same persisted files in `implement.jsonl` / `check.jsonl`
 
-Agent type: `trellis-research`
-Task description template: "Research <specific question>; persist findings to `{TASK_DIR}/research/<topic-slug>.md`."
+### Research steps
 
-❌ Bad (what you must NOT do):
-```
-Main agent: WebFetch(url-A) → WebFetch(url-B) → Bash(gh api ...)
-          → WebSearch(q1) → WebSearch(q2) → ... (multiple inline calls)
-          → Write(research/topic.md)
-```
-→ Pollutes main context with raw HTML/JSON, burns tokens.
-
-✅ Good:
-```
-Main agent: Task(subagent_type="trellis-research",
-                 prompt="Research topic A; persist to research/topic-a.md")
-          + Task(subagent_type="trellis-research",
-                 prompt="Research topic B; persist to research/topic-b.md")
-          + Task(subagent_type="trellis-research",
-                 prompt="Research topic C; persist to research/topic-c.md")
-→ Reads research/topic-{a,b,c}.md after they finish.
-```
-
-### Research steps (to pass into each sub-agent prompt)
-
-Each `trellis-research` sub-agent should:
+For each research topic:
 
 1. Identify 2–4 comparable tools/patterns for its topic
 2. Summarize common conventions and why they exist
 3. Map conventions onto our repo constraints
 4. Write findings to `{TASK_DIR}/research/<topic>.md`
 
-Main agent then reads the persisted files and produces **2–3 feasible approaches** in PRD.
+The main agent then reads the persisted files and produces **2–3 feasible approaches** in PRD.
 
 ### Research output format (PRD)
 
@@ -335,6 +313,7 @@ Then update PRD:
 ### Rules
 
 * One question per message
+* Continue until all Blocking/Preference questions are resolved
 * Prefer multiple-choice when possible
 * After each user answer:
 

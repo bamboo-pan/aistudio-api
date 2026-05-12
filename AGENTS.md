@@ -18,18 +18,21 @@ If you're using Codex or another agent-capable tool, additional project-scoped h
 
 ## Subagents
 
-- ALWAYS wait for all subagents to complete before yielding.
-- Spawn subagents automatically when:
-  - Parallelizable work (e.g., install + verify, npm test + typecheck, multiple tasks from plan)
-  - Long-running or blocking tasks where a worker can run independently.
-  - Isolation for risky changes or checks
+This Trellis workflow is main-agent-only.
+
+- Do not spawn or delegate to subagents for Trellis workflow steps.
+- The main agent must perform context loading, research persistence, implementation, verification, spec-update gates, and finish/commit steps directly.
+- If a platform exposes Trellis subagent files, treat them as disabled for this workflow unless the user explicitly changes the policy in the current request.
+- Never use subagents merely because work is parallelizable, long-running, exploratory, or risk-isolated.
 
 Managed by Trellis. Edits outside this block are preserved; edits inside may be overwritten by a future `trellis update`.
 
 <!-- TRELLIS:END -->
+
 # 真实测试环境
+
 1. 在wsl home目录下下新建临时目录实际测试
-  1. \\wsl.localhost\Ubuntu-24.04\home\bamboo
-2. 真实凭据
-  1. \\wsl.localhost\Ubuntu-24.04\home\bamboo\aistudio-api\data\accounts
-3. 所有改动必须最终真实环境测试通过
+  2. \\wsl.localhost\Ubuntu-24.04\home\bamboo
+3. 真实凭据
+  4. \\wsl.localhost\Ubuntu-24.04\home\bamboo\aistudio-api\data\accounts
+5. 所有改动必须最终真实环境测试通过

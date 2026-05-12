@@ -161,9 +161,8 @@ def _get_task_status(trellis_dir: Path, hook_input: dict) -> str:
         return (
             f"Status: NO ACTIVE TASK\nSource: {active.source}\n"
             "Next: Describe what you want to work on\n"
-            "Research reminder: for research-heavy external/technical discovery, dispatch `trellis-research` "
-            "sub-agents and persist findings to `{TASK_DIR}/research/*.md`; do NOT research inline with "
-            "WebFetch/WebSearch/gh api in the main session."
+            "Research reminder: for research-heavy external/technical discovery, research in the main "
+            "session and persist findings to `{TASK_DIR}/research/*.md` before linking them from the PRD."
         )
 
     task_ref = active.task_path
@@ -199,12 +198,12 @@ def _get_task_status(trellis_dir: Path, hook_input: dict) -> str:
             f"Status: NOT READY\nTask: {task_title}\nSource: {active.source}\n"
             "Missing: prd.md not created\n"
             "Next: Write PRD (see workflow.md Phase 1.1) then curate implement.jsonl per Phase 1.3\n"
-            "Research reminder: delegate external/technical discovery to `trellis-research`; findings must go "
+            "Research reminder: do external/technical discovery in the main session; findings must go "
             "to `{TASK_DIR}/research/*.md`, and the PRD should link to those files."
         )
 
     if not has_context:
-        return f"Status: NOT READY\nTask: {task_title}\nSource: {active.source}\nMissing: implement.jsonl / check.jsonl missing or empty\nNext: Curate entries per workflow.md Phase 1.3 (spec + `trellis-research` files from `{{TASK_DIR}}/research/*.md` only), then `task.py start`"
+        return f"Status: NOT READY\nTask: {task_title}\nSource: {active.source}\nMissing: implement.jsonl / check.jsonl missing or empty\nNext: Curate entries per workflow.md Phase 1.3 (spec + persisted research files from `{{TASK_DIR}}/research/*.md` only), then `task.py start`"
 
     prd_status = _get_prd_status(task_data)
     if prd_status == "draft":
@@ -229,16 +228,13 @@ def _get_task_status(trellis_dir: Path, hook_input: dict) -> str:
     return (
         f"Status: READY\nTask: {task_title}\n"
         f"Source: {active.source}\n"
-        "Next required action: dispatch `trellis-implement` per Phase 2.1. "
-        "For agent-capable platforms, main-session implementation is blocked: do NOT inspect implementation details, "
-        "edit code, or run implementation inline unless the user's CURRENT message contains an inline override. "
-        "After implementation, dispatch `trellis-check` per Phase 2.2 before reporting completion. "
+        "Next required action: load `trellis-before-dev`, read `prd.md`, curated jsonl entries, "
+        "and any `{TASK_DIR}/research/*.md`, then implement directly in the main session per Phase 2.1. "
+        "After implementation, load/run `trellis-check` in the main session per Phase 2.2 before reporting completion. "
+        "Before repeating any step, inspect existing artifacts/results and skip work that is already complete "
+        "for the current code state. "
         "Before commit/finish, explicitly run/load `trellis-update-spec` for Phase 3.3 and record whether "
-        "spec updates were made; sub-agent spec edits do not replace this explicit judgment.\n"
-        "User override (per-turn escape hatch): if the user's CURRENT message explicitly tells the "
-        "main session to handle it directly (\"你直接改\" / \"别派 sub-agent\" / \"main session 写就行\" / "
-        "\"do it inline\" / \"不用 sub-agent\"), honor it for this turn and edit code directly. "
-        "Per-turn only; without one of these current-turn phrases, main-session implementation remains blocked."
+        "spec updates were made; spec edits made during implementation/check do not replace this explicit judgment."
     )
 
 
@@ -343,14 +339,10 @@ Read and follow all instructions below carefully.
         "Project spec indexes are listed by path below. Each index contains a "
         "**Pre-Development Checklist** listing the specific guideline files to "
         "read before coding.\n\n"
-        "- If you're spawning an implement/check sub-agent, context is injected "
-        "automatically via `{task}/implement.jsonl` / `check.jsonl`. You do NOT "
-        "need to read these indexes yourself.\n"
-        "- For agent-capable platforms, the default is to dispatch "
-        "`trellis-implement` and `trellis-check` (so JSONL context is loaded by "
-        "the sub-agents) rather than editing code in the main session. "
-        "Honor a per-turn user override only if the user's current message "
-        "explicitly opts out (see <task-status> below for override phrases).\n\n"
+        "- The main session is responsible for reading relevant spec indexes and "
+        "curated `{task}/implement.jsonl` / `check.jsonl` entries before coding/checking.\n"
+        "- Load `trellis-before-dev` before implementation and `trellis-check` before completion. "
+        "Do not repeat already completed `[once]` steps; continue from the next unfinished step.\n\n"
     )
 
     # guides/ inlined (cross-package thinking, broadly useful)

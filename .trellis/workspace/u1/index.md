@@ -1,4 +1,4 @@
-# Workspace Index - your-name
+# Workspace Index - u1
 
 > Journal tracking for AI development sessions.
 
@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 2
-- **Last Active**: 2026-05-12
+- **Total Sessions**: 0
+- **Last Active**: -
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~75 | Active |
+| `journal-1.md` | ~0 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,8 +29,6 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
-| 2 | 2026-05-12 | Persist generated image history | `de7aea9`, `9adca05`, `f3cce55` | `master` |
-| 1 | 2026-05-12 | 修复图像参数下拉与能力元数据 | `a12a7c0` | `master` |
 <!-- @@@/auto:session-history -->
 
 ---
