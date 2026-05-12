@@ -158,7 +158,7 @@ python3 main.py client "Draw a cat" --image --save cat.png
 | Gemini Flash Latest | `gemini-flash-latest` | ❌ | Alias |
 | Gemini Flash Lite Latest | `gemini-flash-lite-latest` | ❌ | Alias |
 
-`/v1/models` returns capability metadata for every registered model. OpenAI-compatible routes return standard `{ "error": ... }` envelopes where practical. `/v1/chat/completions`, `/v1/responses`, and `/v1/messages` support `response_format` / `json_schema` structured output when the selected model supports it, plus tool-call mapping. `/v1/images/generations` supports `b64_json` and also accepts client requests for `response_format=url` by returning a data URL plus base64 fallback. It validates `size` through model metadata and returns 400 for unsupported model/size combinations. When `/v1/chat/completions` is called with an image model, the server uses image-generation semantics and ignores incompatible `stream=true` requests.
+`/v1/models` returns capability metadata for every registered model. OpenAI-compatible routes return standard `{ "error": ... }` envelopes where practical. `/v1/chat/completions`, `/v1/responses`, and `/v1/messages` support `response_format` / `json_schema` structured output when the selected model supports it, plus tool-call mapping. `/v1/images/generations` supports `b64_json` and also accepts client requests for `response_format=url` by returning a `/generated-images/...` server file URL plus base64 fallback. Generated images are persisted in the backend runtime directory and are not auto-pruned; delete them from the WebUI or with DELETE `/generated-images/{path}`. It validates `size` through model metadata and returns 400 for unsupported model/size combinations. When `/v1/chat/completions` is called with an image model, the server uses image-generation semantics and ignores incompatible `stream=true` requests.
 
 ## Configuration
 
@@ -179,6 +179,8 @@ Environment variables or `.env` file:
 | `AISTUDIO_ACCOUNT_COOLDOWN_SECONDS` | `60` | Cooldown after rate limit |
 | `AISTUDIO_USE_PURE_HTTP` | `0` | Pure HTTP mode (no browser) |
 | `AISTUDIO_DUMP_RAW_RESPONSE` | `0` | Dump raw responses to disk |
+| `AISTUDIO_GENERATED_IMAGES_DIR` | `./data/generated-images` | Directory for persisted generated images |
+| `AISTUDIO_GENERATED_IMAGES_ROUTE` | `/generated-images` | Static serving and deletion route prefix for generated images |
 
 > `AISTUDIO_USE_PURE_HTTP=1` is still experimental. It only attempts single-turn, non-streaming plain-text requests today. Streaming, images, tools, image input, thinking, system instructions, multi-turn conversations, safety overrides, structured output, and missing BotGuard snapshot support return clear `501` unsupported errors. Use the default browser mode for production or full compatibility.
 

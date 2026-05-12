@@ -191,6 +191,7 @@
                     <div class="image-card-actions">
                       <button class="btn btn-sm" @click="downloadImage(item)">下载</button>
                       <button class="btn btn-sm" @click="retryImage(item)">重试</button>
+                      <button class="btn btn-sm btn-danger-outline" :disabled="imageHistoryDeleting" @click="deleteHistoryImage(item)">删除</button>
                     </div>
                   </div>
                 </div>
@@ -203,11 +204,22 @@
           <section class="image-panel">
             <div class="image-panel-head">
               <h2>本地历史</h2>
-              <button class="btn btn-sm" :disabled="!imageHistory.length" @click="clearImageHistory()">清空</button>
+              <span class="panel-meta" x-text="selectedHistoryCount?selectedHistoryCount+' 已选':imageHistory.length?imageHistory.length+' 张':''"></span>
             </div>
+            <div class="image-history-tools" x-show="imageHistory.length" x-cloak>
+              <button class="btn btn-sm" :disabled="imageHistoryDeleting" @click="allHistorySelected?clearImageSelection():selectAllImageHistory()" x-text="allHistorySelected?'清除选择':'全选'"></button>
+              <button class="btn btn-sm" :disabled="!selectedHistoryCount||imageHistoryDeleting" @click="downloadSelectedImages()">下载所选</button>
+              <button class="btn btn-sm btn-danger-outline" :disabled="!selectedHistoryCount||imageHistoryDeleting" @click="deleteSelectedImages()" x-text="imageHistoryDeleting?'删除中':'删除所选'"></button>
+              <button class="btn btn-sm" :disabled="!imageHistory.length||imageHistoryDeleting" @click="clearImageHistory()">清空</button>
+            </div>
+            <div class="notice notice-error image-history-error" x-show="imageHistoryError" x-text="imageHistoryError" x-cloak></div>
             <div class="image-gallery history-gallery" x-show="imageHistory.length" x-cloak>
-              <template x-for="item in imageHistory" :key="(item.url||item.b64_json||'history')+'-'+item.created+'-'+item.index">
-                <div class="image-card image-card-compact">
+              <template x-for="item in imageHistory" :key="historyItemId(item)">
+                <div class="image-card image-card-compact image-history-card" :class="{selected:isHistorySelected(item)}">
+                  <label class="image-select-check" @click.stop>
+                    <input type="checkbox" :checked="isHistorySelected(item)" @change="toggleHistorySelection(item)">
+                    <span></span>
+                  </label>
                   <img :src="imageUrl(item)" :alt="item.prompt||'history image'">
                   <div class="image-card-body">
                     <div class="image-card-title" x-text="item.prompt"></div>
@@ -215,6 +227,7 @@
                     <div class="image-card-actions">
                       <button class="btn btn-sm" @click="downloadImage(item)">下载</button>
                       <button class="btn btn-sm" @click="retryImage(item)">重试</button>
+                      <button class="btn btn-sm btn-danger-outline" :disabled="imageHistoryDeleting" @click="deleteHistoryImage(item)">删除</button>
                     </div>
                   </div>
                 </div>

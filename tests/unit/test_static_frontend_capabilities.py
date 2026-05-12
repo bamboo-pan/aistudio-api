@@ -54,6 +54,15 @@ def test_static_frontend_exposes_image_upload_and_generation_page():
     assert "retryImage(item)" in index_html
     assert "localStorage.getItem('aistudio.imageHistory')" in app_js
     assert "clearImageHistory()" in index_html
+    assert "lightweightImageItem" in app_js
+    assert "selectedHistoryItems" in app_js
+    assert "downloadSelectedImages()" in index_html
+    assert "deleteSelectedImages()" in index_html
+    assert "deleteHistoryImage(item)" in index_html
+    assert "imageHistorySelection" in app_js
+    assert "sameOriginRequestPath" in app_js
+    assert "explicit&&item?.path" in app_js
+    assert "b64_json" not in app_js.split("return{id:item.id||path||url,url,path,delete_url:item.delete_url||url", 1)[1].split("}", 1)[0]
 
 
 def test_static_frontend_custom_select_supports_keyboard_and_scrollable_image_menu():

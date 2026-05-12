@@ -12,10 +12,12 @@ from fastapi.responses import JSONResponse
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+from aistudio_api.infrastructure.generated_images import GeneratedImageStore
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
 
 from .routes_accounts import router as accounts_router
 from .routes_gemini import router as gemini_router
+from .routes_generated_images import register_generated_image_routes
 from .routes_openai import router as openai_router
 from .routes_system import router as system_router
 from .state import runtime_state
@@ -102,6 +104,7 @@ app.include_router(system_router)
 app.include_router(gemini_router)
 app.include_router(openai_router)
 app.include_router(accounts_router)
+register_generated_image_routes(app)
 
 
 def _is_openai_compat_path(request: Request) -> bool:
@@ -163,6 +166,14 @@ import os
 static_dir = os.path.join(os.path.dirname(__file__), "..", "static")
 if os.path.isdir(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+generated_image_store = GeneratedImageStore()
+generated_image_store.ensure_directory()
+app.mount(
+    generated_image_store.public_route,
+    StaticFiles(directory=str(generated_image_store.root)),
+    name="generated-images",
+)
 
 
 @app.get("/")

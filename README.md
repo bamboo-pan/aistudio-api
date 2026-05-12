@@ -144,7 +144,7 @@ python3 main.py client "画一只猫" --image --save cat.png
 | Gemini 3.1 Flash Image | `gemini-3.1-flash-image-preview` | ❌ | 默认图片模型，仅限 Pro/Ultra |
 | Gemini 3 Pro Image | `gemini-3-pro-image-preview` | ❌ | |
 
-`/v1/models` 会返回每个模型的 `capabilities` 元数据。OpenAI 兼容路由会尽量返回标准 `{ "error": ... }` 错误形状。`/v1/chat/completions`、`/v1/responses`、`/v1/messages` 支持 `response_format` / `json_schema` 结构化输出（取决于模型能力）和工具调用结果映射。`/v1/images/generations` 支持 `b64_json`，也兼容客户端请求的 `response_format=url`（返回 data URL 和 base64 兜底），并通过模型能力元数据校验 `size`；不支持的模型或尺寸会返回 400。通过 `/v1/chat/completions` 选择图片模型时，服务端会自动走生图语义并忽略不适用的 `stream=true`。
+`/v1/models` 会返回每个模型的 `capabilities` 元数据。OpenAI 兼容路由会尽量返回标准 `{ "error": ... }` 错误形状。`/v1/chat/completions`、`/v1/responses`、`/v1/messages` 支持 `response_format` / `json_schema` 结构化输出（取决于模型能力）和工具调用结果映射。`/v1/images/generations` 支持 `b64_json`，也兼容客户端请求的 `response_format=url`（返回 `/generated-images/...` 服务端文件 URL 和 base64 兜底）。生成图片会持久化到后端运行时目录，除非用户通过 WebUI 或 DELETE `/generated-images/{path}` 删除，否则不会自动清理。接口会通过模型能力元数据校验 `size`；不支持的模型或尺寸会返回 400。通过 `/v1/chat/completions` 选择图片模型时，服务端会自动走生图语义并忽略不适用的 `stream=true`。
 
 
 ## 配置
@@ -166,6 +166,8 @@ python3 main.py client "画一只猫" --image --save cat.png
 | `AISTUDIO_ACCOUNT_COOLDOWN_SECONDS` | `60` | 限流后冷却时间 |
 | `AISTUDIO_USE_PURE_HTTP` | `0` | 纯 HTTP 模式（不用浏览器） |
 | `AISTUDIO_DUMP_RAW_RESPONSE` | `0` | 保存原始响应到磁盘 |
+| `AISTUDIO_GENERATED_IMAGES_DIR` | `./data/generated-images` | 生成图片持久化目录 |
+| `AISTUDIO_GENERATED_IMAGES_ROUTE` | `/generated-images` | 生成图片静态访问和删除路由前缀 |
 
 > `AISTUDIO_USE_PURE_HTTP=1` 仍是实验模式：目前只尝试单轮、非流式纯文本请求。流式、图片、工具、图片输入、Thinking、多轮对话、系统指令、安全覆盖、结构化输出以及 BotGuard snapshot 依赖缺失都会返回清晰的 `501` 不支持错误。生产或完整兼容场景请使用默认浏览器模式。
 

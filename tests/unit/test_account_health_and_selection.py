@@ -10,6 +10,7 @@ from aistudio_api.api.dependencies import get_account_service
 from aistudio_api.api.routes_accounts import router as accounts_router
 from aistudio_api.api.schemas import ImageRequest
 from aistudio_api.api.state import runtime_state
+from aistudio_api.config import settings
 from aistudio_api.application.account_rotator import AccountRotator, RotationMode
 from aistudio_api.application.account_service import AccountService
 from aistudio_api.application.api_service import handle_image_generation
@@ -215,17 +216,22 @@ class FakeSnapshotCache:
         self.clear_calls += 1
 
 
-def run_with_account_runtime(coro, *, account_service, rotator, browser_session, snapshot_cache):
+def run_with_account_runtime(coro, *, account_service, rotator, browser_session, snapshot_cache, generated_images_dir=None):
     old_busy_lock = runtime_state.busy_lock
     old_account_service = runtime_state.account_service
     old_rotator = runtime_state.rotator
     old_client = runtime_state.client
     old_snapshot_cache = runtime_state.snapshot_cache
+    old_generated_images_dir = settings.generated_images_dir
+    old_generated_images_route = settings.generated_images_route
     runtime_state.busy_lock = asyncio.Semaphore(3)
     runtime_state.account_service = account_service
     runtime_state.rotator = rotator
     runtime_state.client = SimpleNamespace(_session=browser_session)
     runtime_state.snapshot_cache = snapshot_cache
+    if generated_images_dir is not None:
+        settings.generated_images_dir = str(generated_images_dir)
+    settings.generated_images_route = "/generated-images"
     try:
         return asyncio.run(coro)
     finally:
@@ -234,6 +240,8 @@ def run_with_account_runtime(coro, *, account_service, rotator, browser_session,
         runtime_state.rotator = old_rotator
         runtime_state.client = old_client
         runtime_state.snapshot_cache = old_snapshot_cache
+        settings.generated_images_dir = old_generated_images_dir
+        settings.generated_images_route = old_generated_images_route
 
 
 def test_image_generation_switches_from_free_active_account_to_available_premium(tmp_path):
@@ -252,6 +260,7 @@ def test_image_generation_switches_from_free_active_account_to_available_premium
         rotator=rotator,
         browser_session=browser_session,
         snapshot_cache=snapshot_cache,
+        generated_images_dir=tmp_path / "generated-images",
     )
 
     assert store.get_active_account().id == pro.id

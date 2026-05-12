@@ -30,6 +30,7 @@ from aistudio_api.domain.model_capabilities import (
     plan_image_generation,
     validate_chat_capabilities,
 )
+from aistudio_api.infrastructure.generated_images import GeneratedImageStore
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent, AistudioPart, AistudioThinkingConfig, ThinkingLevel
 from aistudio_api.api.responses import (
@@ -305,10 +306,26 @@ def _format_image_items(items: list[dict[str, Any]], response_format: str) -> li
                     "url": item["url"],
                     "b64_json": item["b64_json"],
                     "revised_prompt": item["revised_prompt"],
+                    "id": item.get("id"),
+                    "path": item.get("path"),
+                    "delete_url": item.get("delete_url"),
+                    "mime_type": item.get("mime_type"),
+                    "size_bytes": item.get("size_bytes"),
                 }
             )
         else:
-            data.append({"b64_json": item["b64_json"], "revised_prompt": item["revised_prompt"]})
+            data.append(
+                {
+                    "b64_json": item["b64_json"],
+                    "revised_prompt": item["revised_prompt"],
+                    "url": item.get("url"),
+                    "id": item.get("id"),
+                    "path": item.get("path"),
+                    "delete_url": item.get("delete_url"),
+                    "mime_type": item.get("mime_type"),
+                    "size_bytes": item.get("size_bytes"),
+                }
+            )
     return data
 
 
@@ -1043,9 +1060,11 @@ async def handle_image_generation(req: ImageRequest, client: AIStudioClient):
 
     max_retries = 3
     last_error = None
+    image_store = GeneratedImageStore()
 
     for attempt in range(max_retries):
         async with busy_lock:
+            items: list[dict[str, Any]] = []
             try:
                 if attempt == 0:
                     await _ensure_account_for_model(image_plan.model)
@@ -1057,8 +1076,8 @@ async def handle_image_generation(req: ImageRequest, client: AIStudioClient):
                     req.prompt[:50],
                     attempt + 1,
                 )
-                items: list[dict[str, Any]] = []
                 usage_total: dict = {}
+                created = int(time.time())
                 for _ in range(req.n):
                     output = await client.generate_image(
                         prompt=image_plan.prompt_for(req.prompt),
@@ -1070,11 +1089,17 @@ async def handle_image_generation(req: ImageRequest, client: AIStudioClient):
                     _merge_usage(usage_total, output.usage)
                     for img in output.images:
                         b64 = base64.b64encode(img.data).decode("ascii")
+                        persisted = image_store.save(img.data, img.mime, created_at=created)
                         items.append(
                             {
                                 "b64_json": b64,
-                                "url": _image_data_url(img.mime, b64),
+                                "url": persisted.url,
                                 "revised_prompt": output.text or "",
+                                "id": persisted.id,
+                                "path": persisted.path,
+                                "delete_url": persisted.delete_url,
+                                "mime_type": persisted.mime_type,
+                                "size_bytes": persisted.size,
                             }
                         )
 
@@ -1086,8 +1111,9 @@ async def handle_image_generation(req: ImageRequest, client: AIStudioClient):
                         rotator.record_success(account.id)
 
                 runtime_state.record(image_plan.model, "success", usage_total)
-                return {"created": int(time.time()), "data": _format_image_items(items, response_format)}
+                return {"created": created, "data": _format_image_items(items, response_format)}
             except UsageLimitExceeded as exc:
+                _cleanup_persisted_image_items(image_store, items)
                 runtime_state.record(image_plan.model, "rate_limited")
                 last_error = exc
 
@@ -1106,6 +1132,7 @@ async def handle_image_generation(req: ImageRequest, client: AIStudioClient):
                     logger.warning("Image 429 限流，无法切换账号")
                     raise HTTPException(429, detail={"message": str(exc), "type": "rate_limit_exceeded"}) from exc
             except (AuthError, RequestError) as exc:
+                _cleanup_persisted_image_items(image_store, items)
                 runtime_state.record(image_plan.model, "errors")
                 rotator = runtime_state.rotator
                 if rotator:
@@ -1114,6 +1141,7 @@ async def handle_image_generation(req: ImageRequest, client: AIStudioClient):
                         rotator.record_error(account.id)
                 raise _upstream_exception(exc) from exc
             except AistudioError as exc:
+                _cleanup_persisted_image_items(image_store, items)
                 runtime_state.record(image_plan.model, "errors")
                 rotator = runtime_state.rotator
                 if rotator:
@@ -1122,12 +1150,26 @@ async def handle_image_generation(req: ImageRequest, client: AIStudioClient):
                         rotator.record_error(account.id)
                 raise _upstream_exception(exc) from exc
             except Exception as exc:
+                _cleanup_persisted_image_items(image_store, items)
                 runtime_state.record(image_plan.model, "errors")
                 logger.error("Image error: %s", exc, exc_info=True)
                 raise HTTPException(500, detail={"message": str(exc), "type": "server_error"}) from exc
 
     # 所有重试都失败
     raise HTTPException(429, detail={"message": str(last_error), "type": "rate_limit_exceeded"}) from last_error
+
+
+def _cleanup_persisted_image_items(image_store: GeneratedImageStore, items: list[dict[str, Any]]) -> None:
+    for item in items:
+        path = item.get("path")
+        if not path:
+            continue
+        try:
+            image_store.delete(path)
+        except OSError:
+            logger.warning("Failed to clean up generated image after request failure")
+        except ValueError:
+            logger.warning("Skipped invalid generated image cleanup path after request failure")
 
 
 def _build_streaming_response(
