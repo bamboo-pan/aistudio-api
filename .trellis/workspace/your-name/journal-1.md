@@ -38,3 +38,38 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 2: Persist generated image history
+
+**Date**: 2026-05-12
+**Task**: Persist generated image history
+**Branch**: `master`
+
+### Summary
+
+Persisted generated images to backend static storage, updated frontend history management with batch actions, documented the contract, and recorded verification.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `de7aea9` | (see git log) |
+| `9adca05` | (see git log) |
+| `f3cce55` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
