@@ -185,6 +185,99 @@ for entry in validated:
 
 ---
 
+## Scenario: Generated Image Persistence and Static History
+
+### 1. Scope / Trigger
+
+- Trigger: Backend image-generation responses are persisted to disk and consumed
+	by the static Alpine.js image history UI.
+- Applies when changing `/v1/images/generations`, generated-image storage,
+	static file mounting, generated-image deletion, or frontend local history.
+
+### 2. Signatures
+
+- `POST /v1/images/generations` with OpenAI-compatible image payload ->
+	`{ "created": number, "data": ImageItem[] }`.
+- `GET <generated image public URL>` -> generated image bytes served by
+	FastAPI static files.
+- `DELETE <generated image delete URL>` -> deletes only backend-owned generated
+	image files and returns a small success payload.
+
+### 3. Contracts
+
+- Generated image files must be written under the configured generated-image
+	storage directory, not under packaged `src/aistudio_api/static` assets.
+- Generated file names must be backend-generated safe names; never trust prompt
+	text, model names, or client-supplied paths as raw file paths.
+- `response_format=url` should return a stable server URL when persistence
+	succeeds. Keep `b64_json` available where compatibility requires image bytes.
+- Response items used by the frontend should include lightweight management
+	metadata such as `url`, `delete_url`, `prompt`, `model`, `size`, `created`, and
+	index/id-like fields when available.
+- Frontend `localStorage` history must store lightweight metadata and server
+	URLs, not full base64/data URL payloads.
+- Generated images are retained indefinitely by default. Deletion is explicit
+	user action, not automatic pruning.
+
+### 4. Validation & Error Matrix
+
+- Storage directory cannot be created or written -> return a user-readable API
+	error and do not report the image as successfully persisted.
+- Batch generation fails after some files were persisted -> delete those newly
+	created files before returning the failure so unreferenced files are not left
+	behind.
+- Delete request references a path outside the generated-image directory ->
+	reject with `400`/`404`; never follow traversal paths.
+- Delete request references a non-generated or missing file -> return a clear
+	non-success response without deleting unrelated files.
+- Frontend delete call fails -> keep the local history entry selected/visible and
+	show an error that allows retry.
+
+### 5. Good/Base/Bad Cases
+
+- Good: Persist image bytes, return `/generated-images/...` plus `delete_url`,
+	store only that metadata in `localStorage`, and delete via the provided
+	`delete_url`.
+- Base: Older local history entries without `delete_url` may use a safe fallback
+	derived from known generated-image URLs.
+- Bad: Store `data:image/png;base64,...` in local history for every generated
+	image, causing quota failures and refresh data loss.
+
+### 6. Tests Required
+
+- Backend tests assert generated files are written, mounted URLs are returned,
+	`b64_json` compatibility remains usable, and failed batches clean up persisted
+	files.
+- Backend deletion tests cover success, missing files, and traversal attempts.
+- Static frontend tests assert local history stores lightweight URL metadata and
+	contains batch select, batch download, single delete, and batch delete controls.
+- Run `node --check src/aistudio_api/static/app.js` when Node is available.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```javascript
+this.imageHistory = [{ url: item.url, b64_json: item.b64_json }];
+localStorage.setItem('aistudio.imageHistory', JSON.stringify(this.imageHistory));
+```
+
+#### Correct
+
+```javascript
+this.imageHistory = [{
+	url: item.url,
+	delete_url: item.delete_url,
+	prompt: item.prompt,
+	model: item.model,
+	size: item.size,
+	created: item.created,
+}];
+localStorage.setItem('aistudio.imageHistory', JSON.stringify(this.imageHistory));
+```
+
+---
+
 ## Testing Requirements
 
 - For static JavaScript changes, run a syntax check with `node --check` when Node

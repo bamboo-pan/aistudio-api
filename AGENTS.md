@@ -27,3 +27,9 @@ If you're using Codex or another agent-capable tool, additional project-scoped h
 Managed by Trellis. Edits outside this block are preserved; edits inside may be overwritten by a future `trellis update`.
 
 <!-- TRELLIS:END -->
+# 真实测试环境
+1. 在wsl home目录下下新建临时目录实际测试
+  1. \\wsl.localhost\Ubuntu-24.04\home\bamboo
+2. 真实凭据
+  1. \\wsl.localhost\Ubuntu-24.04\home\bamboo\aistudio-api\data\accounts
+3. 所有改动必须最终真实环境测试通过
