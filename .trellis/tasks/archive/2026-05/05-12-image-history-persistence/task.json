@@ -3,7 +3,7 @@
   "name": "image-history-persistence",
   "title": "Persist generated images and manage history",
   "description": "",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "your-name",
   "assignee": "your-name",
   "createdAt": "2026-05-12",
-  "completedAt": null,
+  "completedAt": "2026-05-12",
   "branch": null,
   "base_branch": "master",
   "worktree_path": null,
@@ -26,27 +26,27 @@
     "prd_status": "confirmed",
     "workflow": {
       "version": 1,
-      "current_step": "awaiting_implement",
+      "current_step": "ready_to_finish",
       "vcs": {
         "kind": "git",
         "commit_required": true
       },
       "implement": {
-        "dispatched_at": null,
-        "completed_at": null
+        "dispatched_at": "2026-05-12T14:32:17Z",
+        "completed_at": "2026-05-12T14:32:17Z"
       },
       "check": {
-        "completed_at": null,
-        "fingerprint": null,
-        "head": null
+        "completed_at": "2026-05-12T14:32:17Z",
+        "fingerprint": "fdf222911309a1c40a9a8b4d97b9c4196630f0ab09f1fe7e97ffe4476130e5e4",
+        "head": "f3cce558e87e9ceaa56e46bcc819048e9b59a4d8"
       },
       "spec_update": {
-        "reviewed_at": null,
-        "result": null
+        "reviewed_at": "2026-05-12T14:32:18Z",
+        "result": "updated"
       },
       "commit": {
-        "hash": null,
-        "recorded_at": null
+        "hash": "f3cce558e87e9ceaa56e46bcc819048e9b59a4d8",
+        "recorded_at": "2026-05-12T14:32:54Z"
       }
     }
   }
