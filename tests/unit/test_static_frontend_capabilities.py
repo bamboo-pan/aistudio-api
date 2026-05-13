@@ -43,6 +43,8 @@ def test_static_frontend_exposes_image_upload_and_generation_page():
     assert "selectedCaps.file_input" in app_js
     assert "file_input_mime_types" in app_js
     assert "chatFileUploadEnabled" in app_js
+    assert "applyRouteHash" in app_js
+    assert "hashchange" in app_js
     assert "selectImageModel(m.id)" in index_html
     assert "x-model.number=\"imageCount\"" in index_html
     assert ":min=\"imageCountMin\"" in index_html
@@ -93,6 +95,11 @@ def test_static_frontend_custom_select_supports_keyboard_and_scrollable_image_me
     assert "aria-disabled=\"true\" x-show=\"!imageModels.length\"" in index_html
     assert "overscroll-behavior:contain" in style_css
     assert ".cselect-opt:hover,.cselect-opt.highlighted" in style_css
-    assert ".image-form-panel{grid-row:span 2;position:relative;overflow:visible" in style_css
+    assert "引导式 Studio" in index_html
+    assert "image-studio-compose" in index_html
+    assert "imageSubmitHint" in app_js
+    assert "imageRunSummary" in app_js
+    assert ".image-form-panel{grid-row:span 3;position:relative;overflow:visible" in style_css
+    assert ".image-studio-controls{grid-template-columns:1fr 1fr" in style_css
     assert "position:sticky" not in style_css.split("/* Image generation */", 1)[1].split("/* Toast */", 1)[0]
     assert "@media(max-width:960px)" in style_css
