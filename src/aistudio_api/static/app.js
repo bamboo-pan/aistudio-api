@@ -9,7 +9,7 @@ function app(){return{
   models:[],model:'',modelError:'',
   msgs:[],draft:'',busy:false,chatFiles:[],chatFileError:'',
   cfg:{thinking:'off',search:'off',stream:'on',temperature:1.0,topP:1.0,maxTokens:8192,safety:'on'},
-  imageModel:'',imagePrompt:'',imageSize:'1024x1024',imageCount:1,imageBusy:false,imageError:'',imageResults:[],imageHistory:[],imageHistorySelection:{},imageHistoryDeleting:false,imageHistoryError:'',imageLastRequest:null,imageReferences:[],imageBaseImage:null,imageConversation:[],imageReferenceError:'',
+  imageModel:'',imagePrompt:'',imageSize:'1024x1024',imageCount:1,imageBusy:false,imageError:'',imageResults:[],imageHistory:[],imageHistorySelection:{},imageHistoryDeleting:false,imageHistoryError:'',imageLastRequest:null,imageReferences:[],imageBaseImage:null,imageConversation:[],imageReferenceError:'',imagePreview:null,
   toast:{show:false,msg:'',t:null},
 
   init(){this.loadImageHistory();this.applyRouteHash();this.loadModels();this.loadStats();this.loadAccounts();this.loadRotation();window.addEventListener('hashchange',()=>this.applyRouteHash());document.addEventListener('click',()=>this.closeSelect());document.addEventListener('keydown',(event)=>this.handleSelectKeydown(event))},
@@ -161,6 +161,8 @@ function app(){return{
   loadImageHistory(){try{const stored=JSON.parse(localStorage.getItem('aistudio.imageHistory')||'[]');this.imageHistory=(Array.isArray(stored)?stored:[]).map((item,index)=>this.lightweightImageItem(item,index)).filter(Boolean).slice(0,24);this.pruneImageSelection();this.saveImageHistory()}catch(error){this.imageHistory=[];this.imageHistorySelection={}}},
   saveImageHistory(){try{localStorage.setItem('aistudio.imageHistory',JSON.stringify(this.imageHistory.map((item,index)=>this.lightweightImageItem(item,index)).filter(Boolean).slice(0,24)))}catch(error){this.imageHistoryError='历史保存失败：浏览器存储不可用'}},
   imageUrl(item){return item.url||((item.b64_json||item.b64)?`data:image/png;base64,${item.b64_json||item.b64}`:'')},
+  openImagePreview(item){if(!this.imageUrl(item))return;this.imagePreview={...item};this.closeSelect()},
+  closeImagePreview(){this.imagePreview=null},
   generatedImageUrl(path){return '/generated-images/'+String(path||'').split('/').filter(Boolean).map(encodeURIComponent).join('/')},
   pathFromGeneratedImageUrl(url){if(!url)return'';try{const parsed=new URL(url,window.location.origin);if(parsed.origin!==window.location.origin)return'';const prefix='/generated-images/';return parsed.pathname.startsWith(prefix)?decodeURIComponent(parsed.pathname.slice(prefix.length)):''}catch(error){return''}},
   sameOriginRequestPath(url){if(!url||String(url).startsWith('data:'))return'';try{const parsed=new URL(url,window.location.origin);return parsed.origin===window.location.origin?parsed.pathname+parsed.search:''}catch(error){return''}},
