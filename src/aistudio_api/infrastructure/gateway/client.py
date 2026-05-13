@@ -304,18 +304,21 @@ class AIStudioClient:
         model: str = DEFAULT_IMAGE_MODEL,
         save_path: Optional[str] = None,
         generation_config_overrides: dict | None = None,
+        images: Optional[list[str]] = None,
     ) -> ModelOutput:
         if self._use_pure_http:
             raise RequestError(501, "Pure HTTP mode is experimental and does not support image generation; use browser mode")
         logger.info("生图请求: %r", f"{prompt[:20]}...")
-        captured = await self.capture_request(prompt, model=model)
+        contents = [self._build_user_content(prompt=prompt, images=images)] if images else None
+        captured = await self.capture_request(prompt, model=model, images=images, contents=contents)
         if not captured:
             raise RequestError(0, "无法拦截请求")
 
         modified_body = modify_body(
             captured.body,
             model=model,
-            prompt=prompt,
+            prompt=None if contents else prompt,
+            contents=contents,
             generation_config_overrides=generation_config_overrides,
             sanitize_plain_text=False,
             enable_thinking=False,

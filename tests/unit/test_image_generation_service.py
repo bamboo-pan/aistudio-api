@@ -28,12 +28,13 @@ class FakeImageClient:
     def __init__(self):
         self.calls = []
 
-    async def generate_image(self, *, prompt, model, generation_config_overrides=None):
+    async def generate_image(self, *, prompt, model, generation_config_overrides=None, images=None):
         self.calls.append(
             {
                 "prompt": prompt,
                 "model": model,
                 "generation_config_overrides": generation_config_overrides,
+                "images": images,
             }
         )
         image_bytes = f"image-{len(self.calls)}".encode("ascii")
@@ -49,32 +50,34 @@ class FakeImageClient:
 
 
 class FakeEmptyImageClient(FakeImageClient):
-    async def generate_image(self, *, prompt, model, generation_config_overrides=None):
+    async def generate_image(self, *, prompt, model, generation_config_overrides=None, images=None):
         self.calls.append(
             {
                 "prompt": prompt,
                 "model": model,
                 "generation_config_overrides": generation_config_overrides,
+                "images": images,
             }
         )
         return ModelOutput(candidates=[Candidate(text="no image")])
 
 
 class FakeErrorImageClient(FakeImageClient):
-    async def generate_image(self, *, prompt, model, generation_config_overrides=None):
-        self.calls.append({"prompt": prompt, "model": model})
+    async def generate_image(self, *, prompt, model, generation_config_overrides=None, images=None):
+        self.calls.append({"prompt": prompt, "model": model, "images": images})
         raise RequestError(0, "capture failed")
 
 
 class FakeSecondImageErrorClient(FakeImageClient):
-    async def generate_image(self, *, prompt, model, generation_config_overrides=None):
+    async def generate_image(self, *, prompt, model, generation_config_overrides=None, images=None):
         if self.calls:
-            self.calls.append({"prompt": prompt, "model": model})
+            self.calls.append({"prompt": prompt, "model": model, "images": images})
             raise RequestError(0, "second capture failed")
         return await super().generate_image(
             prompt=prompt,
             model=model,
             generation_config_overrides=generation_config_overrides,
+            images=images,
         )
 
 
@@ -164,7 +167,37 @@ def test_image_generation_runs_n_sequential_calls_and_aggregates_images():
     assert all(call["model"] == "gemini-3.1-flash-image-preview" for call in client.calls)
     assert all(call["generation_config_overrides"] == {"output_image_size": [None, "1K"]} for call in client.calls)
     assert all(call["prompt"] == f"draw a city\n\n{SQUARE_PROMPT_SUFFIX}" for call in client.calls)
+    assert all(call["images"] is None for call in client.calls)
     assert [base64.b64decode(item["b64_json"]) for item in response["data"]] == [b"image-1", b"image-2"]
+
+
+def test_image_generation_passes_data_uri_images_to_client_and_cleans_temp_file():
+    client = FakeImageClient()
+    req = ImageRequest(
+        prompt="make it painterly",
+        model="gemini-3.1-flash-image-preview",
+        images=[{"url": "data:image/png;base64,aGVsbG8="}],
+    )
+
+    response = run_with_runtime(handle_image_generation(req, client))
+
+    assert response["data"][0]["b64_json"]
+    image_paths = client.calls[0]["images"]
+    assert image_paths and len(image_paths) == 1
+    assert image_paths[0].endswith(".png")
+    assert not __import__("pathlib").Path(image_paths[0]).exists()
+
+
+def test_image_generation_rejects_invalid_edit_image_url_before_client_call():
+    client = FakeImageClient()
+    req = ImageRequest(prompt="edit", model="gemini-3.1-flash-image-preview", images=["/generated-images/a.png"])
+
+    with pytest.raises(HTTPException) as error:
+        run_with_runtime(handle_image_generation(req, client))
+
+    assert error.value.status_code == 400
+    assert "images[0].url" in error.value.detail["message"]
+    assert client.calls == []
 
 
 def test_image_generation_rejects_unsupported_size_before_client_call():
@@ -383,8 +416,9 @@ def test_image_generation_cleans_up_persisted_files_when_later_generation_fails(
             "prompt": f"draw\n\n{SQUARE_PROMPT_SUFFIX}",
             "model": "gemini-3.1-flash-image-preview",
             "generation_config_overrides": {"output_image_size": [None, "1K"]},
+            "images": None,
         },
-        {"prompt": f"draw\n\n{SQUARE_PROMPT_SUFFIX}", "model": "gemini-3.1-flash-image-preview"},
+        {"prompt": f"draw\n\n{SQUARE_PROMPT_SUFFIX}", "model": "gemini-3.1-flash-image-preview", "images": None},
     ]
     assert list(tmp_path.rglob("*")) == []
 

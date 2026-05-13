@@ -51,6 +51,10 @@ class ChatRequest(BaseModel):
     stream_options: StreamOptions | None = None
 
 
+class ImageUrl(BaseModel):
+    url: str
+
+
 class ImageRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -59,6 +63,7 @@ class ImageRequest(BaseModel):
     n: int = 1
     size: str = "1024x1024"
     response_format: str | None = "b64_json"
+    images: Optional[list[str | ImageUrl]] = None
     quality: Optional[str] = None
     style: Optional[str] = None
     background: Optional[str] = None
@@ -67,10 +72,6 @@ class ImageRequest(BaseModel):
     output_format: Optional[str] = None
     partial_images: Optional[int] = None
     user: Optional[str] = None
-
-
-class ImageUrl(BaseModel):
-    url: str
 
 
 class ImageMessage(BaseModel):

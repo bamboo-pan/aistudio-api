@@ -62,6 +62,17 @@ def test_static_frontend_exposes_image_upload_and_generation_page():
     assert "imageHistorySelection" in app_js
     assert "sameOriginRequestPath" in app_js
     assert "explicit&&item?.path" in app_js
+    assert "attachImageReferences($event)" in index_html
+    assert "imageEditReferences" in app_js
+    assert "imageRequestImages" in app_js
+    assert "body.images=images" in app_js
+    assert "setBaseImage(item)" in index_html
+    assert "pinImageReference(item,'history')" in index_html
+    assert "pinImageReference(item,'result')" in index_html
+    assert "pinSelectedHistory()" in index_html
+    assert "clearImageEditSession()" in index_html
+    assert "imageConversation" in app_js
+    assert "编辑会话" in index_html
     assert "b64_json" not in app_js.split("return{id:item.id||path||url,url,path,delete_url:item.delete_url||url", 1)[1].split("}", 1)[0]
 
 

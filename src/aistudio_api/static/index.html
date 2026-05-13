@@ -135,9 +135,31 @@
           <section class="image-panel image-form-panel">
             <div class="image-panel-head">
               <h1>图片生成</h1>
-              <button class="btn btn-primary" :disabled="imageBusy||!imagePrompt.trim()||!imageModel" @click="generateImage()" x-text="imageBusy?'生成中':'生成图片'"></button>
+              <button class="btn btn-primary" :disabled="!imageCanSubmit" @click="generateImage()" x-text="imageActionLabel"></button>
             </div>
             <textarea class="image-prompt" x-model="imagePrompt" placeholder="描述要生成的画面" rows="5"></textarea>
+            <div class="image-session-tools">
+              <input x-ref="imageReferenceInput" type="file" accept="image/*" multiple hidden @change="attachImageReferences($event)">
+              <button class="btn btn-sm" :disabled="imageBusy" @click="$refs.imageReferenceInput.click()">上传参考</button>
+              <button class="btn btn-sm" :disabled="imageBusy||(!imageBaseImage&&!imageReferences.length&&!imageConversation.length)" @click="clearImageEditSession()">新会话</button>
+            </div>
+            <div class="notice notice-error image-reference-error" x-show="imageReferenceError" x-text="imageReferenceError" x-cloak></div>
+            <div class="image-reference-zone" x-show="imageBaseImage||imageReferences.length" x-cloak>
+              <template x-if="imageBaseImage">
+                <div class="image-ref-thumb image-ref-base">
+                  <img :src="imageUrl(imageBaseImage)" :alt="imageBaseImage.prompt||'base image'">
+                  <span>基图</span>
+                  <button class="thumb-remove" :disabled="imageBusy" @click="clearBaseImage()" title="移除基图">×</button>
+                </div>
+              </template>
+              <template x-for="(item,index) in imageReferences" :key="imageReferenceKey(item)||index">
+                <div class="image-ref-thumb">
+                  <img :src="imageUrl(item)" :alt="item.prompt||item.name||'reference image'">
+                  <span>参考</span>
+                  <button class="thumb-remove" :disabled="imageBusy" @click="removeImageReference(index)" title="移除参考图">×</button>
+                </div>
+              </template>
+            </div>
             <div class="image-controls">
               <div class="image-control">
                 <div class="control-label">模型</div>
@@ -190,6 +212,8 @@
                     <div class="image-card-meta" x-text="item.model+' · '+item.size"></div>
                     <div class="image-card-actions">
                       <button class="btn btn-sm" @click="downloadImage(item)">下载</button>
+                      <button class="btn btn-sm" @click="setBaseImage(item)">设为基图</button>
+                      <button class="btn btn-sm" @click="pinImageReference(item,'result')">作参考</button>
                       <button class="btn btn-sm" @click="retryImage(item)">重试</button>
                       <button class="btn btn-sm btn-danger-outline" :disabled="imageHistoryDeleting" @click="deleteHistoryImage(item)">删除</button>
                     </div>
@@ -201,6 +225,29 @@
             <div class="image-empty" x-show="imageBusy">生成中...</div>
           </section>
 
+          <section class="image-panel image-session-panel">
+            <div class="image-panel-head">
+              <h2>编辑会话</h2>
+              <span class="panel-meta" x-text="imageConversation.length?Math.ceil(imageConversation.length/2)+' 轮':''"></span>
+            </div>
+            <div class="image-session-log" x-show="imageConversation.length" x-cloak>
+              <template x-for="(turn,index) in imageConversation" :key="index">
+                <div class="image-turn" :class="turn.role==='assistant'?'image-turn-ai':'image-turn-user'">
+                  <div class="image-turn-role" x-text="turn.role==='assistant'?'AI':'你'"></div>
+                  <div class="image-turn-body">
+                    <div class="image-turn-text" x-show="turn.prompt" x-text="turn.prompt"></div>
+                    <div class="image-turn-images" x-show="turn.images&&turn.images.length" x-cloak>
+                      <template x-for="item in turn.images" :key="imageReferenceKey(item)||imageUrl(item)">
+                        <img :src="imageUrl(item)" :alt="item.prompt||'session image'">
+                      </template>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </div>
+            <div class="image-empty" x-show="!imageConversation.length">暂无会话</div>
+          </section>
+
           <section class="image-panel">
             <div class="image-panel-head">
               <h2>本地历史</h2>
@@ -208,6 +255,7 @@
             </div>
             <div class="image-history-tools" x-show="imageHistory.length" x-cloak>
               <button class="btn btn-sm" :disabled="imageHistoryDeleting" @click="allHistorySelected?clearImageSelection():selectAllImageHistory()" x-text="allHistorySelected?'清除选择':'全选'"></button>
+              <button class="btn btn-sm" :disabled="!selectedHistoryCount||imageBusy" @click="pinSelectedHistory()">加入参考</button>
               <button class="btn btn-sm" :disabled="!selectedHistoryCount||imageHistoryDeleting" @click="downloadSelectedImages()">下载所选</button>
               <button class="btn btn-sm btn-danger-outline" :disabled="!selectedHistoryCount||imageHistoryDeleting" @click="deleteSelectedImages()" x-text="imageHistoryDeleting?'删除中':'删除所选'"></button>
               <button class="btn btn-sm" :disabled="!imageHistory.length||imageHistoryDeleting" @click="clearImageHistory()">清空</button>
@@ -226,6 +274,8 @@
                     <div class="image-card-meta" x-text="item.model+' · '+item.size+' · '+fmtImageTime(item.created)"></div>
                     <div class="image-card-actions">
                       <button class="btn btn-sm" @click="downloadImage(item)">下载</button>
+                      <button class="btn btn-sm" @click="setBaseImage(item)">设为基图</button>
+                      <button class="btn btn-sm" @click="pinImageReference(item,'history')">作参考</button>
                       <button class="btn btn-sm" @click="retryImage(item)">重试</button>
                       <button class="btn btn-sm btn-danger-outline" :disabled="imageHistoryDeleting" @click="deleteHistoryImage(item)">删除</button>
                     </div>

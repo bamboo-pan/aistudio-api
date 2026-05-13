@@ -6,6 +6,7 @@ import base64
 import asyncio
 import json
 import logging
+import tempfile
 import time
 import uuid
 from typing import Any
@@ -15,6 +16,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
 from aistudio_api.application.chat_service import cleanup_files, encode_schema_to_wire, normalize_chat_request, normalize_gemini_request, normalize_openai_tools
+from aistudio_api.application.chat_service import data_uri_to_file, url_to_file
 from aistudio_api.application.validation import validate_number_range
 from aistudio_api.domain.errors import AistudioError, AuthError, RequestError, UsageLimitExceeded
 from aistudio_api.domain.model_capabilities import (
@@ -47,6 +49,8 @@ from aistudio_api.api.schemas import ChatRequest, GeminiGenerateContentRequest, 
 from aistudio_api.api.state import runtime_state
 
 logger = logging.getLogger("aistudio.server")
+
+MAX_IMAGE_EDIT_INPUTS = 10
 
 
 THINKING_LEVELS = {
@@ -284,7 +288,7 @@ def _validate_unsupported_image_fields(req: ImageRequest) -> None:
     if not unsupported:
         return
     fields = ", ".join(unsupported)
-    supported = "prompt, model, n, size, response_format"
+    supported = "prompt, model, n, size, response_format, images"
     ignored = ", ".join(IMAGE_IGNORED_OPENAI_FIELDS)
     raise ValueError(
         f"Unsupported image generation field(s): {fields}. Supported fields: {supported}. "
@@ -338,6 +342,40 @@ def _image_chat_content(data: list[dict[str, Any]]) -> str:
         if image_url:
             lines.append(f"![generated image {index}]({image_url})")
     return "\n\n".join(lines)
+
+
+def _image_reference_url(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    url = getattr(value, "url", None)
+    if isinstance(url, str):
+        return url
+    raise ValueError("images[] must be a data URI, HTTP URL, or object with url")
+
+
+def _image_request_images_to_files(images: list[Any] | None) -> list[str]:
+    if not images:
+        return []
+    if len(images) > MAX_IMAGE_EDIT_INPUTS:
+        raise ValueError(f"images supports at most {MAX_IMAGE_EDIT_INPUTS} items")
+
+    paths: list[str] = []
+    tmp_dir = tempfile.gettempdir()
+    try:
+        for index, image in enumerate(images):
+            url = _image_reference_url(image).strip()
+            if not url:
+                raise ValueError(f"images[{index}].url is required")
+            if url.startswith("data:"):
+                paths.append(data_uri_to_file(url, tmp_dir=tmp_dir))
+            elif url.startswith("http://") or url.startswith("https://"):
+                paths.append(url_to_file(url, tmp_dir=tmp_dir))
+            else:
+                raise ValueError(f"images[{index}].url must be a data URI or HTTP URL")
+        return paths
+    except Exception:
+        cleanup_files(paths)
+        raise
 
 
 def _is_image_output_chat_model(model: str) -> bool:
@@ -1055,108 +1093,115 @@ async def handle_image_generation(req: ImageRequest, client: AIStudioClient):
 
     try:
         image_plan, response_format = _validate_image_request(req)
+        image_paths = _image_request_images_to_files(req.images)
     except ValueError as exc:
         raise _bad_request(str(exc)) from exc
 
     max_retries = 3
     last_error = None
     image_store = GeneratedImageStore()
-
-    for attempt in range(max_retries):
-        async with busy_lock:
-            items: list[dict[str, Any]] = []
-            try:
-                if attempt == 0:
-                    await _ensure_account_for_model(image_plan.model)
-                logger.info(
-                    "Image: model=%s, size=%s, n=%d, prompt=%s..., attempt=%d",
-                    image_plan.model,
-                    image_plan.size,
-                    req.n,
-                    req.prompt[:50],
-                    attempt + 1,
-                )
-                usage_total: dict = {}
-                created = int(time.time())
-                for _ in range(req.n):
-                    output = await client.generate_image(
-                        prompt=image_plan.prompt_for(req.prompt),
-                        model=image_plan.model,
-                        generation_config_overrides=image_plan.generation_config_overrides,
+    try:
+        for attempt in range(max_retries):
+            async with busy_lock:
+                items: list[dict[str, Any]] = []
+                try:
+                    if attempt == 0:
+                        await _ensure_account_for_model(image_plan.model)
+                    logger.info(
+                        "Image: model=%s, size=%s, n=%d, prompt=%s..., images=%d, attempt=%d",
+                        image_plan.model,
+                        image_plan.size,
+                        req.n,
+                        req.prompt[:50],
+                        len(image_paths),
+                        attempt + 1,
                     )
-                    if not output.images:
-                        raise RequestError(0, "AI Studio returned no image data")
-                    _merge_usage(usage_total, output.usage)
-                    for img in output.images:
-                        b64 = base64.b64encode(img.data).decode("ascii")
-                        persisted = image_store.save(img.data, img.mime, created_at=created)
-                        items.append(
-                            {
-                                "b64_json": b64,
-                                "url": persisted.url,
-                                "revised_prompt": output.text or "",
-                                "id": persisted.id,
-                                "path": persisted.path,
-                                "delete_url": persisted.delete_url,
-                                "mime_type": persisted.mime_type,
-                                "size_bytes": persisted.size,
-                            }
-                        )
+                    usage_total: dict = {}
+                    created = int(time.time())
+                    for _ in range(req.n):
+                        image_kwargs = {
+                            "prompt": image_plan.prompt_for(req.prompt),
+                            "model": image_plan.model,
+                            "generation_config_overrides": image_plan.generation_config_overrides,
+                        }
+                        if image_paths:
+                            image_kwargs["images"] = image_paths
+                        output = await client.generate_image(**image_kwargs)
+                        if not output.images:
+                            raise RequestError(0, "AI Studio returned no image data")
+                        _merge_usage(usage_total, output.usage)
+                        for img in output.images:
+                            b64 = base64.b64encode(img.data).decode("ascii")
+                            persisted = image_store.save(img.data, img.mime, created_at=created)
+                            items.append(
+                                {
+                                    "b64_json": b64,
+                                    "url": persisted.url,
+                                    "revised_prompt": output.text or "",
+                                    "id": persisted.id,
+                                    "path": persisted.path,
+                                    "delete_url": persisted.delete_url,
+                                    "mime_type": persisted.mime_type,
+                                    "size_bytes": persisted.size,
+                                }
+                            )
 
-                # 记录成功
-                rotator = runtime_state.rotator
-                if rotator:
-                    account = runtime_state.account_service.get_active_account() if runtime_state.account_service else None
-                    if account:
-                        rotator.record_success(account.id)
+                    # 记录成功
+                    rotator = runtime_state.rotator
+                    if rotator:
+                        account = runtime_state.account_service.get_active_account() if runtime_state.account_service else None
+                        if account:
+                            rotator.record_success(account.id)
 
-                runtime_state.record(image_plan.model, "success", usage_total)
-                return {"created": created, "data": _format_image_items(items, response_format)}
-            except UsageLimitExceeded as exc:
-                _cleanup_persisted_image_items(image_store, items)
-                runtime_state.record(image_plan.model, "rate_limited")
-                last_error = exc
+                    runtime_state.record(image_plan.model, "success", usage_total)
+                    return {"created": created, "data": _format_image_items(items, response_format)}
+                except UsageLimitExceeded as exc:
+                    _cleanup_persisted_image_items(image_store, items)
+                    runtime_state.record(image_plan.model, "rate_limited")
+                    last_error = exc
 
-                # 记录限流
-                rotator = runtime_state.rotator
-                if rotator:
-                    account = runtime_state.account_service.get_active_account() if runtime_state.account_service else None
-                    if account:
-                        rotator.record_rate_limited(account.id)
+                    # 记录限流
+                    rotator = runtime_state.rotator
+                    if rotator:
+                        account = runtime_state.account_service.get_active_account() if runtime_state.account_service else None
+                        if account:
+                            rotator.record_rate_limited(account.id)
 
-                # 尝试切换账号
-                if await _try_switch_account(image_plan.model):
-                    logger.info("Image 429 限流，已切换账号，重试 %d/%d", attempt + 1, max_retries)
-                    continue
-                else:
-                    logger.warning("Image 429 限流，无法切换账号")
-                    raise HTTPException(429, detail={"message": str(exc), "type": "rate_limit_exceeded"}) from exc
-            except (AuthError, RequestError) as exc:
-                _cleanup_persisted_image_items(image_store, items)
-                runtime_state.record(image_plan.model, "errors")
-                rotator = runtime_state.rotator
-                if rotator:
-                    account = runtime_state.account_service.get_active_account() if runtime_state.account_service else None
-                    if account:
-                        rotator.record_error(account.id)
-                raise _upstream_exception(exc) from exc
-            except AistudioError as exc:
-                _cleanup_persisted_image_items(image_store, items)
-                runtime_state.record(image_plan.model, "errors")
-                rotator = runtime_state.rotator
-                if rotator:
-                    account = runtime_state.account_service.get_active_account() if runtime_state.account_service else None
-                    if account:
-                        rotator.record_error(account.id)
-                raise _upstream_exception(exc) from exc
-            except Exception as exc:
-                _cleanup_persisted_image_items(image_store, items)
-                runtime_state.record(image_plan.model, "errors")
-                logger.error("Image error: %s", exc, exc_info=True)
-                raise HTTPException(500, detail={"message": str(exc), "type": "server_error"}) from exc
+                    # 尝试切换账号
+                    if await _try_switch_account(image_plan.model):
+                        logger.info("Image 429 限流，已切换账号，重试 %d/%d", attempt + 1, max_retries)
+                        continue
+                    else:
+                        logger.warning("Image 429 限流，无法切换账号")
+                        raise HTTPException(429, detail={"message": str(exc), "type": "rate_limit_exceeded"}) from exc
+                except (AuthError, RequestError) as exc:
+                    _cleanup_persisted_image_items(image_store, items)
+                    runtime_state.record(image_plan.model, "errors")
+                    rotator = runtime_state.rotator
+                    if rotator:
+                        account = runtime_state.account_service.get_active_account() if runtime_state.account_service else None
+                        if account:
+                            rotator.record_error(account.id)
+                    raise _upstream_exception(exc) from exc
+                except AistudioError as exc:
+                    _cleanup_persisted_image_items(image_store, items)
+                    runtime_state.record(image_plan.model, "errors")
+                    rotator = runtime_state.rotator
+                    if rotator:
+                        account = runtime_state.account_service.get_active_account() if runtime_state.account_service else None
+                        if account:
+                            rotator.record_error(account.id)
+                    raise _upstream_exception(exc) from exc
+                except Exception as exc:
+                    _cleanup_persisted_image_items(image_store, items)
+                    runtime_state.record(image_plan.model, "errors")
+                    logger.error("Image error: %s", exc, exc_info=True)
+                    raise HTTPException(500, detail={"message": str(exc), "type": "server_error"}) from exc
 
-    # 所有重试都失败
-    raise HTTPException(429, detail={"message": str(last_error), "type": "rate_limit_exceeded"}) from last_error
+        # 所有重试都失败
+        raise HTTPException(429, detail={"message": str(last_error), "type": "rate_limit_exceeded"}) from last_error
+    finally:
+        cleanup_files(image_paths)
 
 
 def _cleanup_persisted_image_items(image_store: GeneratedImageStore, items: list[dict[str, Any]]) -> None:
