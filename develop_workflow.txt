@@ -1,0 +1,1 @@
+先pull最新master代码，然后根据任务新建分支，根据trellis开始任务，完成测试验证，需要真实wsl测试，最后finish work ,创建commit提交,commit需要包含Trellis 本次任务记录，然后推送到远端
