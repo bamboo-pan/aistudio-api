@@ -3,7 +3,7 @@
   "name": "redesign-image-generation-page",
   "title": "redesign image generation page",
   "description": "",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "u1",
   "assignee": "u1",
   "createdAt": "2026-05-13",
-  "completedAt": null,
+  "completedAt": "2026-05-13",
   "branch": null,
   "base_branch": "feature/redesign-image-generation-page",
   "worktree_path": null,
@@ -26,7 +26,7 @@
     "prd_status": "confirmed",
     "workflow": {
       "version": 1,
-      "current_step": "awaiting_commit",
+      "current_step": "ready_to_finish",
       "vcs": {
         "kind": "git",
         "commit_required": true
@@ -45,8 +45,8 @@
         "result": "noop"
       },
       "commit": {
-        "hash": null,
-        "recorded_at": null
+        "hash": "d62bb8337378079206d5edbd469dd7845f8027ba",
+        "recorded_at": "2026-05-13T14:38:40Z"
       }
     }
   }
