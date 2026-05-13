@@ -7,7 +7,7 @@ function app(){return{
   credentialImportText:'',credentialImportName:'',credentialImporting:false,credentialExporting:false,credentialExportText:'',credentialError:'',
   loginStarting:false,loginPollTimer:null,loginSession:{id:'',status:'',email:'',error:''},
   models:[],model:'',modelError:'',
-  msgs:[],draft:'',busy:false,chatImages:[],chatImageError:'',
+  msgs:[],draft:'',busy:false,chatFiles:[],chatFileError:'',
   cfg:{thinking:'off',search:'off',stream:'on',temperature:1.0,topP:1.0,maxTokens:8192,safety:'on'},
   imageModel:'',imagePrompt:'',imageSize:'1024x1024',imageCount:1,imageBusy:false,imageError:'',imageResults:[],imageHistory:[],imageHistorySelection:{},imageHistoryDeleting:false,imageHistoryError:'',imageLastRequest:null,imageReferences:[],imageBaseImage:null,imageConversation:[],imageReferenceError:'',
   toast:{show:false,msg:'',t:null},
@@ -54,10 +54,13 @@ function app(){return{
   get imageCanSubmit(){return !this.imageBusy&&!!this.imagePrompt.trim()&&!!this.imageModel},
   cap(k){return this.selectedCaps[k]===true},
   controlAvailable(k){if(!this.model)return false;if(k==='thinking')return this.cap('thinking');if(k==='search')return this.cap('search');if(k==='stream')return this.cap('streaming');if(k==='safety')return this.selectedCaps.safety_settings!==false;if(['temperature','top_p','max_tokens'].includes(k))return this.cap('text_output')&&!this.cap('image_output');return true},
-  get chatImageUploadEnabled(){return !!this.model&&this.selectedCaps.image_input===true&&!this.busy},
-  get chatCanSend(){return !this.busy&&!!this.model&&(!!this.draft.trim()||this.chatImages.length>0)&&(this.chatImages.length===0||this.selectedCaps.image_input===true)},
+  get acceptedFileTypes(){return this.selectedCaps.file_input_mime_types||[]},
+  get chatFileAccept(){return this.acceptedFileTypes.length?this.acceptedFileTypes.join(','):''},
+  get chatFileUploadEnabled(){return !!this.model&&this.selectedCaps.file_input===true&&!this.busy},
+  get chatHasUnsupportedFiles(){return this.chatFiles.length>0&&this.selectedCaps.file_input!==true},
+  get chatCanSend(){return !this.busy&&!!this.model&&(!!this.draft.trim()||this.chatFiles.length>0)&&!this.chatHasUnsupportedFiles},
   applyModelCapabilities(){if(!this.controlAvailable('thinking'))this.cfg.thinking='off';if(!this.controlAvailable('search'))this.cfg.search='off';if(!this.controlAvailable('stream'))this.cfg.stream='off';if(!this.controlAvailable('safety'))this.cfg.safety='on'},
-  selectModel(id){this.model=id;this.openSelect=null;this.applyModelCapabilities();this.chatImageError=this.chatImages.length&&!this.selectedCaps.image_input?'当前模型不支持图片输入':''},
+  selectModel(id){this.model=id;this.openSelect=null;this.applyModelCapabilities();this.chatFileError=this.chatHasUnsupportedFiles?'当前模型不支持文件输入':''},
   ensureImageDefaults(){if(!this.imageModels.length){this.imageModel='';return}if(!this.imageModel||!this.imageModels.some(model=>model.id===this.imageModel))this.imageModel=this.imageModels[0].id;const defaultSize=this.imageSizeValues.includes(this.imageGenerationMeta.defaults?.size)?this.imageGenerationMeta.defaults.size:this.imageSizes[0]?.size;if(this.imageSizes.length&&!this.imageSizes.some(size=>size.size===this.imageSize))this.imageSize=defaultSize||'1024x1024';if(!this.imageCount)this.imageCount=this.imageCountDefault;this.normalizeImageCount()},
   selectImageModel(id){this.imageModel=id;this.openSelect=null;this.ensureImageDefaults()},
   async loadStats(){try{const r=await fetch('/stats');const d=await r.json();this.stats=d.models||{}}catch(e){}},
@@ -102,9 +105,12 @@ function app(){return{
 
   resizeTa(){const el=this.$refs.ta;if(!el)return;el.style.height='auto';el.style.height=Math.min(el.scrollHeight,200)+'px'},
   scrollDown(){setTimeout(()=>{const el=document.getElementById('chat-scroll');if(el)el.scrollTop=el.scrollHeight},50)},
-  fileToDataUrl(file){return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(reader.error||new Error('读取图片失败'));reader.readAsDataURL(file)})},
-  async attachChatImages(event){this.chatImageError='';if(!this.selectedCaps.image_input){this.chatImageError='当前模型不支持图片输入';this.showToast(this.chatImageError);event.target.value='';return}const files=Array.from(event.target.files||[]);for(const file of files){if(!file.type.startsWith('image/'))continue;if(file.size>20*1024*1024){this.chatImageError='单张图片不能超过 20 MB';continue}try{const url=await this.fileToDataUrl(file);this.chatImages.push({name:file.name,url})}catch(error){this.chatImageError='图片读取失败'}}event.target.value='';if(this.chatImageError)this.showToast(this.chatImageError)},
-  removeChatImage(index){this.chatImages.splice(index,1)},
+  fileToDataUrl(file){return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(reader.error||new Error('读取文件失败'));reader.readAsDataURL(file)})},
+  mimeMatches(mime,pattern){if(!pattern)return false;const type=(mime||'application/octet-stream').toLowerCase();const allowed=String(pattern).toLowerCase();return allowed==='*/*'||allowed===type||(allowed.endsWith('/*')&&type.startsWith(allowed.slice(0,-1)))},
+  fileAccepted(file){const accepted=this.acceptedFileTypes;if(!accepted.length)return true;const mime=file.type||'application/octet-stream';return accepted.some(pattern=>this.mimeMatches(mime,pattern))},
+  fileSizeLabel(bytes){const n=Number(bytes)||0;if(n>=1024*1024)return`${(n/1024/1024).toFixed(1)} MB`;if(n>=1024)return`${Math.round(n/1024)} KB`;return`${n} B`},
+  async attachChatFiles(event){this.chatFileError='';if(!this.selectedCaps.file_input){this.chatFileError='当前模型不支持文件输入';this.showToast(this.chatFileError);event.target.value='';return}const files=Array.from(event.target.files||[]);for(const file of files){const mime=file.type||'application/octet-stream';if(!this.fileAccepted(file)){this.chatFileError=`不支持的文件类型：${mime}`;continue}if(file.size>20*1024*1024){this.chatFileError='单个文件不能超过 20 MB';continue}try{const url=await this.fileToDataUrl(file);this.chatFiles.push({name:file.name||'upload',url,mime,size:file.size,isImage:mime.startsWith('image/')})}catch(error){this.chatFileError='文件读取失败'}}event.target.value='';if(this.chatFileError)this.showToast(this.chatFileError)},
+  removeChatFile(index){this.chatFiles.splice(index,1)},
 
   async attachImageReferences(event){this.imageReferenceError='';const files=Array.from(event.target.files||[]);for(const file of files){if(!file.type.startsWith('image/'))continue;if(file.size>20*1024*1024){this.imageReferenceError='单张图片不能超过 20 MB';continue}try{const url=await this.fileToDataUrl(file);this.imageReferences.push({id:`upload-${Date.now()}-${Math.random().toString(16).slice(2)}`,name:file.name,url,path:'',prompt:file.name,source:'upload',reference_role:'reference',created:Math.floor(Date.now()/1000),mime_type:file.type,size_bytes:file.size})}catch(error){this.imageReferenceError='图片读取失败'}}event.target.value='';if(this.imageReferenceError)this.showToast(this.imageReferenceError)},
   imageReferenceKey(item){return String(item?.path||item?.url||item?.id||'')},
@@ -117,12 +123,12 @@ function app(){return{
   async imageItemToRequestUrl(item){const url=this.imageUrl(item);if(!url)throw new Error('图片不可用');if(url.startsWith('data:'))return url;const requestPath=this.sameOriginRequestPath(url);const response=await fetch(requestPath||url);if(!response.ok)throw new Error(`图片读取失败：HTTP ${response.status}`);const blob=await response.blob();if(!blob.type.startsWith('image/'))throw new Error('图片内容不是有效图片');return await this.fileToDataUrl(blob)},
   async imageRequestImages(){const refs=this.imageEditReferences;const images=[];for(const ref of refs){images.push(await this.imageItemToRequestUrl(ref))}return images},
 
-  async send(){const t=this.draft.trim();if((!t&&!this.chatImages.length)||this.busy||!this.model)return;
-    if(this.chatImages.length&&!this.selectedCaps.image_input){this.chatImageError='当前模型不支持图片输入';this.showToast(this.chatImageError);return}
+  async send(){const t=this.draft.trim();if((!t&&!this.chatFiles.length)||this.busy||!this.model)return;
+    if(this.chatHasUnsupportedFiles){this.chatFileError='当前模型不支持文件输入';this.showToast(this.chatFileError);return}
     this.applyModelCapabilities();
-    const images=this.chatImages.map(img=>({...img}));
-    const apiContent=images.length?[...(t?[{type:'text',text:t}]:[]),...images.map(img=>({type:'image_url',image_url:{url:img.url}}))]:t;
-    this.msgs.push({role:'user',content:t,images,apiContent});this.draft='';this.chatImages=[];this.chatImageError='';this.busy=true;this.resizeTa();this.scrollDown();
+    const files=this.chatFiles.map(file=>({...file}));
+    const apiContent=files.length?[...(t?[{type:'text',text:t}]:[]),...files.map(file=>file.isImage?{type:'image_url',image_url:{url:file.url}}:{type:'file',file:{file_data:file.url,filename:file.name,mime_type:file.mime}})]:t;
+    this.msgs.push({role:'user',content:t,files,images:files.filter(file=>file.isImage),apiContent});this.draft='';this.chatFiles=[];this.chatFileError='';this.busy=true;this.resizeTa();this.scrollDown();
     const body={model:this.model,messages:this.msgs.map(m=>({role:m.role,content:m.apiContent||m.content}))};
     if(this.controlAvailable('temperature')&&this.cfg.temperature!==1) body.temperature=this.cfg.temperature;
     if(this.controlAvailable('top_p')&&this.cfg.topP!==1) body.top_p=this.cfg.topP;

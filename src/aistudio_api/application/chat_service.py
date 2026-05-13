@@ -14,7 +14,7 @@ import httpx
 from aistudio_api.config import DEFAULT_IMAGE_MODEL
 from aistudio_api.application.validation import validate_number_range
 from aistudio_api.domain.errors import RequestError
-from aistudio_api.domain.model_capabilities import require_model_capabilities
+from aistudio_api.domain.model_capabilities import mime_type_supported, require_model_capabilities
 from aistudio_api.infrastructure.gateway.request_rewriter import TOOLS_TEMPLATES
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent, AistudioPart
 
@@ -51,24 +51,44 @@ GENERATION_CONFIG_FIELD_NAMES = {
 }
 
 
-def _decode_image_base64(data: str, label: str) -> bytes:
+def _decode_base64_data(data: str, label: str) -> bytes:
     try:
         decoded = base64.b64decode(data, validate=True)
     except (binascii.Error, ValueError) as exc:
-        raise ValueError(f"{label} must contain valid base64 image data") from exc
+        raise ValueError(f"{label} must contain valid base64 data") from exc
     if len(decoded) > MAX_INLINE_IMAGE_BYTES:
         raise ValueError(f"{label} is too large; maximum size is {MAX_INLINE_IMAGE_BYTES // (1024 * 1024)} MB")
     return decoded
 
 
-def data_uri_to_file(uri: str, tmp_dir: str = "/tmp") -> str:
-    match = re.match(r"data:(.+?);base64,(.+)", uri, re.DOTALL)
+def _decode_image_base64(data: str, label: str) -> bytes:
+    return _decode_base64_data(data, label)
+
+
+def _is_image_mime(mime_type: str) -> bool:
+    return (mime_type or "").lower().startswith("image/")
+
+
+def _parse_data_uri(uri: str, label: str) -> tuple[str, str]:
+    match = re.match(r"data:([^,;]+)(?:;[^,]*)*;base64,(.+)", uri, re.DOTALL)
     if not match:
-        raise ValueError("Invalid data URI")
-    mime, b64 = match.group(1), match.group(2)
+        raise ValueError(f"{label} must be a base64 data URI")
+    mime, b64 = match.group(1).strip(), match.group(2)
+    _decode_base64_data(b64, label)
+    return mime or "application/octet-stream", b64
+
+
+def data_uri_to_inline_data(uri: str, label: str = "file data URI") -> tuple[str, str]:
+    return _parse_data_uri(uri, label)
+
+
+def data_uri_to_file(uri: str, tmp_dir: str = "/tmp") -> str:
+    mime, b64 = _parse_data_uri(uri, "image data URI")
+    if not _is_image_mime(mime):
+        raise ValueError("image data URI must contain an image MIME type")
     ext = mime.split("/")[-1].replace("jpeg", "jpg")
     path = os.path.join(tmp_dir, f"aistudio_img_{uuid.uuid4().hex[:8]}.{ext}")
-    decoded = _decode_image_base64(b64, "image data URI")
+    decoded = _decode_base64_data(b64, "image data URI")
     with open(path, "wb") as file:
         file.write(decoded)
     return path
@@ -94,6 +114,7 @@ def normalize_chat_request(messages, requested_model: str, tmp_dir: str = "/tmp"
     contents: list[AistudioContent] = []
     capture_texts: list[str] = []
     capture_images: list[str] = []
+    file_input_mime_types: list[str] = []
     cleanup_paths: list[str] = []
     saw_images = False
     success = False
@@ -113,6 +134,7 @@ def normalize_chat_request(messages, requested_model: str, tmp_dir: str = "/tmp"
             parts: list[AistudioPart] = []
             text_parts: list[str] = []
             image_paths: list[str] = []
+            inline_files: list[tuple[str, str]] = []
 
             if isinstance(msg.content, str):
                 if msg.content:
@@ -130,6 +152,9 @@ def normalize_chat_request(messages, requested_model: str, tmp_dir: str = "/tmp"
                         if not isinstance(url, str) or not url:
                             raise ValueError("image_url.url is required")
                         if url.startswith("data:"):
+                            mime, _b64 = data_uri_to_inline_data(url, "image_url.url")
+                            if not _is_image_mime(mime):
+                                raise ValueError("image_url.url data URI must contain an image MIME type")
                             path = data_uri_to_file(url, tmp_dir=tmp_dir)
                             image_paths.append(path)
                             cleanup_paths.append(path)
@@ -139,11 +164,17 @@ def normalize_chat_request(messages, requested_model: str, tmp_dir: str = "/tmp"
                             cleanup_paths.append(path)
                         else:
                             raise ValueError("image_url.url must be a data URI or HTTP URL")
-                    elif part.type not in ("text", "image_url"):
+                    elif part.type in ("file", "input_file"):
+                        mime, b64 = _message_file_inline_data(part)
+                        inline_files.append((mime, b64))
+                        file_input_mime_types.append(mime)
+                    elif part.type not in ("text", "image_url", "file", "input_file"):
                         raise ValueError(f"unsupported message content type: {part.type}")
 
             for image_path in image_paths:
-                parts.append(_image_path_to_part(image_path))
+                parts.append(_file_path_to_part(image_path))
+            for inline_file in inline_files:
+                parts.append(AistudioPart(inline_data=inline_file))
 
             if not parts:
                 continue
@@ -170,6 +201,7 @@ def normalize_chat_request(messages, requested_model: str, tmp_dir: str = "/tmp"
             "contents": contents or [AistudioContent(role="user", parts=[AistudioPart(text="你好")])],
             "capture_prompt": capture_prompt,
             "capture_images": capture_images,
+            "file_input_mime_types": file_input_mime_types,
             "cleanup_paths": cleanup_paths,
         }
     finally:
@@ -186,7 +218,19 @@ def _message_text_content(content) -> str | None:
     return None
 
 
-def _image_path_to_part(path: str) -> AistudioPart:
+def _message_file_inline_data(part) -> tuple[str, str]:
+    payload = part.file if isinstance(part.file, dict) else {}
+    data = payload.get("file_data") or payload.get("data") or part.file_data
+    if not isinstance(data, str) or not data:
+        raise ValueError("file content blocks require file_data")
+    if data.startswith("data:"):
+        return data_uri_to_inline_data(data, "file.file_data")
+    mime_type = payload.get("mime_type") or part.mime_type or "application/octet-stream"
+    _decode_base64_data(data, "file.file_data")
+    return mime_type, data
+
+
+def _file_path_to_part(path: str) -> AistudioPart:
     mime = "image/jpeg"
     if path.endswith(".png"):
         mime = "image/png"
@@ -207,7 +251,7 @@ def cleanup_files(paths: list[str]):
 def inline_data_to_file(mime_type: str, data: str, tmp_dir: str = "/tmp") -> str:
     ext = mime_type.split("/")[-1].replace("jpeg", "jpg")
     path = os.path.join(tmp_dir, f"aistudio_img_{uuid.uuid4().hex[:8]}.{ext}")
-    decoded = _decode_image_base64(data, "inlineData")
+    decoded = _decode_base64_data(data, "inlineData")
     with open(path, "wb") as file:
         file.write(decoded)
     return path
@@ -314,6 +358,7 @@ def normalize_gemini_request(req, requested_model: str, tmp_dir: str = "/tmp", *
     cleanup_paths: list[str] = []
     capture_prompt = "你好"
     capture_images: list[str] = []
+    file_input_mime_types: list[str] = []
     success = False
 
     try:
@@ -333,10 +378,14 @@ def normalize_gemini_request(req, requested_model: str, tmp_dir: str = "/tmp", *
                     text_parts.append(part.text)
                     continue
                 if part.inlineData is not None:
-                    image_path = inline_data_to_file(part.inlineData.mimeType, part.inlineData.data, tmp_dir=tmp_dir)
+                    _decode_base64_data(part.inlineData.data, "inlineData")
                     parts.append(AistudioPart(inline_data=(part.inlineData.mimeType, part.inlineData.data)))
-                    content_images.append(image_path)
-                    cleanup_paths.append(image_path)
+                    if _is_image_mime(part.inlineData.mimeType):
+                        image_path = inline_data_to_file(part.inlineData.mimeType, part.inlineData.data, tmp_dir=tmp_dir)
+                        content_images.append(image_path)
+                        cleanup_paths.append(image_path)
+                    else:
+                        file_input_mime_types.append(part.inlineData.mimeType)
                     continue
                 if part.fileData is not None:
                     raise ValueError("fileData is not supported by AI Studio browser replay mode yet; use inlineData")
@@ -365,8 +414,10 @@ def normalize_gemini_request(req, requested_model: str, tmp_dir: str = "/tmp", *
                     system_parts.append(AistudioPart(text=part.text))
                     continue
                 if part.inlineData is not None:
-                    _decode_image_base64(part.inlineData.data, "systemInstruction.inlineData")
+                    _decode_base64_data(part.inlineData.data, "systemInstruction.inlineData")
                     system_parts.append(AistudioPart(inline_data=(part.inlineData.mimeType, part.inlineData.data)))
+                    if not _is_image_mime(part.inlineData.mimeType):
+                        file_input_mime_types.append(part.inlineData.mimeType)
                     continue
                 if part.fileData is not None:
                     raise ValueError("systemInstruction.fileData is not supported by AI Studio browser replay mode yet; use inlineData")
@@ -436,6 +487,17 @@ def normalize_gemini_request(req, requested_model: str, tmp_dir: str = "/tmp", *
 
         if capture_images and not capabilities.image_input:
             raise ValueError(f"Model '{model}' does not support image input")
+        if file_input_mime_types and not capabilities.file_input:
+            raise ValueError(f"Model '{model}' does not support file input")
+        unsupported_file_types = [
+            mime_type
+            for mime_type in file_input_mime_types
+            if not mime_type_supported(mime_type, capabilities.file_input_mime_types)
+        ]
+        if unsupported_file_types:
+            supported = ", ".join(capabilities.file_input_mime_types) or "none"
+            rejected = ", ".join(unsupported_file_types)
+            raise ValueError(f"Model '{model}' does not support file MIME type(s): {rejected}. Supported: {supported}")
         if stream and not capabilities.streaming:
             raise ValueError(f"Model '{model}' does not support streaming responses")
         if uses_function_tools and not capabilities.tools:
@@ -461,6 +523,7 @@ def normalize_gemini_request(req, requested_model: str, tmp_dir: str = "/tmp", *
             "tools": tools or None,
             "capture_prompt": capture_prompt,
             "capture_images": capture_images or None,
+            "file_input_mime_types": file_input_mime_types,
             "cleanup_paths": cleanup_paths,
             "temperature": generation_config.temperature if generation_config else None,
             "top_p": generation_config.topP if generation_config else None,

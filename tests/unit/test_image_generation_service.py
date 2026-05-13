@@ -514,6 +514,59 @@ def test_chat_completion_rejects_malformed_image_url_part_before_client_call():
     assert client.calls == []
 
 
+def test_chat_completion_forwards_inline_file_attachment_to_client():
+    client = FakeChatClient()
+    req = ChatRequest(
+        model="gemini-3-flash-preview",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "summarize"},
+                    {
+                        "type": "file",
+                        "file": {
+                            "filename": "note.txt",
+                            "mime_type": "text/plain",
+                            "file_data": "data:text/plain;base64,aGVsbG8=",
+                        },
+                    },
+                ],
+            }
+        ],
+    )
+
+    response = run_with_runtime(handle_chat(req, client))
+
+    assert response["choices"][0]["message"]["content"] == '{"ok":true}'
+    parts = client.calls[0]["contents"][0].parts
+    assert parts[0].text == "summarize"
+    assert parts[1].inline_data == ("text/plain", "aGVsbG8=")
+    assert client.calls[0]["capture_images"] is None
+
+
+def test_chat_completion_rejects_file_attachment_for_model_without_file_input():
+    client = FakeChatClient()
+    req = ChatRequest(
+        model="gemma-4-31b-it",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "file", "file": {"mime_type": "text/plain", "file_data": "data:text/plain;base64,aGVsbG8="}}
+                ],
+            }
+        ],
+    )
+
+    with pytest.raises(HTTPException) as error:
+        run_with_runtime(handle_chat(req, client))
+
+    assert error.value.status_code == 400
+    assert "file input" in error.value.detail["message"]
+    assert client.calls == []
+
+
 def test_chat_completion_rejects_invalid_numeric_params():
     client = FakeChatClient()
     req = ChatRequest(model="gemini-3-flash-preview", messages=[{"role": "user", "content": "hello"}], top_p=1.5)

@@ -1,0 +1,53 @@
+{
+  "id": "playground-file-upload",
+  "name": "playground-file-upload",
+  "title": "playground: model-based file upload",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "u2",
+  "assignee": "u2",
+  "createdAt": "2026-05-13",
+  "completedAt": "2026-05-13",
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "prd_status": "confirmed",
+    "workflow": {
+      "version": 1,
+      "current_step": "ready_to_finish",
+      "vcs": {
+        "kind": "git",
+        "commit_required": true
+      },
+      "implement": {
+        "dispatched_at": "2026-05-13T11:42:48Z",
+        "completed_at": "2026-05-13T11:42:48Z"
+      },
+      "check": {
+        "completed_at": "2026-05-13T11:42:48Z",
+        "fingerprint": "8710edb77d926a3954ce7768c1e36f896d98444fe9644041465c6fd06d7eb01b",
+        "head": "07a02d3cf269c201ecd5c6aa82eb75ae0a18c067"
+      },
+      "spec_update": {
+        "reviewed_at": "2026-05-13T11:42:49Z",
+        "result": "updated"
+      },
+      "commit": {
+        "hash": "07a02d3cf269c201ecd5c6aa82eb75ae0a18c067",
+        "recorded_at": "2026-05-13T11:42:49Z"
+      }
+    }
+  }
+}

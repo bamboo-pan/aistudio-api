@@ -13,6 +13,10 @@ class MessageContent(BaseModel):
     type: str
     text: Optional[str] = None
     image_url: Optional[dict] = None
+    file: Optional[dict[str, Any]] = None
+    file_data: Optional[str] = None
+    filename: Optional[str] = None
+    mime_type: Optional[str] = None
 
 
 class Message(BaseModel):

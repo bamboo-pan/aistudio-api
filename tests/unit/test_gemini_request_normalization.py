@@ -94,6 +94,36 @@ def test_normalize_gemini_request_rejects_oversized_inline_image(monkeypatch):
         normalize_gemini_request(req, "models/gemini-3-flash-preview")
 
 
+def test_normalize_gemini_request_accepts_inline_pdf_file():
+    req = GeminiGenerateContentRequest(
+        contents=[
+            GeminiContent(
+                role="user",
+                parts=[
+                    GeminiPart(text="summarize"),
+                    GeminiPart(inlineData={"mimeType": "application/pdf", "data": "aGVsbG8="}),
+                ],
+            )
+        ],
+    )
+
+    normalized = normalize_gemini_request(req, "models/gemini-3-flash-preview")
+
+    parts = normalized["contents"][0].parts
+    assert parts[1].inline_data == ("application/pdf", "aGVsbG8=")
+    assert normalized["capture_images"] is None
+    assert normalized["file_input_mime_types"] == ["application/pdf"]
+
+
+def test_normalize_gemini_request_rejects_inline_pdf_for_text_only_model():
+    req = GeminiGenerateContentRequest(
+        contents=[GeminiContent(role="user", parts=[GeminiPart(inlineData={"mimeType": "application/pdf", "data": "aGVsbG8="})])],
+    )
+
+    with pytest.raises(ValueError, match="file input"):
+        normalize_gemini_request(req, "models/gemma-4-31b-it")
+
+
 def test_normalize_gemini_request_rejects_oversized_system_instruction_inline_image(monkeypatch):
     monkeypatch.setattr(chat_service, "MAX_INLINE_IMAGE_BYTES", 4)
     req = GeminiGenerateContentRequest(

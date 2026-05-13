@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/index.md","reason":"Spec index for final compliance check"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Testing and quality verification expectations"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Validate API errors stay consistent"}
+{"file":".trellis/spec/backend/api-contracts.md","reason":"Verify local inline file upload contract and validation behavior"}
