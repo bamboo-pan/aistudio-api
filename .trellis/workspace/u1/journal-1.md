@@ -40,3 +40,36 @@ Added iterative image editing with uploaded/reference images, documented the new
 ### Next Steps
 
 - None - task complete
+
+
+## Session 2: Redesign image generation page
+
+**Date**: 2026-05-13
+**Task**: Redesign image generation page
+**Branch**: `feature/redesign-image-generation-page`
+
+### Summary
+
+Redesigned the image generation page as a guided Studio flow, preserved existing generation/edit/history behavior, and verified locally plus WSL real-account image generation.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d62bb83` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

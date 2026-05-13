@@ -134,82 +134,142 @@
   <!-- Images -->
   <div class="page-wrap image-page" :class="{active:view==='images'}">
     <div class="scroll-area">
-      <div class="page-pad image-pad">
-        <div class="image-workspace">
-          <section class="image-panel image-form-panel">
-            <div class="image-panel-head">
-              <h1>图片生成</h1>
-              <button class="btn btn-primary" :disabled="!imageCanSubmit" @click="generateImage()" x-text="imageActionLabel"></button>
-            </div>
-            <textarea class="image-prompt" x-model="imagePrompt" placeholder="描述要生成的画面" rows="5"></textarea>
-            <div class="image-session-tools">
-              <input x-ref="imageReferenceInput" type="file" accept="image/*" multiple hidden @change="attachImageReferences($event)">
-              <button class="btn btn-sm" :disabled="imageBusy" @click="$refs.imageReferenceInput.click()">上传参考</button>
-              <button class="btn btn-sm" :disabled="imageBusy||(!imageBaseImage&&!imageReferences.length&&!imageConversation.length)" @click="clearImageEditSession()">新会话</button>
-            </div>
-            <div class="notice notice-error image-reference-error" x-show="imageReferenceError" x-text="imageReferenceError" x-cloak></div>
-            <div class="image-reference-zone" x-show="imageBaseImage||imageReferences.length" x-cloak>
-              <template x-if="imageBaseImage">
-                <div class="image-ref-thumb image-ref-base">
-                  <img :src="imageUrl(imageBaseImage)" :alt="imageBaseImage.prompt||'base image'">
-                  <span>基图</span>
-                  <button class="thumb-remove" :disabled="imageBusy" @click="clearBaseImage()" title="移除基图">×</button>
+      <div class="page-pad image-pad image-studio-pad">
+        <div class="image-studio-header">
+          <div>
+            <div class="image-kicker">引导式 Studio</div>
+            <h1>图片生成</h1>
+          </div>
+          <div class="image-status-strip">
+            <span class="image-status-pill" :class="{'is-editing':imageReferenceCount}" x-text="imageReferenceCount?'编辑模式':'生成模式'"></span>
+            <span class="image-status-pill" x-text="imageModel||'未选择模型'"></span>
+            <span class="image-status-pill" x-text="imageRunSummary"></span>
+          </div>
+        </div>
+        <div class="image-workspace image-studio-grid">
+          <section class="image-panel image-form-panel image-studio-compose">
+            <div class="studio-step studio-step-prompt">
+              <div class="studio-step-head">
+                <span class="studio-step-index">1</span>
+                <div>
+                  <h2>描述画面</h2>
+                  <p>写清主体、风格、光线和构图，后续编辑会沿用当前上下文。</p>
                 </div>
-              </template>
-              <template x-for="(item,index) in imageReferences" :key="imageReferenceKey(item)||index">
-                <div class="image-ref-thumb">
-                  <img :src="imageUrl(item)" :alt="item.prompt||item.name||'reference image'">
-                  <span>参考</span>
-                  <button class="thumb-remove" :disabled="imageBusy" @click="removeImageReference(index)" title="移除参考图">×</button>
-                </div>
-              </template>
+              </div>
+              <textarea class="image-prompt" x-model="imagePrompt" placeholder="例如：一张干净的产品海报，玻璃杯放在浅灰色石材台面上，自然侧光，背景有少量绿植虚化" rows="7"></textarea>
+              <div class="image-prompt-footer">
+                <span x-text="imagePrompt.trim()?imagePrompt.trim().length+' 字':'等待输入提示词'"></span>
+                <span x-text="imageReferenceCount?imageReferenceCount+' 张素材参与编辑':'纯文本生成'"></span>
+              </div>
             </div>
-            <div class="image-controls">
-              <div class="image-control">
-                <div class="control-label">模型</div>
-                <div class="cselect image-select" :class="{open:openSelect==='imageModel'}" @click.stop>
-                  <div class="cselect-btn" @click="toggleSelect('imageModel',$event)" tabindex="0"><span x-text="imageModel||'选择模型'"></span><span class="arrow"></span></div>
-                  <div class="cselect-menu">
-                    <template x-for="m in imageModels" :key="m.id"><div class="cselect-opt" :class="{active:imageModel===m.id}" @click="selectImageModel(m.id)" x-text="m.id"></div></template>
-                    <div class="cselect-opt" aria-disabled="true" x-show="!imageModels.length">暂无图像模型</div>
+
+            <div class="studio-step">
+              <div class="studio-step-head">
+                <span class="studio-step-index">2</span>
+                <div>
+                  <h2>加入素材</h2>
+                  <p>参考图影响风格与内容，基图用于下一轮编辑。</p>
+                </div>
+              </div>
+              <div class="image-session-tools image-studio-tools">
+                <input x-ref="imageReferenceInput" type="file" accept="image/*" multiple hidden @change="attachImageReferences($event)">
+                <button class="btn btn-sm" :disabled="imageBusy" @click="$refs.imageReferenceInput.click()">上传参考</button>
+                <button class="btn btn-sm" :disabled="imageBusy||(!imageBaseImage&&!imageReferences.length&&!imageConversation.length)" @click="clearImageEditSession()">新会话</button>
+              </div>
+              <div class="notice notice-error image-reference-error" x-show="imageReferenceError" x-text="imageReferenceError" x-cloak></div>
+              <div class="image-reference-zone image-reference-board" x-show="imageBaseImage||imageReferences.length" x-cloak>
+                <template x-if="imageBaseImage">
+                  <div class="image-ref-thumb image-ref-base">
+                    <img :src="imageUrl(imageBaseImage)" :alt="imageBaseImage.prompt||'base image'">
+                    <span>基图</span>
+                    <button class="thumb-remove" :disabled="imageBusy" @click="clearBaseImage()" title="移除基图">×</button>
+                  </div>
+                </template>
+                <template x-for="(item,index) in imageReferences" :key="imageReferenceKey(item)||index">
+                  <div class="image-ref-thumb">
+                    <img :src="imageUrl(item)" :alt="item.prompt||item.name||'reference image'">
+                    <span>参考</span>
+                    <button class="thumb-remove" :disabled="imageBusy" @click="removeImageReference(index)" title="移除参考图">×</button>
+                  </div>
+                </template>
+              </div>
+              <div class="image-reference-empty" x-show="!imageBaseImage&&!imageReferences.length">
+                可跳过素材直接生成，也可以从下方历史选择图片加入参考。
+              </div>
+            </div>
+
+            <div class="studio-step">
+              <div class="studio-step-head">
+                <span class="studio-step-index">3</span>
+                <div>
+                  <h2>选择参数</h2>
+                  <p>模型能力会自动决定可用尺寸、数量和响应格式。</p>
+                </div>
+              </div>
+              <div class="image-controls image-studio-controls">
+                <div class="image-control">
+                  <div class="control-label">模型</div>
+                  <div class="cselect image-select" :class="{open:openSelect==='imageModel'}" @click.stop>
+                    <div class="cselect-btn" @click="toggleSelect('imageModel',$event)" tabindex="0"><span x-text="imageModel||'选择模型'"></span><span class="arrow"></span></div>
+                    <div class="cselect-menu">
+                      <template x-for="m in imageModels" :key="m.id"><div class="cselect-opt" :class="{active:imageModel===m.id}" @click="selectImageModel(m.id)" x-text="m.id"></div></template>
+                      <div class="cselect-opt" aria-disabled="true" x-show="!imageModels.length">暂无图像模型</div>
+                    </div>
                   </div>
                 </div>
-              </div>
-              <div class="image-control">
-                <div class="control-label">尺寸</div>
-                <div class="cselect image-select" :class="{open:openSelect==='imageSize'}" @click.stop>
-                  <div class="cselect-btn" @click="toggleSelect('imageSize',$event)" tabindex="0"><span x-text="imageSize"></span><span class="arrow"></span></div>
-                  <div class="cselect-menu">
-                    <template x-for="s in imageSizes" :key="s.size"><div class="cselect-opt" :class="{active:imageSize===s.size}" @click="imageSize=s.size;openSelect=null"><span x-text="s.size"></span><span class="opt-muted" x-text="s.aspect_ratio"></span></div></template>
+                <div class="image-control">
+                  <div class="control-label">尺寸</div>
+                  <div class="cselect image-select" :class="{open:openSelect==='imageSize'}" @click.stop>
+                    <div class="cselect-btn" @click="toggleSelect('imageSize',$event)" tabindex="0"><span x-text="imageSize"></span><span class="arrow"></span></div>
+                    <div class="cselect-menu">
+                      <template x-for="s in imageSizes" :key="s.size"><div class="cselect-opt" :class="{active:imageSize===s.size}" @click="imageSize=s.size;openSelect=null"><span x-text="s.size"></span><span class="opt-muted" x-text="s.aspect_ratio"></span></div></template>
+                    </div>
                   </div>
                 </div>
+                <div class="image-control image-count-control">
+                  <div class="control-label">数量</div>
+                  <input class="image-count" type="number" :min="imageCountMin" :max="imageCountMax" step="1" x-model.number="imageCount" @change="normalizeImageCount()">
+                  <div class="control-hint" x-text="imageCountHint"></div>
+                </div>
+                <div class="image-control">
+                  <div class="control-label">响应格式</div>
+                  <div class="image-param-value" x-text="imageResponseFormat"></div>
+                  <div class="control-hint" x-text="imageFormatLabel"></div>
+                </div>
               </div>
-              <div class="image-control image-count-control">
-                <div class="control-label">数量</div>
-                <input class="image-count" type="number" :min="imageCountMin" :max="imageCountMax" step="1" x-model.number="imageCount" @change="normalizeImageCount()">
-                <div class="control-hint" x-text="imageCountHint"></div>
-              </div>
-              <div class="image-control">
-                <div class="control-label">响应格式</div>
-                <div class="image-param-value" x-text="imageResponseFormat"></div>
-                <div class="control-hint" x-text="imageFormatLabel"></div>
-              </div>
+              <div class="notice notice-error image-inline-notice" x-show="modelError" x-text="modelError" x-cloak></div>
             </div>
-            <div class="notice notice-error" x-show="modelError" x-text="modelError" x-cloak></div>
-            <div class="notice notice-error image-error" x-show="imageError" x-cloak>
-              <span x-text="imageError"></span>
-              <button class="btn btn-sm" :disabled="imageBusy||!imageLastRequest" @click="retryLastImage()">重试</button>
+
+            <div class="studio-step studio-submit-step">
+              <div class="studio-step-head">
+                <span class="studio-step-index">4</span>
+                <div>
+                  <h2>生成并迭代</h2>
+                  <p x-text="imageSubmitHint"></p>
+                </div>
+              </div>
+              <div class="image-submit-row">
+                <button class="btn btn-primary image-generate-btn" :disabled="!imageCanSubmit" @click="generateImage()" x-text="imageActionLabel"></button>
+                <button class="btn" :disabled="imageBusy||!imageLastRequest" @click="retryLastImage()">重试上次</button>
+              </div>
+              <div class="notice notice-error image-error" x-show="imageError" x-cloak>
+                <span x-text="imageError"></span>
+                <button class="btn btn-sm" :disabled="imageBusy||!imageLastRequest" @click="retryLastImage()">重试</button>
+              </div>
             </div>
           </section>
 
-          <section class="image-panel">
-            <div class="image-panel-head">
-              <h2>结果</h2>
-              <span class="panel-meta" x-text="imageResults.length?imageResults.length+' 张':''"></span>
+          <section class="image-panel image-results-panel">
+            <div class="image-panel-head image-results-head">
+              <div>
+                <div class="image-section-label">当前输出</div>
+                <h2>结果</h2>
+              </div>
+              <span class="panel-meta" x-text="imageResults.length?imageResults.length+' 张':imageBusy?'处理中':''"></span>
             </div>
-            <div class="image-gallery" x-show="imageResults.length" x-cloak>
+            <div class="image-gallery image-result-gallery" x-show="imageResults.length" x-cloak>
               <template x-for="item in imageResults" :key="item.url||item.index">
-                <div class="image-card">
+                <div class="image-card image-result-card">
                   <img :src="imageUrl(item)" :alt="item.prompt||'generated image'">
                   <div class="image-card-body">
                     <div class="image-card-title" x-text="item.prompt"></div>
@@ -225,13 +285,24 @@
                 </div>
               </template>
             </div>
-            <div class="image-empty" x-show="!imageResults.length&&!imageBusy">暂无结果</div>
-            <div class="image-empty" x-show="imageBusy">生成中...</div>
+            <div class="image-empty image-empty-state" x-show="!imageResults.length&&!imageBusy">
+              <div class="image-empty-mark">IMG</div>
+              <h3>结果会显示在这里</h3>
+              <p>完成左侧 4 步后生成。生成后的图片可以下载、设为基图、加入参考或继续重试。</p>
+            </div>
+            <div class="image-empty image-busy-state" x-show="imageBusy">
+              <div class="image-spinner"></div>
+              <h3 x-text="imageReferenceCount?'正在编辑图片':'正在生成图片'"></h3>
+              <p x-text="imageRunSummary"></p>
+            </div>
           </section>
 
           <section class="image-panel image-session-panel">
             <div class="image-panel-head">
-              <h2>编辑会话</h2>
+              <div>
+                <div class="image-section-label">上下文</div>
+                <h2>编辑会话</h2>
+              </div>
               <span class="panel-meta" x-text="imageConversation.length?Math.ceil(imageConversation.length/2)+' 轮':''"></span>
             </div>
             <div class="image-session-log" x-show="imageConversation.length" x-cloak>
@@ -249,12 +320,17 @@
                 </div>
               </template>
             </div>
-            <div class="image-empty" x-show="!imageConversation.length">暂无会话</div>
+            <div class="image-empty image-compact-empty" x-show="!imageConversation.length">
+              首次生成后会记录提示词和输出，便于继续编辑。
+            </div>
           </section>
 
-          <section class="image-panel">
+          <section class="image-panel image-history-panel">
             <div class="image-panel-head">
-              <h2>本地历史</h2>
+              <div>
+                <div class="image-section-label">素材库</div>
+                <h2>本地历史</h2>
+              </div>
               <span class="panel-meta" x-text="selectedHistoryCount?selectedHistoryCount+' 已选':imageHistory.length?imageHistory.length+' 张':''"></span>
             </div>
             <div class="image-history-tools" x-show="imageHistory.length" x-cloak>
@@ -287,7 +363,7 @@
                 </div>
               </template>
             </div>
-            <div class="image-empty" x-show="!imageHistory.length">暂无历史</div>
+            <div class="image-empty image-compact-empty" x-show="!imageHistory.length">生成后的图片会自动进入本地历史。</div>
           </section>
         </div>
       </div>

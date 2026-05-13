@@ -1,0 +1,53 @@
+{
+  "id": "redesign-image-generation-page",
+  "name": "redesign-image-generation-page",
+  "title": "redesign image generation page",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "u1",
+  "assignee": "u1",
+  "createdAt": "2026-05-13",
+  "completedAt": "2026-05-13",
+  "branch": null,
+  "base_branch": "feature/redesign-image-generation-page",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "prd_status": "confirmed",
+    "workflow": {
+      "version": 1,
+      "current_step": "ready_to_finish",
+      "vcs": {
+        "kind": "git",
+        "commit_required": true
+      },
+      "implement": {
+        "dispatched_at": null,
+        "completed_at": "2026-05-13T14:36:54Z"
+      },
+      "check": {
+        "completed_at": "2026-05-13T14:36:54Z",
+        "fingerprint": "50c6d353723a59a6947f30fa47f85124e11dffbe0b734aa6f909525ee987dce7",
+        "head": "729ccc89cdc7c03191ce4c0a74203b60507c75e7"
+      },
+      "spec_update": {
+        "reviewed_at": "2026-05-13T14:36:54Z",
+        "result": "noop"
+      },
+      "commit": {
+        "hash": "d62bb8337378079206d5edbd469dd7845f8027ba",
+        "recorded_at": "2026-05-13T14:38:40Z"
+      }
+    }
+  }
+}
