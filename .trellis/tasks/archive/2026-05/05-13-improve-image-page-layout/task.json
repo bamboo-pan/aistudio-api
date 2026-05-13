@@ -3,7 +3,7 @@
   "name": "improve-image-page-layout",
   "title": "Improve image page scrolling layout",
   "description": "",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "u1",
   "assignee": "u1",
   "createdAt": "2026-05-13",
-  "completedAt": null,
+  "completedAt": "2026-05-13",
   "branch": null,
   "base_branch": "master",
   "worktree_path": null,
@@ -26,27 +26,27 @@
     "prd_status": "confirmed",
     "workflow": {
       "version": 1,
-      "current_step": "awaiting_implement",
+      "current_step": "ready_to_finish",
       "vcs": {
         "kind": "git",
         "commit_required": true
       },
       "implement": {
         "dispatched_at": null,
-        "completed_at": null
+        "completed_at": "2026-05-13T11:42:32Z"
       },
       "check": {
-        "completed_at": null,
-        "fingerprint": null,
-        "head": null
+        "completed_at": "2026-05-13T11:42:56Z",
+        "fingerprint": "8592e6cab86db50d58a86640036283c483ccb8ee10572628847335091337bca9",
+        "head": "87d29734d67dc346e9ad164c676356dda22edaa3"
       },
       "spec_update": {
-        "reviewed_at": null,
-        "result": null
+        "reviewed_at": "2026-05-13T11:43:21Z",
+        "result": "noop"
       },
       "commit": {
-        "hash": null,
-        "recorded_at": null
+        "hash": "87d29734d67dc346e9ad164c676356dda22edaa3",
+        "recorded_at": "2026-05-13T11:43:45Z"
       }
     }
   }
