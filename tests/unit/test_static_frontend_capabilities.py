@@ -89,4 +89,6 @@ def test_static_frontend_custom_select_supports_keyboard_and_scrollable_image_me
     assert "aria-disabled=\"true\" x-show=\"!imageModels.length\"" in index_html
     assert "overscroll-behavior:contain" in style_css
     assert ".cselect-opt:hover,.cselect-opt.highlighted" in style_css
-    assert ".image-form-panel{grid-row:span 2;position:sticky;top:20px;overflow:visible" in style_css
+    assert ".image-form-panel{grid-row:span 2;position:relative;overflow:visible" in style_css
+    assert "position:sticky" not in style_css.split("/* Image generation */", 1)[1].split("/* Toast */", 1)[0]
+    assert "@media(max-width:960px)" in style_css
