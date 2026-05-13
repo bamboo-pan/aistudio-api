@@ -350,6 +350,9 @@ def _is_image_output_chat_model(model: str) -> bool:
 def _chat_image_request(req: ChatRequest) -> tuple[ImageRequest, list[str]]:
     normalized = normalize_chat_request(req.messages, req.model)
     cleanup_paths = list(normalized["cleanup_paths"])
+    if normalized.get("file_input_mime_types"):
+        cleanup_files(cleanup_paths)
+        raise ValueError("Image generation through chat completions supports text prompts only")
     if normalized["capture_images"]:
         cleanup_files(cleanup_paths)
         raise ValueError("Image generation through chat completions supports text prompts only")
@@ -495,6 +498,20 @@ def _coerce_openai_content_blocks(content: Any) -> str | list[dict[str, Any]]:
                 blocks.extend(_coerce_openai_content_blocks(content_value))
             else:
                 blocks.append({"type": "text", "text": json.dumps(content_value, ensure_ascii=False)})
+        elif block_type in ("file", "input_file"):
+            file_data = block.get("file_data") or block.get("data")
+            if not isinstance(file_data, str) or not file_data:
+                raise ValueError("file content blocks require file_data")
+            blocks.append(
+                {
+                    "type": "file",
+                    "file": {
+                        "file_data": file_data,
+                        "filename": block.get("filename") or block.get("name") or "upload",
+                        "mime_type": block.get("mime_type") or block.get("media_type") or "application/octet-stream",
+                    },
+                }
+            )
         else:
             raise ValueError(f"unsupported content block type: {block_type}")
     return blocks
@@ -529,6 +546,8 @@ def _messages_from_responses_payload(payload: dict[str, Any]) -> list[dict[str, 
                 raise ValueError("input_text items require text")
             messages.append({"role": "user", "content": text})
         elif item_type == "input_image":
+            messages.append({"role": "user", "content": _coerce_openai_content_blocks([item])})
+        elif item_type in ("input_file", "file"):
             messages.append({"role": "user", "content": _coerce_openai_content_blocks([item])})
         else:
             raise ValueError(f"unsupported input item type: {item_type}")
@@ -899,9 +918,12 @@ async def handle_chat(req: ChatRequest, client: AIStudioClient, request: Request
                 tmp_files = list(normalized["cleanup_paths"])
                 tools = normalize_openai_tools(req.tools)
                 has_image_input = bool(normalized["capture_images"])
+                file_input_mime_types = tuple(normalized.get("file_input_mime_types") or ())
                 validate_chat_capabilities(
                     model,
                     has_image_input=has_image_input,
+                    has_file_input=bool(file_input_mime_types),
+                    file_input_mime_types=file_input_mime_types,
                     uses_tools=bool(req.tools),
                     uses_search=bool(req.grounding),
                     uses_thinking=_explicit_thinking_enabled(req.thinking),

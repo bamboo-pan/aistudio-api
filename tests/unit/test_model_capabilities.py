@@ -15,6 +15,8 @@ def test_model_metadata_exposes_capabilities_and_image_sizes():
     metadata = get_model_metadata("gemini-3.1-flash-image-preview")
 
     assert metadata["capabilities"]["image_output"] is True
+    assert metadata["capabilities"]["file_input"] is False
+    assert metadata["capabilities"]["file_input_mime_types"] == []
     assert metadata["capabilities"]["structured_output"] is False
     assert metadata["capabilities"]["tool_calls"] is False
     assert "media_resolution" in metadata["capabilities"]["unsupported_generation_fields"]
@@ -82,8 +84,38 @@ def test_model_metadata_exposes_structured_output_for_text_model():
     metadata = get_model_metadata("gemini-3-flash-preview")
 
     assert metadata["capabilities"]["text_output"] is True
+    assert metadata["capabilities"]["file_input"] is True
+    assert "application/pdf" in metadata["capabilities"]["file_input_mime_types"]
     assert metadata["capabilities"]["structured_output"] is True
     assert metadata["capabilities"]["tool_calls"] is True
+
+
+def test_chat_capability_validation_rejects_file_input_for_gemma():
+    with pytest.raises(ValueError, match="file input"):
+        validate_chat_capabilities(
+            "gemma-4-31b-it",
+            has_image_input=False,
+            has_file_input=True,
+            file_input_mime_types=("application/pdf",),
+            uses_tools=False,
+            uses_search=False,
+            uses_thinking=False,
+            stream=False,
+        )
+
+
+def test_chat_capability_validation_rejects_unsupported_file_mime_type():
+    with pytest.raises(ValueError, match="application/x-msdownload"):
+        validate_chat_capabilities(
+            "gemini-3-flash-preview",
+            has_image_input=False,
+            has_file_input=True,
+            file_input_mime_types=("application/x-msdownload",),
+            uses_tools=False,
+            uses_search=False,
+            uses_thinking=False,
+            stream=False,
+        )
 
 
 def test_chat_capability_validation_rejects_structured_output_when_unavailable():

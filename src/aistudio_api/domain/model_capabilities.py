@@ -8,6 +8,16 @@ from typing import Any
 
 MODEL_CREATED = 1700000000
 IMAGE_RESPONSE_FORMATS = ("b64_json", "url")
+DEFAULT_FILE_INPUT_MIME_TYPES = (
+    "image/*",
+    "application/pdf",
+    "text/plain",
+    "text/markdown",
+    "text/csv",
+    "application/json",
+    "audio/*",
+    "video/*",
+)
 DEFAULT_IMAGE_SIZE = "1024x1024"
 DEFAULT_IMAGE_N = 1
 IMAGE_N_MIN = 1
@@ -52,6 +62,8 @@ class ModelCapabilities:
     id: str
     text_output: bool = True
     image_input: bool = False
+    file_input: bool = False
+    file_input_mime_types: tuple[str, ...] = ()
     image_output: bool = False
     search: bool = False
     tools: bool = False
@@ -67,6 +79,8 @@ class ModelCapabilities:
         capabilities = {
             "text_output": self.text_output,
             "image_input": self.image_input,
+            "file_input": self.file_input,
+            "file_input_mime_types": list(self.file_input_mime_types),
             "image_output": self.image_output,
             "search": self.search,
             "tools": self.tools,
@@ -200,6 +214,8 @@ def _text_model(
     model_id: str,
     *,
     image_input: bool = True,
+    file_input: bool = True,
+    file_input_mime_types: tuple[str, ...] = DEFAULT_FILE_INPUT_MIME_TYPES,
     search: bool = True,
     tools: bool = True,
     thinking: bool = True,
@@ -210,6 +226,8 @@ def _text_model(
         id=model_id,
         text_output=True,
         image_input=image_input,
+        file_input=file_input,
+        file_input_mime_types=file_input_mime_types if file_input else (),
         image_output=False,
         search=search,
         tools=tools,
@@ -228,6 +246,8 @@ def _image_model(
         id=model_id,
         text_output=True,
         image_input=True,
+        file_input=False,
+        file_input_mime_types=(),
         image_output=True,
         search=False,
         tools=False,
@@ -242,8 +262,8 @@ def _image_model(
 
 MODEL_CAPABILITIES: dict[str, ModelCapabilities] = {
     # Gemma 4 series
-    "gemma-4-31b-it": _text_model("gemma-4-31b-it", image_input=False),
-    "gemma-4-26b-a4b-it": _text_model("gemma-4-26b-a4b-it", image_input=False),
+    "gemma-4-31b-it": _text_model("gemma-4-31b-it", image_input=False, file_input=False),
+    "gemma-4-26b-a4b-it": _text_model("gemma-4-26b-a4b-it", image_input=False, file_input=False),
     # Gemini 3 series
     "gemini-3-flash-preview": _text_model("gemini-3-flash-preview"),
     "gemini-3.1-pro-preview": _text_model("gemini-3.1-pro-preview"),
@@ -251,7 +271,7 @@ MODEL_CAPABILITIES: dict[str, ModelCapabilities] = {
     "gemini-3.1-flash-image-preview": _image_model("gemini-3.1-flash-image-preview"),
     "gemini-3-pro-image-preview": _image_model("gemini-3-pro-image-preview", image_sizes=PRO_IMAGE_SIZES),
     "gemini-3.1-flash-live-preview": _text_model("gemini-3.1-flash-live-preview", tools=False, streaming=True),
-    "gemini-3.1-flash-tts-preview": _text_model("gemini-3.1-flash-tts-preview", image_input=False, search=False, tools=False, thinking=False, structured_output=False),
+    "gemini-3.1-flash-tts-preview": _text_model("gemini-3.1-flash-tts-preview", image_input=False, file_input=False, search=False, tools=False, thinking=False, structured_output=False),
     # Latest aliases
     "gemini-pro-latest": _text_model("gemini-pro-latest"),
     "gemini-flash-latest": _text_model("gemini-flash-latest"),
@@ -263,6 +283,8 @@ GENERIC_TEXT_CAPABILITIES = ModelCapabilities(
     id="unknown",
     text_output=True,
     image_input=True,
+    file_input=True,
+    file_input_mime_types=DEFAULT_FILE_INPUT_MIME_TYPES,
     image_output=False,
     search=True,
     tools=True,
@@ -275,6 +297,8 @@ GENERIC_IMAGE_CAPABILITIES = ModelCapabilities(
     id="unknown-image",
     text_output=True,
     image_input=True,
+    file_input=False,
+    file_input_mime_types=(),
     image_output=True,
     search=False,
     tools=False,
@@ -303,6 +327,8 @@ def get_model_capabilities(model: str, *, strict: bool = False) -> ModelCapabili
         id=model_id,
         text_output=generic.text_output,
         image_input=generic.image_input,
+        file_input=generic.file_input,
+        file_input_mime_types=generic.file_input_mime_types,
         image_output=generic.image_output,
         search=generic.search,
         tools=generic.tools,
@@ -366,12 +392,25 @@ def validate_chat_capabilities(
     uses_thinking: bool,
     stream: bool,
     uses_structured_output: bool = False,
+    has_file_input: bool = False,
+    file_input_mime_types: tuple[str, ...] = (),
 ) -> ModelCapabilities:
     capabilities = require_model_capabilities(model)
     if not capabilities.text_output:
         raise ValueError(f"Model '{model}' does not support text generation")
     if has_image_input and not capabilities.image_input:
         raise ValueError(f"Model '{model}' does not support image input")
+    if has_file_input and not capabilities.file_input:
+        raise ValueError(f"Model '{model}' does not support file input")
+    unsupported_mime_types = [
+        mime_type
+        for mime_type in file_input_mime_types
+        if not mime_type_supported(mime_type, capabilities.file_input_mime_types)
+    ]
+    if unsupported_mime_types:
+        supported = ", ".join(capabilities.file_input_mime_types) or "none"
+        rejected = ", ".join(unsupported_mime_types)
+        raise ValueError(f"Model '{model}' does not support file MIME type(s): {rejected}. Supported: {supported}")
     if uses_tools and not capabilities.tools:
         raise ValueError(f"Model '{model}' does not support tool calls")
     if uses_search and not capabilities.search:
@@ -387,3 +426,16 @@ def validate_chat_capabilities(
 
 def unsupported_generation_fields_for(model: str) -> tuple[str, ...]:
     return get_model_capabilities(model).unsupported_generation_fields
+
+
+def mime_type_supported(mime_type: str, accepted: tuple[str, ...] | list[str]) -> bool:
+    normalized = (mime_type or "application/octet-stream").strip().lower()
+    for pattern in accepted:
+        allowed = (pattern or "").strip().lower()
+        if not allowed:
+            continue
+        if allowed == "*/*" or allowed == normalized:
+            return True
+        if allowed.endswith("/*") and normalized.startswith(allowed[:-1]):
+            return True
+    return False

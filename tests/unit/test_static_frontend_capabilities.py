@@ -34,11 +34,15 @@ def test_static_frontend_exposes_image_upload_and_generation_page():
     app_js = (ROOT / "src" / "aistudio_api" / "static" / "app.js").read_text(encoding="utf-8")
     index_html = (ROOT / "src" / "aistudio_api" / "static" / "index.html").read_text(encoding="utf-8")
 
-    assert "attachChatImages($event)" in index_html
+    assert "attachChatFiles($event)" in index_html
     assert "$refs.chatFileInput.click()" in index_html
+    assert ":accept=\"chatFileAccept\"" in index_html
     assert "chatCanSend" in app_js
-    assert "image_url:{url:img.url}" in app_js
-    assert "selectedCaps.image_input" in app_js
+    assert "file.isImage?{type:'image_url'" in app_js
+    assert "{type:'file',file:{file_data:file.url,filename:file.name,mime_type:file.mime}}" in app_js
+    assert "selectedCaps.file_input" in app_js
+    assert "file_input_mime_types" in app_js
+    assert "chatFileUploadEnabled" in app_js
     assert "selectImageModel(m.id)" in index_html
     assert "x-model.number=\"imageCount\"" in index_html
     assert ":min=\"imageCountMin\"" in index_html
