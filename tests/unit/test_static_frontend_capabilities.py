@@ -79,12 +79,30 @@ def test_static_frontend_exposes_image_upload_and_generation_page():
     assert "pinSelectedHistory()" in index_html
     assert "clearImageEditSession()" in index_html
     assert "imageConversation" in app_js
+    assert "imageSessions:[]" in app_js
+    assert "activeImageSessionId" in app_js
+    assert "loadImageSessions()" in app_js
+    assert "loadImageSessions(false)" in app_js
+    assert "saveCurrentImageSession(prompt)" in app_js
+    assert "this.imagePrompt=''" in app_js
+    assert "this.imageResults=[]" in app_js
+    assert "fetchJson('/image-sessions')" in app_js
+    assert "`/image-sessions/${encodeURIComponent(this.activeImageSessionId)}`" in app_js
+    assert "restoreImageSession(session)" in app_js
+    assert "deleteImageSession(session)" in app_js
     assert "imagePreview:null" in app_js
     assert "openImagePreview(item)" in app_js
     assert "closeImagePreview()" in app_js
     assert "@click=\"openImagePreview(item)\"" in index_html
     assert "@keydown.escape.window=\"closeImagePreview()\"" in index_html
     assert "image-preview-overlay" in index_html
+    assert "会话历史" in index_html
+    assert "已保存会话" in index_html
+    assert "imageSessions.length" in index_html
+    assert "restoreImageSession(session)" in index_html
+    assert "deleteImageSession(session)" in index_html
+    assert "image-session-history" in style_css
+    assert "image-session-card" in style_css
     assert ".image-thumb img{width:100%;height:100%;object-fit:contain" in style_css
     assert ".image-preview-img{max-width:100%;max-height:100%;object-fit:contain" in style_css
     assert "编辑会话" in index_html

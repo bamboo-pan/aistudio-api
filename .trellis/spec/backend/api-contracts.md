@@ -68,3 +68,71 @@ This abuses the image path and should be rejected because `image_url` must carry
 ```
 
 This uses generic file input validation and maps to AI Studio inline data.
+
+---
+
+## Scenario: Backend-Persistent Image Session History
+
+### 1. Scope / Trigger
+
+- Trigger: the static image generation page needs server-backed conversation history that survives browser reloads and can be restored for continued image editing.
+- Applies to UI-only session history APIs under `/image-sessions` and lightweight JSON storage under the server runtime data directory.
+- This contract is separate from `/v1/images/generations` and does not change OpenAI-compatible image generation request or response shapes.
+
+### 2. Signatures
+
+- Environment key: `AISTUDIO_IMAGE_SESSIONS_DIR` optionally overrides the image session JSON storage directory.
+- Default storage: `DEFAULT_RUNTIME_DATA_DIR / "image-sessions"`.
+- `GET /image-sessions` -> `{"data": list[ImageSessionSummary]}`.
+- `POST /image-sessions` with an image session object -> full saved image session object.
+- `GET /image-sessions/{session_id}` -> full saved image session object.
+- `PUT /image-sessions/{session_id}` with an image session object -> full saved image session object.
+- `DELETE /image-sessions/{session_id}` -> `{"ok": true, "id": "<session_id>"}`.
+- Session IDs must match `^[A-Za-z0-9_-]{1,80}$`.
+
+### 3. Contracts
+
+- Session storage is backend-persistent JSON; it must not rely on browser `localStorage` for conversation recovery.
+- Session payloads are lightweight snapshots: prompt, model, size, count, response format, current results, base image, references, conversation turns, and last request when available.
+- Persisted image items must not store heavy inline image fields such as `b64` or `b64_json`; use generated image URLs/paths instead.
+- Deleting a session deletes only the session JSON record. It must not delete generated image files or the local material library.
+- Session summaries must include `id`, `title`, `created_at`, `updated_at`, `model`, `size`, `count`, `turn_count`, and `preview_url` when derivable.
+- Listing returns newest sessions first and may prune old sessions according to the store's configured max count.
+
+### 4. Validation & Error Matrix
+
+- Non-object create/update payload -> `400 bad_request` with a message mentioning the session payload must be an object.
+- Invalid `session_id` -> `400 bad_request` with a message mentioning invalid image session id.
+- Missing session on read/delete -> `404 not_found` with `image session not found`.
+- Corrupt session JSON files are ignored during list, not surfaced to the UI as a fatal list failure.
+
+### 5. Good/Base/Bad Cases
+
+- Good: UI saves a session with generated image URLs and later restores prompt, current results, base image/references, conversation, model, size, and count.
+- Base: UI creates a fresh session with no `id`; backend generates the ID and returns the full saved record.
+- Bad: UI sends `results[].b64_json`; backend strips it before writing JSON so the session store cannot grow with large inline payloads.
+
+### 6. Tests Required
+
+- Unit test that the store persists a lightweight snapshot, derives title/turn count/preview URL, and strips `b64_json`.
+- Route round-trip test for create, list, get, and delete using a temporary `settings.image_sessions_dir`.
+- Static frontend test that the image page calls `/image-sessions`, displays session history controls, restores sessions, deletes sessions, and clears the prompt after successful generation.
+- Regression coverage that `/v1/images/generations` remains unchanged.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```json
+{"results":[{"url":"/generated-images/a.png","b64_json":"<large base64>"}]}
+```
+
+This stores large inline image payloads in conversation history and duplicates generated image files.
+
+#### Correct
+
+```json
+{"results":[{"url":"/generated-images/a.png","path":"20260514/a.png"}]}
+```
+
+This keeps session history lightweight and relies on generated image persistence for the actual image bytes.

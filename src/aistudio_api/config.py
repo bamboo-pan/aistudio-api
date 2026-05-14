@@ -57,6 +57,7 @@ class Settings:
     dump_raw_response: bool = os.getenv("AISTUDIO_DUMP_RAW_RESPONSE", "0") in ("1", "true", "True")
     dump_raw_response_dir: str = os.getenv("AISTUDIO_DUMP_RAW_RESPONSE_DIR", "/tmp")
     generated_images_dir: str = os.getenv("AISTUDIO_GENERATED_IMAGES_DIR", str(DEFAULT_RUNTIME_DATA_DIR / "generated-images"))
+    image_sessions_dir: str = os.getenv("AISTUDIO_IMAGE_SESSIONS_DIR", str(DEFAULT_RUNTIME_DATA_DIR / "image-sessions"))
     generated_images_route: str = os.getenv("AISTUDIO_GENERATED_IMAGES_ROUTE", "/generated-images")
     accounts_dir: str = os.getenv("AISTUDIO_ACCOUNTS_DIR", "")
     login_camoufox_port: int = int(os.getenv("AISTUDIO_LOGIN_CAMOUFOX_PORT", "9223"))
