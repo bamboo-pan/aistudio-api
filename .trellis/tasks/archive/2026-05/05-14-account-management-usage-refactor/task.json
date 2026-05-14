@@ -3,7 +3,7 @@
   "name": "account-management-usage-refactor",
   "title": "refactor account management page and usage modes",
   "description": "",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "u1",
   "assignee": "u1",
   "createdAt": "2026-05-14",
-  "completedAt": null,
+  "completedAt": "2026-05-14",
   "branch": "feature/account-management-usage-refactor",
   "base_branch": "master",
   "worktree_path": null,
@@ -26,7 +26,7 @@
     "prd_status": "confirmed",
     "workflow": {
       "version": 1,
-      "current_step": "awaiting_commit",
+      "current_step": "ready_to_finish",
       "vcs": {
         "kind": "git",
         "commit_required": true
@@ -45,8 +45,8 @@
         "result": "updated"
       },
       "commit": {
-        "hash": null,
-        "recorded_at": null
+        "hash": "68f9d0300e5207e2011c06bdd8970ec72f612584",
+        "recorded_at": "2026-05-14T15:00:58Z"
       }
     }
   }
