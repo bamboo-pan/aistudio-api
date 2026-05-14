@@ -26,7 +26,7 @@
     "prd_status": "confirmed",
     "workflow": {
       "version": 1,
-      "current_step": "ready_to_finish",
+      "current_step": "awaiting_commit",
       "vcs": {
         "kind": "git",
         "commit_required": true
@@ -36,17 +36,17 @@
         "completed_at": "2026-05-14T14:07:13Z"
       },
       "check": {
-        "completed_at": "2026-05-14T14:07:13Z",
+        "completed_at": "2026-05-14T14:23:27Z",
         "fingerprint": "0a86079bf43825417bc9bd36946d78447e9a263c59342bc9f922929ed1dd119d",
-        "head": "c03198b055160dd20bcc80ecca046819b64df853"
+        "head": "7f8fd33abaaf8326455021a25f72d207e865df11"
       },
       "spec_update": {
         "reviewed_at": "2026-05-14T14:07:14Z",
         "result": "updated"
       },
       "commit": {
-        "hash": "766fe3ee70c22197d95d1468ebd7d821877b48b0",
-        "recorded_at": "2026-05-14T14:18:44Z"
+        "hash": null,
+        "recorded_at": null
       }
     }
   }
