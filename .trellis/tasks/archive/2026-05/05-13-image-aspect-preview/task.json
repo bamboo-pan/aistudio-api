@@ -1,0 +1,53 @@
+{
+  "id": "image-aspect-preview",
+  "name": "image-aspect-preview",
+  "title": "image generation aspect ratio preview",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "u2",
+  "assignee": "u2",
+  "createdAt": "2026-05-13",
+  "completedAt": "2026-05-14",
+  "branch": "feature/image-aspect-preview",
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "prd_status": "confirmed",
+    "workflow": {
+      "version": 1,
+      "current_step": "ready_to_finish",
+      "vcs": {
+        "kind": "git",
+        "commit_required": true
+      },
+      "implement": {
+        "dispatched_at": null,
+        "completed_at": "2026-05-13T15:31:24Z"
+      },
+      "check": {
+        "completed_at": "2026-05-13T15:31:24Z",
+        "fingerprint": "2c72836c95f99eda822b59932c9fe7ef251bd7eda5d787b5bd6221b0d7571be5",
+        "head": "cefba55dcdf982a4c44139ed4befeeeab627227a"
+      },
+      "spec_update": {
+        "reviewed_at": "2026-05-13T15:31:25Z",
+        "result": "noop"
+      },
+      "commit": {
+        "hash": "09d1dfa514409461a09bb3933d9d3f22bf61a02c",
+        "recorded_at": "2026-05-13T23:32:02Z"
+      }
+    }
+  }
+}

@@ -270,7 +270,9 @@
             <div class="image-gallery image-result-gallery" x-show="imageResults.length" x-cloak>
               <template x-for="item in imageResults" :key="item.url||item.index">
                 <div class="image-card image-result-card">
-                  <img :src="imageUrl(item)" :alt="item.prompt||'generated image'">
+                  <button type="button" class="image-thumb" @click="openImagePreview(item)" title="预览图片">
+                    <img :src="imageUrl(item)" :alt="item.prompt||'generated image'">
+                  </button>
                   <div class="image-card-body">
                     <div class="image-card-title" x-text="item.prompt"></div>
                     <div class="image-card-meta" x-text="item.model+' · '+item.size"></div>
@@ -348,7 +350,9 @@
                     <input type="checkbox" :checked="isHistorySelected(item)" @change="toggleHistorySelection(item)">
                     <span></span>
                   </label>
-                  <img :src="imageUrl(item)" :alt="item.prompt||'history image'">
+                  <button type="button" class="image-thumb" @click="openImagePreview(item)" title="预览图片">
+                    <img :src="imageUrl(item)" :alt="item.prompt||'history image'">
+                  </button>
                   <div class="image-card-body">
                     <div class="image-card-title" x-text="item.prompt"></div>
                     <div class="image-card-meta" x-text="item.model+' · '+item.size+' · '+fmtImageTime(item.created)"></div>
@@ -517,6 +521,11 @@
       </div>
     </div>
   </div>
+</div>
+
+<div class="image-preview-overlay" x-show="imagePreview" x-cloak @click="closeImagePreview()" @keydown.escape.window="closeImagePreview()">
+  <button type="button" class="image-preview-close" @click.stop="closeImagePreview()" title="关闭预览">×</button>
+  <img class="image-preview-img" :src="imagePreview?imageUrl(imagePreview):''" :alt="imagePreview&&imagePreview.prompt||'image preview'">
 </div>
 
 <div class="toast" :class="{show:toast.show}" x-text="toast.msg"></div>

@@ -33,6 +33,7 @@ def test_static_frontend_exposes_account_health_tier_controls():
 def test_static_frontend_exposes_image_upload_and_generation_page():
     app_js = (ROOT / "src" / "aistudio_api" / "static" / "app.js").read_text(encoding="utf-8")
     index_html = (ROOT / "src" / "aistudio_api" / "static" / "index.html").read_text(encoding="utf-8")
+    style_css = (ROOT / "src" / "aistudio_api" / "static" / "style.css").read_text(encoding="utf-8")
 
     assert "attachChatFiles($event)" in index_html
     assert "$refs.chatFileInput.click()" in index_html
@@ -78,6 +79,14 @@ def test_static_frontend_exposes_image_upload_and_generation_page():
     assert "pinSelectedHistory()" in index_html
     assert "clearImageEditSession()" in index_html
     assert "imageConversation" in app_js
+    assert "imagePreview:null" in app_js
+    assert "openImagePreview(item)" in app_js
+    assert "closeImagePreview()" in app_js
+    assert "@click=\"openImagePreview(item)\"" in index_html
+    assert "@keydown.escape.window=\"closeImagePreview()\"" in index_html
+    assert "image-preview-overlay" in index_html
+    assert ".image-thumb img{width:100%;height:100%;object-fit:contain" in style_css
+    assert ".image-preview-img{max-width:100%;max-height:100%;object-fit:contain" in style_css
     assert "编辑会话" in index_html
     assert "b64_json" not in app_js.split("return{id:item.id||path||url,url,path,delete_url:item.delete_url||url", 1)[1].split("}", 1)[0]
 
