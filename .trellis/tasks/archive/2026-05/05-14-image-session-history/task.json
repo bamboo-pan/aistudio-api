@@ -1,0 +1,53 @@
+{
+  "id": "image-session-history",
+  "name": "image-session-history",
+  "title": "image generation session history",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "u2",
+  "assignee": "u2",
+  "createdAt": "2026-05-14",
+  "completedAt": "2026-05-14",
+  "branch": "feature/image-session-history",
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "prd_status": "confirmed",
+    "workflow": {
+      "version": 1,
+      "current_step": "ready_to_finish",
+      "vcs": {
+        "kind": "git",
+        "commit_required": true
+      },
+      "implement": {
+        "dispatched_at": null,
+        "completed_at": "2026-05-14T14:07:13Z"
+      },
+      "check": {
+        "completed_at": "2026-05-14T14:23:27Z",
+        "fingerprint": "0a86079bf43825417bc9bd36946d78447e9a263c59342bc9f922929ed1dd119d",
+        "head": "7f8fd33abaaf8326455021a25f72d207e865df11"
+      },
+      "spec_update": {
+        "reviewed_at": "2026-05-14T14:07:14Z",
+        "result": "updated"
+      },
+      "commit": {
+        "hash": "8a66688d6aabe7db78a1f56ba595a42dfc0fe39c",
+        "recorded_at": "2026-05-14T14:24:30Z"
+      }
+    }
+  }
+}

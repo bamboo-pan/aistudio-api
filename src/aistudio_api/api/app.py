@@ -18,6 +18,7 @@ from aistudio_api.infrastructure.gateway.client import AIStudioClient
 from .routes_accounts import router as accounts_router
 from .routes_gemini import router as gemini_router
 from .routes_generated_images import register_generated_image_routes
+from .routes_image_sessions import router as image_sessions_router
 from .routes_openai import router as openai_router
 from .routes_system import router as system_router
 from .state import runtime_state
@@ -104,6 +105,7 @@ app.include_router(system_router)
 app.include_router(gemini_router)
 app.include_router(openai_router)
 app.include_router(accounts_router)
+app.include_router(image_sessions_router)
 register_generated_image_routes(app)
 
 

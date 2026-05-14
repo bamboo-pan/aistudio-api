@@ -299,6 +299,37 @@
             </div>
           </section>
 
+          <section class="image-panel image-sessions-panel">
+            <div class="image-panel-head">
+              <div>
+                <div class="image-section-label">会话历史</div>
+                <h2>已保存会话</h2>
+              </div>
+              <span class="panel-meta" x-text="imageSessionSaving?'保存中':imageSessions.length?imageSessions.length+' 个':''"></span>
+            </div>
+            <div class="notice notice-error image-session-error" x-show="imageSessionError" x-text="imageSessionError" x-cloak></div>
+            <div class="image-session-history" x-show="imageSessions.length" x-cloak>
+              <template x-for="session in imageSessions" :key="session.id">
+                <div class="image-session-card" :class="{active:activeImageSessionId===session.id}">
+                  <button type="button" class="image-session-main" :disabled="imageBusy" @click="restoreImageSession(session)">
+                    <div class="image-session-preview" :class="{'is-empty':!session.preview_url}">
+                      <img x-show="session.preview_url" :src="session.preview_url" :alt="session.title||'session preview'">
+                      <span x-show="!session.preview_url">IMG</span>
+                    </div>
+                    <div class="image-session-copy">
+                      <div class="image-session-title" x-text="session.title"></div>
+                      <div class="image-session-meta" x-text="imageSessionMeta(session)"></div>
+                      <div class="image-session-time" x-text="fmtImageTime(session.updated_at)"></div>
+                    </div>
+                  </button>
+                  <button class="btn btn-sm btn-danger-outline" :disabled="imageSessionDeletingId===session.id" @click="deleteImageSession(session)" x-text="imageSessionDeletingId===session.id?'删除中':'删除'"></button>
+                </div>
+              </template>
+            </div>
+            <div class="image-empty image-compact-empty" x-show="!imageSessions.length&&!imageSessionLoading">生成成功后会自动保存到后端会话历史。</div>
+            <div class="image-empty image-compact-empty" x-show="imageSessionLoading">正在加载会话历史...</div>
+          </section>
+
           <section class="image-panel image-session-panel">
             <div class="image-panel-head">
               <div>
