@@ -28,16 +28,28 @@ class RuntimeState:
                 "prompt_tokens": 0,
                 "completion_tokens": 0,
                 "total_tokens": 0,
+                "image_sizes": {},
                 "last_used": None,
             }
         )
     )
 
-    def record(self, model: str, event: str, usage: dict | None = None):
+    def record(
+        self,
+        model: str,
+        event: str,
+        usage: dict | None = None,
+        *,
+        image_size: str | None = None,
+        image_count: int = 1,
+    ):
         stats = self.model_stats[model]
         stats["requests"] += 1
         stats[event] += 1
         stats["last_used"] = datetime.now(timezone(timedelta(hours=8))).isoformat()
+        if event == "success" and image_size:
+            image_sizes = stats.setdefault("image_sizes", {})
+            image_sizes[image_size] = image_sizes.get(image_size, 0) + max(1, image_count)
         if usage and event == "success":
             pt = usage.get("prompt_tokens", 0)
             ct = usage.get("completion_tokens", 0)

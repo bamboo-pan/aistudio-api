@@ -24,7 +24,7 @@ async def stats():
 # ========== 轮询管理 API ==========
 
 class RotationModeRequest(BaseModel):
-    mode: str  # round_robin, lru, least_rl
+    mode: str  # round_robin, lru, least_rl, exhaustion
     cooldown_seconds: int | None = None
 
 
@@ -64,7 +64,7 @@ async def set_rotation_mode(
             "cooldown_seconds": rotator.cooldown_seconds,
         }
     except ValueError:
-        raise HTTPException(400, detail=f"无效的轮询模式: {req.mode}，可选: round_robin, lru, least_rl")
+        raise HTTPException(400, detail=f"无效的轮询模式: {req.mode}，可选: round_robin, lru, least_rl, exhaustion")
 
 
 @router.get("/rotation/accounts")
@@ -85,7 +85,8 @@ async def force_next_account(runtime_state=Depends(get_runtime_state)):
         raise HTTPException(503, detail="轮询器未初始化")
 
     # 获取下一个账号
-    next_account = await rotator.get_next_account()
+    active = runtime_state.account_service.get_active_account() if runtime_state.account_service else None
+    next_account = await rotator.get_next_account(exclude_account_id=active.id if active else None)
     if next_account is None:
         raise HTTPException(404, detail="没有可用的账号")
 

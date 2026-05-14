@@ -473,14 +473,20 @@ def health_response() -> dict:
 
 def stats_response() -> dict:
     stats = dict(runtime_state.model_stats)
+    image_sizes: dict[str, int] = {}
+    for value in stats.values():
+        for size, count in (value.get("image_sizes") or {}).items():
+            image_sizes[size] = image_sizes.get(size, 0) + count
     totals = {
-        "requests": sum(s["requests"] for s in stats.values()),
-        "success": sum(s["success"] for s in stats.values()),
-        "rate_limited": sum(s["rate_limited"] for s in stats.values()),
-        "errors": sum(s["errors"] for s in stats.values()),
-        "prompt_tokens": sum(s["prompt_tokens"] for s in stats.values()),
-        "completion_tokens": sum(s["completion_tokens"] for s in stats.values()),
-        "total_tokens": sum(s["total_tokens"] for s in stats.values()),
+        "requests": sum(s.get("requests", 0) for s in stats.values()),
+        "success": sum(s.get("success", 0) for s in stats.values()),
+        "rate_limited": sum(s.get("rate_limited", 0) for s in stats.values()),
+        "errors": sum(s.get("errors", 0) for s in stats.values()),
+        "prompt_tokens": sum(s.get("prompt_tokens", 0) for s in stats.values()),
+        "completion_tokens": sum(s.get("completion_tokens", 0) for s in stats.values()),
+        "total_tokens": sum(s.get("total_tokens", 0) for s in stats.values()),
+        "image_sizes": image_sizes,
+        "image_total": sum(image_sizes.values()),
     }
     return {"models": stats, "totals": totals}
 
@@ -1173,9 +1179,9 @@ async def handle_image_generation(req: ImageRequest, client: AIStudioClient):
                     if rotator:
                         account = runtime_state.account_service.get_active_account() if runtime_state.account_service else None
                         if account:
-                            rotator.record_success(account.id)
+                            rotator.record_success(account.id, image_size=image_plan.size, image_count=len(items))
 
-                    runtime_state.record(image_plan.model, "success", usage_total)
+                    runtime_state.record(image_plan.model, "success", usage_total, image_size=image_plan.size, image_count=len(items))
                     return {"created": created, "data": _format_image_items(items, response_format)}
                 except UsageLimitExceeded as exc:
                     _cleanup_persisted_image_items(image_store, items)

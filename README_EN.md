@@ -175,7 +175,7 @@ Environment variables or `.env` file:
 | `AISTUDIO_TIMEOUT_REPLAY` | `120` | Request timeout (seconds) |
 | `AISTUDIO_TIMEOUT_STREAM` | `120` | Stream timeout (seconds) |
 | `AISTUDIO_SNAPSHOT_CACHE_TTL` | `3600` | BotGuard snapshot cache TTL |
-| `AISTUDIO_ACCOUNT_ROTATION_MODE` | `round_robin` | `round_robin`, `lru`, or `least_rl` |
+| `AISTUDIO_ACCOUNT_ROTATION_MODE` | `round_robin` | `round_robin`, `lru`, `least_rl`, or `exhaustion` |
 | `AISTUDIO_ACCOUNT_COOLDOWN_SECONDS` | `60` | Cooldown after rate limit |
 | `AISTUDIO_USE_PURE_HTTP` | `0` | Pure HTTP mode (no browser) |
 | `AISTUDIO_DUMP_RAW_RESPONSE` | `0` | Dump raw responses to disk |
@@ -239,6 +239,7 @@ Rotation modes:
 - `round_robin` — cycle through accounts
 - `lru` — least recently used
 - `least_rl` — least rate-limited
+- `exhaustion` — keep using the active account until quota exhaustion, rate limit, or account unavailability
 
 ### Credential Import / Export
 

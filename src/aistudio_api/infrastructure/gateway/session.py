@@ -146,6 +146,9 @@ class BrowserSession:
     async def switch_auth(self, auth_file: str | None) -> None:
         await self._run_sync(self._switch_auth_sync, auth_file)
 
+    async def detect_tier_for_auth_file(self, auth_file: str, timeout_ms: int = 30000):
+        return await self._run_sync(self._detect_tier_for_auth_file_sync, auth_file, timeout_ms)
+
     async def ensure_hook_page(self):
         await self._run_sync(self._ensure_hook_page_sync)
         return True
@@ -444,6 +447,20 @@ class BrowserSession:
                         "Activate an account or complete login again before browser preheat/capture."
                     ) from fallback_exc
         return self._browser.new_context()
+
+    def _detect_tier_for_auth_file_sync(self, auth_file: str, timeout_ms: int = 30000):
+        from aistudio_api.infrastructure.account.tier_detector import detect_tier_sync
+
+        self._ensure_browser_sync()
+        try:
+            ctx = self._browser.new_context(storage_state=auth_file)
+        except Exception:
+            ctx = self._browser.new_context()
+            self._apply_storage_state_sync(ctx, auth_file)
+        try:
+            return detect_tier_sync(ctx, timeout_ms=timeout_ms)
+        finally:
+            ctx.close()
 
     def _apply_storage_state_sync(self, ctx, auth_file: str) -> None:
         data = json.loads(Path(auth_file).read_text())

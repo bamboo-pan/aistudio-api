@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from pathlib import Path
+from typing import Any, Awaitable, Callable
 
 from aistudio_api.infrastructure.account.account_store import AccountStore, AccountMeta
 from aistudio_api.infrastructure.account.login_service import LoginService, LoginSession
@@ -106,6 +107,60 @@ class AccountService:
     def test_account(self, account_id: str) -> dict[str, Any] | None:
         """执行不会发送外部请求的账号健康检查。"""
         return self._store.test_account_health(account_id)
+
+    async def test_account_with_tier(
+        self,
+        account_id: str,
+        *,
+        tier_detector: Callable[[Path], Awaitable[Any]] | None = None,
+    ) -> dict[str, Any] | None:
+        """执行账号健康检查，并在可用时刷新订阅等级。"""
+        result = self._store.test_account_health(account_id)
+        if result is None or not result.get("ok"):
+            return result
+
+        auth_path = self._store.get_auth_path(account_id)
+        if auth_path is None or tier_detector is None:
+            return result
+
+        try:
+            tier_result = await tier_detector(auth_path)
+        except Exception as exc:
+            logger.warning("账号等级检测失败: %s", exc)
+            account = self._store.set_account_health(
+                account_id,
+                "healthy",
+                f"storage state is readable; tier detection unavailable: {exc}",
+            )
+            if account is None:
+                return result
+            return {
+                "ok": True,
+                "account": account.to_dict(),
+                "status": account.health_status,
+                "reason": account.health_reason,
+                "tier": account.tier,
+                "last_health_check": account.last_health_check,
+                "isolated_until": account.isolated_until,
+            }
+
+        account = self._store.update_account(account_id, tier=tier_result.tier.value)
+        if account is None:
+            return result
+        account = self._store.set_account_health(
+            account_id,
+            "healthy",
+            f"storage state is readable; detected {tier_result.tier.value} tier",
+        ) or account
+        return {
+            "ok": True,
+            "account": account.to_dict(),
+            "status": account.health_status,
+            "reason": account.health_reason,
+            "tier": account.tier,
+            "last_health_check": account.last_health_check,
+            "isolated_until": account.isolated_until,
+        }
 
     def isolate_account(self, account_id: str, reason: str, seconds: int | None = None) -> AccountMeta | None:
         """隔离账号，供轮询器在连续失败时调用。"""

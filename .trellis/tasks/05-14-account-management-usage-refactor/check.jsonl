@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend guideline index for final compliance review."}
+{"file":".trellis/spec/backend/api-contracts.md","reason":"Verify response compatibility and sanitized API behavior."}
+{"file":".trellis/spec/guides/index.md","reason":"Shared verification prompts for cross-layer and reuse issues."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check data flow from recorders through APIs to frontend."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Check new helpers follow existing patterns and avoid duplicate behavior."}
