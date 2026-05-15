@@ -3,5 +3,5 @@
 1. 开始前先确认工作区状态：`git status`。如果存在非本次任务改动，直接撤销。
 2. 在 `master` 上同步远端最新代码：`git fetch` 后执行 `git pull --ff-only origin master`。
 3. 从最新 `master` 根据任务新建 feature 分支。
-3. 完成后再运行 `/finish-work`收尾
+3. 完成后再运行 `/finish-work`收尾,不用再找用户确认commit信息
 5. 确认最终状态无误后，将分支推送到远端，确保工作区干净
