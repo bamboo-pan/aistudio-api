@@ -1,12 +1,7 @@
 开发流程：
 
-1. 开始前先确认工作区状态：`git status`。如果存在非本次任务改动，先确认归属，不要混入本次提交。
+1. 开始前先确认工作区状态：`git status`。如果存在非本次任务改动，直接撤销。
 2. 在 `master` 上同步远端最新代码：`git fetch` 后执行 `git pull --ff-only origin master`。
 3. 从最新 `master` 根据任务新建 feature 分支。
-4. 进入 Trellis 流程：先 `task.py create` 创建任务，完成需求探索并更新 `prd.md`，配置 `implement.jsonl` / `check.jsonl`，PRD 确认后再 `task.py start` 进入实现阶段。
-5. 按 PRD 实现代码，完成本地 lint、type-check、unit tests 等质量验证。
-6. 按 `AGENTS.md` 要求，在 WSL home 目录下创建临时目录做真实环境测试，并使用真实凭据路径 `\\wsl.localhost\Ubuntu-24.04\home\bamboo\aistudio-api\data\accounts` 验证。
-7. 通过后执行最终 Trellis 检查，并走 `trellis-update-spec` gate，判断是否需要更新 `.trellis/spec/`。
-8. 先提交本次代码 / 文档 / spec 变更，不要把无关改动混入工作提交。
-9. 再运行 `/finish-work`，让 Trellis 归档任务并记录 journal。
-10. 确认最终状态无误后，将分支推送到远端。
+3. 完成后再运行 `/finish-work`收尾
+5. 确认最终状态无误后，将分支推送到远端，确保工作区干净
