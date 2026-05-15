@@ -54,14 +54,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Ar
 .scroll-area{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
 .page-pad{max-width:1024px;width:100%;margin:0 auto;padding:32px 24px 80px}
 
-.stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:32px}
-.account-summary{margin-bottom:20px}
-.stat-card{background:var(--bg-alt);border:1px solid var(--border);border-radius:12px;padding:16px;display:flex;flex-direction:column;justify-content:center;min-height:90px}
-.stat-card .slabel{font-size:13px;color:var(--muted);margin-bottom:4px;font-weight:500}
-.stat-card .sval{font-size:20px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;line-height:1.2}
-.stat-card .sval-amber{color:var(--amber)}
-.card{border:1px solid var(--border);border-radius:12px;margin-bottom:24px;background:#fff;position:relative}
-.card-head{padding:16px 20px;border-bottom:1px solid var(--border);font-weight:600;font-size:15px;display:flex;align-items:center;justify-content:space-between;border-radius:12px 12px 0 0}
 table{width:100%;border-collapse:collapse}
 th,td{text-align:left;padding:12px 16px;font-size:14px;border-bottom:1px solid var(--border)}
 th{color:var(--muted);font-weight:500;font-size:13px}
@@ -125,6 +117,11 @@ select.sel:focus,.sel:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(
 .usage-bar span{font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .usage-bar strong{font-size:14px;color:var(--green)}
 .account-empty{padding:28px 16px;color:var(--muted);font-size:13px;text-align:center}
+.model-stats-head{align-items:center}
+.model-stat-pills{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.model-stat-pills span{display:inline-flex;align-items:baseline;gap:5px;border:1px solid var(--border);border-radius:999px;background:var(--bg-alt);padding:5px 10px;font-size:12px;color:var(--muted);font-weight:650;white-space:nowrap}
+.model-stat-pills strong{font-size:14px;color:var(--text);font-weight:760}
+.model-stats-panel .table-wrap table{min-width:860px}
 .account-table-panel .table-wrap table{min-width:1060px}
 .tier-cell{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .tier-note{border-radius:999px;background:#eff6ff;color:#1e40af;padding:3px 7px;font-size:11px;font-weight:700}
@@ -365,7 +362,6 @@ select.sel:focus,.sel:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(
   .overlay.open{display:block}
   .mh-btn{display:block}
   .topbar .sel{max-width:150px;font-size:12px}
-  .stat-grid{grid-template-columns:1fr}
   .cfg-dropdown{width:calc(100vw - 32px);right:-8px}
   .account-pad{padding:20px 14px 64px}
   .account-hero{align-items:flex-start;flex-direction:column}
@@ -381,6 +377,8 @@ select.sel:focus,.sel:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(
   .rotation-footer{padding:12px;align-items:stretch}
   .rotation-footer .btn{width:100%;justify-content:center}
   .account-panel-head{padding:14px}
+  .model-stats-head{align-items:flex-start;flex-direction:column}
+  .model-stat-pills{justify-content:flex-start}
   .usage-bars{padding:12px}
   .compact-credentials{padding:14px}
   .msg-inner{padding:0 16px}

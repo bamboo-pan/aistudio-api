@@ -162,6 +162,7 @@ This keeps session history lightweight and relies on generated image persistence
 - `image_sizes` counts generated image items, not API requests. A successful request for `n=2` at `1024x1024` increments that resolution by 2.
 - Image usage counters are added only after successful image generation. Validation failures, upstream errors, and rate limits must not increment image usage.
 - Stats are backward-compatible: existing counters remain present and new `image_sizes` / `image_total` fields are additive.
+- Account management is the UI home for runtime operations data: it must expose account/rotation stats and model-level `/stats` visibility rather than splitting model stats into a separate dashboard page.
 - Account tier checks must not return credential payloads, cookies, raw storage state, or raw page header diagnostics in API responses.
 
 ### 4. Validation & Error Matrix
@@ -187,7 +188,7 @@ This keeps session history lightweight and relies on generated image persistence
 - Unit test that force-next selection can exclude the active account.
 - Unit tests for account and model `image_sizes` / `image_total` aggregation.
 - Unit test that tier-aware account check can update a Free account to Pro/Ultra without leaking credentials.
-- Static frontend tests that account management exposes `exhaustion` and resolution usage UI.
+- Static frontend tests that account management exposes `exhaustion`, resolution usage UI, model-level `/stats` totals/table, and no standalone dashboard navigation entry.
 - WSL smoke test against the real accounts directory to verify account registry loading and stats shape.
 
 ### 7. Wrong vs Correct

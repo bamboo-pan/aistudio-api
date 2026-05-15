@@ -13,8 +13,8 @@ function app(){return{
   toast:{show:false,msg:'',t:null},
 
   init(){this.loadImageHistory();this.loadImageSessions();this.applyRouteHash();this.loadModels();this.loadStats();this.loadAccounts();this.loadRotation();window.addEventListener('hashchange',()=>this.applyRouteHash());document.addEventListener('click',()=>this.closeSelect());document.addEventListener('keydown',(event)=>this.handleSelectKeydown(event))},
-  applyRouteHash(){const route=(window.location.hash||'').replace('#','');if(['chat','images','dashboard','accounts'].includes(route))this.go(route,{syncHash:false})},
-  go(v,opts={}){this.view=v;this.sidebarOpen=false;if(opts.syncHash!==false&&window.location.hash!==`#${v}`)window.location.hash=v;if(v==='dashboard')this.loadStats();if(v==='accounts'){this.loadAccounts();this.loadRotation()}if(v==='images'){this.ensureImageDefaults();this.loadImageSessions(false)}},
+  applyRouteHash(){const route=(window.location.hash||'').replace('#','');if(route==='dashboard'){this.go('accounts');return}if(['chat','images','accounts'].includes(route))this.go(route,{syncHash:false})},
+  go(v,opts={}){this.view=v;this.sidebarOpen=false;if(opts.syncHash!==false&&window.location.hash!==`#${v}`)window.location.hash=v;if(v==='accounts'){this.loadAccounts();this.loadRotation();this.loadStats()}if(v==='images'){this.ensureImageDefaults();this.loadImageSessions(false)}},
   showToast(m){this.toast.msg=m;this.toast.show=true;if(this.toast.t)clearTimeout(this.toast.t);this.toast.t=setTimeout(()=>this.toast.show=false,3000)},
   closeSelect(root=null){this.openSelect=null;this.clearSelectHighlights(root)},
   toggleSelect(k,e){e.stopPropagation();const root=e.currentTarget?.closest('.cselect');const opening=this.openSelect!==k;this.openSelect=opening?k:null;if(opening)this.queueSelectHighlight(root);else this.clearSelectHighlights(root)},

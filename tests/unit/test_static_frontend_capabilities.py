@@ -43,10 +43,18 @@ def test_static_frontend_exposes_exhaustion_mode_and_resolution_usage():
     assert "imageSizeEntries(a)" in index_html
     assert "accountImageSizeTotals" in app_js
     assert "statsTotals" in app_js
+    assert "model-stats-panel" in index_html
+    assert "totalReqs" in index_html
+    assert "totalRL" in index_html
+    assert "go('dashboard')" not in index_html
+    assert "view==='dashboard'" not in index_html
+    assert "if(route==='dashboard'){this.go('accounts');return}" in app_js
+    assert "['chat','images','dashboard','accounts']" not in app_js
     assert "image_sizes" in app_js
     assert "resolution-chip" in index_html
     assert ".rotation-option.active" in style_css
     assert ".resolution-chip" in style_css
+    assert ".model-stats-panel" in style_css
 
 
 def test_static_frontend_exposes_image_upload_and_generation_page():
