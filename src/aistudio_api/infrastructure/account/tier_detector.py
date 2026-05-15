@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 import urllib.request
 from dataclasses import dataclass
 from enum import Enum
@@ -12,6 +13,50 @@ from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger("aistudio.premium_detect")
+
+
+TIER_DETECT_JS = r"""() => {
+    const body = document.body.innerText.toLowerCase();
+
+    const headerEls = document.querySelectorAll('header, [role="banner"], nav');
+    let headerText = '';
+    headerEls.forEach(el => {
+        const t = el.innerText.trim();
+        if (t && t.length < 1000) headerText += t + '\n';
+    });
+
+    const emailMatch = headerText.match(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/i);
+    const email = emailMatch ? emailMatch[0] : null;
+    const lines = headerText.split('\n').map(l => l.trim()).filter(Boolean);
+    let tier = 'free';
+
+    if (email) {
+        const emailIdx = lines.findIndex(l => l.includes(email));
+        if (emailIdx >= 0) {
+            for (let i = Math.max(0, emailIdx - 1); i <= Math.min(lines.length - 1, emailIdx + 2); i++) {
+                const line = lines[i].toUpperCase().trim();
+                if (line === 'PRO' || line === 'AI PRO') {
+                    tier = 'pro';
+                    break;
+                }
+                if (line === 'ULTRA' || line === 'AI ULTRA') {
+                    tier = 'ultra';
+                    break;
+                }
+            }
+        }
+    }
+
+    if (tier === 'free' && (body.includes('upgrade to unlock') || body.includes('upgrade to get'))) {
+        tier = 'free';
+    }
+
+    return {
+        tier: tier,
+        email: email,
+        header: headerText.substring(0, 500),
+    };
+}"""
 
 
 class AccountTier(str, Enum):
@@ -57,60 +102,7 @@ async def detect_tier(
         )
         await asyncio.sleep(2)
 
-        result = await page.evaluate("""() => {
-            const body = document.body.innerText.toLowerCase();
-
-            // Strategy 1: Check header for PRO/ULTRA badge next to email
-            const headerEls = document.querySelectorAll('header, [role="banner"], nav');
-            let headerText = '';
-            headerEls.forEach(el => {
-                const t = el.innerText.trim();
-                if (t && t.length < 1000) headerText += t + '\\n';
-            });
-
-            // Find email in header
-            const emailMatch = headerText.match(/[\\w.+-]+@[\\w.-]+\\.[a-z]{2,}/i);
-            const email = emailMatch ? emailMatch[0] : null;
-
-            // Check for tier badges
-            const lines = headerText.split('\\n').map(l => l.trim()).filter(Boolean);
-            let tier = 'free';
-
-            // Look for PRO or ULTRA on the line after (or near) the email
-            if (email) {
-                const emailIdx = lines.findIndex(l => l.includes(email));
-                if (emailIdx >= 0) {
-                    // Check nearby lines (within 2 lines) for tier badge
-                    for (let i = Math.max(0, emailIdx - 1); i <= Math.min(lines.length - 1, emailIdx + 2); i++) {
-                        const line = lines[i].toUpperCase().trim();
-                        if (line === 'PRO' || line === 'AI PRO') {
-                            tier = 'pro';
-                            break;
-                        }
-                        if (line === 'ULTRA' || line === 'AI ULTRA') {
-                            tier = 'ultra';
-                            break;
-                        }
-                    }
-                }
-            }
-
-            // Strategy 2: "Upgrade to unlock more" banner = definitely free
-            if (tier === 'free' && (body.includes('upgrade to unlock') || body.includes('upgrade to get'))) {
-                tier = 'free';  // confirm free
-            }
-
-            // Strategy 3: Fallback — check full page for PRO/ULTRA badge
-            // Only if header didn't give us a clear answer
-            // (Be careful: "pro" appears in many contexts like "prompt", "process", etc.)
-            // The header badge is the most reliable signal.
-
-            return {
-                tier: tier,
-                email: email,
-                header: headerText.substring(0, 500),
-            };
-        }""")
+        result = await page.evaluate(TIER_DETECT_JS)
 
         return TierResult(
             tier=AccountTier(result["tier"]),
@@ -119,6 +111,26 @@ async def detect_tier(
         )
     finally:
         await page.close()
+
+
+def detect_tier_sync(browser_context, timeout_ms: int = 30000) -> TierResult:
+    """Synchronous variant for the sync Camoufox context used by BrowserSession."""
+    page = browser_context.new_page()
+    try:
+        page.goto(
+            "https://aistudio.google.com/",
+            wait_until="networkidle",
+            timeout=timeout_ms,
+        )
+        time.sleep(2)
+        result = page.evaluate(TIER_DETECT_JS)
+        return TierResult(
+            tier=AccountTier(result["tier"]),
+            email=result.get("email"),
+            raw_header=result.get("header"),
+        )
+    finally:
+        page.close()
 
 
 async def detect_tier_for_auth_file(

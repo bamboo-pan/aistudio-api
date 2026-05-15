@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend guideline index and pre-development checklist for API/service changes."}
+{"file":".trellis/spec/backend/api-contracts.md","reason":"API contract style for request/response compatibility and frontend/backend boundaries."}
+{"file":".trellis/spec/guides/index.md","reason":"Shared thinking triggers for cross-layer and reuse concerns."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Feature spans backend stats, account services, APIs, and frontend display."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Rotation modes, tier detection, and stats should extend existing helpers instead of duplicating logic."}

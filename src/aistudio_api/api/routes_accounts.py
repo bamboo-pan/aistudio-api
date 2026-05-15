@@ -269,9 +269,19 @@ async def activate_account(
 async def test_account(
     account_id: str,
     account_service=Depends(get_account_service),
+    runtime_state=Depends(get_runtime_state),
 ):
     """执行非破坏性的账号健康检查。"""
-    result = account_service.test_account(account_id)
+    session = getattr(runtime_state.client, "_session", None) if runtime_state.client is not None else None
+    tier_detector = None
+    if session is not None and hasattr(session, "detect_tier_for_auth_file"):
+        async def tier_detector(auth_path):
+            return await session.detect_tier_for_auth_file(str(auth_path))
+
+    result = await account_service.test_account_with_tier(
+        account_id,
+        tier_detector=tier_detector,
+    )
     if result is None:
         raise HTTPException(status_code=404, detail=_error_detail("账号不存在", "not_found"))
     return _to_health_response(result)

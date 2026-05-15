@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -17,6 +18,7 @@ from aistudio_api.application.api_service import handle_image_generation
 from aistudio_api.domain.models import Candidate, GeneratedImage, ModelOutput
 from aistudio_api.infrastructure.account.account_store import AccountStore
 from aistudio_api.infrastructure.account.login_service import LoginService
+from aistudio_api.infrastructure.account.tier_detector import AccountTier, TierResult
 
 
 def storage_state(cookie_name="sid", cookie_value="1", domain=".google.com", expires=None, email=None):
@@ -112,6 +114,25 @@ def test_account_health_route_returns_sanitized_status_payload(tmp_path):
     assert "synthetic-secret" not in body_text
 
 
+def test_account_tier_check_can_update_free_account_to_pro(tmp_path):
+    store = AccountStore(accounts_dir=tmp_path)
+    account = store.save_account("main", None, storage_state(cookie_value="synthetic-secret", email="route@example.com"), tier="free")
+    service = AccountService(store, LoginService())
+
+    async def fake_detector(auth_path):
+        assert auth_path == tmp_path / account.id / "auth.json"
+        return TierResult(tier=AccountTier.PRO, email="route@example.com", raw_header="route@example.com\nPRO")
+
+    result = asyncio.run(service.test_account_with_tier(account.id, tier_detector=fake_detector))
+
+    body_text = json.dumps(result).lower()
+    assert result["ok"] is True
+    assert result["tier"] == "pro"
+    assert store.get_account(account.id).tier == "pro"
+    assert '"cookies"' not in body_text
+    assert "synthetic-secret" not in body_text
+
+
 def test_account_update_route_accepts_tier_and_rejects_unknown_tier(tmp_path):
     store = AccountStore(accounts_dir=tmp_path)
     account = store.save_account("main", None, storage_state())
@@ -186,6 +207,46 @@ def test_lru_selection_prefers_never_used_accounts(tmp_path):
     picked = asyncio.run(rotator.get_next_account("gemini-3-flash-preview"))
 
     assert picked.id == unused.id
+
+
+def test_exhaustion_selection_keeps_active_account_until_rate_limited(tmp_path):
+    store = AccountStore(accounts_dir=tmp_path)
+    active = store.save_account("active", None, storage_state(cookie_name="sid1"))
+    standby = store.save_account("standby", None, storage_state(cookie_name="sid2"), activate=False)
+    rotator = AccountRotator(store, mode=RotationMode.EXHAUSTION, cooldown_seconds=30)
+
+    first = asyncio.run(rotator.get_next_account("gemini-3-flash-preview"))
+    second = asyncio.run(rotator.get_next_account("gemini-3-flash-preview"))
+    rotator.record_rate_limited(active.id)
+    after_limit = asyncio.run(rotator.get_next_account("gemini-3-flash-preview"))
+
+    assert first.id == active.id
+    assert second.id == active.id
+    assert after_limit.id == standby.id
+
+
+def test_force_next_can_exclude_active_account_in_exhaustion_mode(tmp_path):
+    store = AccountStore(accounts_dir=tmp_path)
+    active = store.save_account("active", None, storage_state(cookie_name="sid1"))
+    standby = store.save_account("standby", None, storage_state(cookie_name="sid2"), activate=False)
+    rotator = AccountRotator(store, mode=RotationMode.EXHAUSTION)
+
+    picked = asyncio.run(rotator.get_next_account(exclude_account_id=active.id))
+
+    assert picked.id == standby.id
+
+
+def test_account_stats_track_image_usage_by_resolution(tmp_path):
+    store = AccountStore(accounts_dir=tmp_path)
+    account = store.save_account("main", None, storage_state())
+    rotator = AccountRotator(store)
+
+    rotator.record_success(account.id, image_size="1024x1024", image_count=2)
+    rotator.record_success(account.id, image_size="1024x1792", image_count=1)
+    stats = rotator.get_all_stats()[account.id]
+
+    assert stats["image_sizes"] == {"1024x1024": 2, "1024x1792": 1}
+    assert stats["image_total"] == 3
 
 
 class FakeImageClient:
@@ -269,3 +330,30 @@ def test_image_generation_switches_from_free_active_account_to_available_premium
     assert snapshot_cache.clear_calls == 1
     assert len(client.calls) == 1
     assert response["data"][0]["b64_json"]
+
+
+def test_image_generation_records_resolution_usage(tmp_path):
+    store = AccountStore(accounts_dir=tmp_path)
+    pro = store.save_account("pro", None, storage_state(cookie_name="sid1"), tier="pro")
+    account_service = AccountService(store, LoginService())
+    rotator = AccountRotator(store)
+    browser_session = FakeBrowserSession()
+    snapshot_cache = FakeSnapshotCache()
+    client = FakeImageClient()
+
+    response = run_with_account_runtime(
+        handle_image_generation(
+            ImageRequest(prompt="draw", model="gemini-3.1-flash-image-preview", size="1024x1024", n=1),
+            client,
+        ),
+        account_service=account_service,
+        rotator=rotator,
+        browser_session=browser_session,
+        snapshot_cache=snapshot_cache,
+        generated_images_dir=tmp_path / "generated-images",
+    )
+
+    stats = rotator.get_all_stats()[pro.id]
+    assert response["data"][0]["b64_json"]
+    assert stats["image_sizes"] == {"1024x1024": 1}
+    assert stats["image_total"] == 1

@@ -162,7 +162,7 @@ python3 main.py client "画一只猫" --image --save cat.png
 | `AISTUDIO_TIMEOUT_REPLAY` | `120` | 请求超时（秒） |
 | `AISTUDIO_TIMEOUT_STREAM` | `120` | 流式超时（秒） |
 | `AISTUDIO_SNAPSHOT_CACHE_TTL` | `3600` | BotGuard snapshot 缓存时间 |
-| `AISTUDIO_ACCOUNT_ROTATION_MODE` | `round_robin` | 轮询模式：`round_robin`、`lru`、`least_rl` |
+| `AISTUDIO_ACCOUNT_ROTATION_MODE` | `round_robin` | 轮询模式：`round_robin`、`lru`、`least_rl`、`exhaustion` |
 | `AISTUDIO_ACCOUNT_COOLDOWN_SECONDS` | `60` | 限流后冷却时间 |
 | `AISTUDIO_USE_PURE_HTTP` | `0` | 纯 HTTP 模式（不用浏览器） |
 | `AISTUDIO_DUMP_RAW_RESPONSE` | `0` | 保存原始响应到磁盘 |
@@ -226,6 +226,7 @@ AISTUDIO_ACCOUNT_ROTATION_MODE=round_robin python3 main.py server
 - `round_robin` — 轮流使用
 - `lru` — 最久未使用
 - `least_rl` — 最少被限流
+- `exhaustion` — 持续使用当前账号，直到额度耗尽、限流或账号不可用再切换
 
 ### 凭证导入 / 导出
 

@@ -26,8 +26,27 @@ def test_static_frontend_exposes_account_health_tier_controls():
     assert "updateTier(a,v)" in index_html
     assert "healthLabel(a.health_status)" in index_html
     assert "tierLabel(a.tier)" in index_html
+    assert "testAccount(a)" in app_js
     assert "/test`" in app_js
     assert "updateTier(a,tier)" in app_js
+
+
+def test_static_frontend_exposes_exhaustion_mode_and_resolution_usage():
+    app_js = (ROOT / "src" / "aistudio_api" / "static" / "app.js").read_text(encoding="utf-8")
+    index_html = (ROOT / "src" / "aistudio_api" / "static" / "index.html").read_text(encoding="utf-8")
+    style_css = (ROOT / "src" / "aistudio_api" / "static" / "style.css").read_text(encoding="utf-8")
+
+    assert "exhaustion" in app_js
+    assert "耗尽模式" in app_js
+    assert "['exhaustion','round_robin','lru','least_rl']" in index_html
+    assert "rotationHint(rotCfg.mode)" in index_html
+    assert "imageSizeEntries(a)" in index_html
+    assert "accountImageSizeTotals" in app_js
+    assert "statsTotals" in app_js
+    assert "image_sizes" in app_js
+    assert "resolution-chip" in index_html
+    assert ".rotation-option.active" in style_css
+    assert ".resolution-chip" in style_css
 
 
 def test_static_frontend_exposes_image_upload_and_generation_page():

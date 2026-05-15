@@ -1,0 +1,53 @@
+{
+  "id": "account-management-usage-refactor",
+  "name": "account-management-usage-refactor",
+  "title": "refactor account management page and usage modes",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "u1",
+  "assignee": "u1",
+  "createdAt": "2026-05-14",
+  "completedAt": "2026-05-14",
+  "branch": "feature/account-management-usage-refactor",
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "prd_status": "confirmed",
+    "workflow": {
+      "version": 1,
+      "current_step": "ready_to_finish",
+      "vcs": {
+        "kind": "git",
+        "commit_required": true
+      },
+      "implement": {
+        "dispatched_at": null,
+        "completed_at": "2026-05-14T14:57:53Z"
+      },
+      "check": {
+        "completed_at": "2026-05-14T14:57:53Z",
+        "fingerprint": "68fb19d1a3a0f16eb95bebeef014ad891c800820e2d0f23609559f71ce7e5d7a",
+        "head": "c03198b055160dd20bcc80ecca046819b64df853"
+      },
+      "spec_update": {
+        "reviewed_at": "2026-05-14T14:57:54Z",
+        "result": "updated"
+      },
+      "commit": {
+        "hash": "68f9d0300e5207e2011c06bdd8970ec72f612584",
+        "recorded_at": "2026-05-14T15:00:58Z"
+      }
+    }
+  }
+}
