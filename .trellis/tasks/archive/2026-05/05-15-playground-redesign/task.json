@@ -1,0 +1,53 @@
+{
+  "id": "playground-redesign",
+  "name": "playground-redesign",
+  "title": "brainstorm: 重构 playground 页面",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "u2",
+  "assignee": "u2",
+  "createdAt": "2026-05-15",
+  "completedAt": "2026-05-15",
+  "branch": "feature/playground-redesign",
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "prd_status": "confirmed",
+    "workflow": {
+      "version": 1,
+      "current_step": "ready_to_finish",
+      "vcs": {
+        "kind": "git",
+        "commit_required": true
+      },
+      "implement": {
+        "dispatched_at": null,
+        "completed_at": "2026-05-15T13:55:10Z"
+      },
+      "check": {
+        "completed_at": "2026-05-15T14:04:02Z",
+        "fingerprint": "3df1813256c5862493efa420e7ab66e285c0abbcf298fb9a5532a10e7c37c343",
+        "head": "9c940224538cfa8a3c04fa9bf26228a9d979eda8"
+      },
+      "spec_update": {
+        "reviewed_at": "2026-05-15T13:59:03Z",
+        "result": "updated"
+      },
+      "commit": {
+        "hash": "9c940224538cfa8a3c04fa9bf26228a9d979eda8",
+        "recorded_at": "2026-05-15T14:04:03Z"
+      }
+    }
+  }
+}

@@ -18,6 +18,29 @@ def test_static_frontend_uses_model_capabilities_for_controls():
     assert "controlAvailable('stream')" in index_html
 
 
+def test_static_frontend_exposes_playground_workbench_tools():
+    app_js = (ROOT / "src" / "aistudio_api" / "static" / "app.js").read_text(encoding="utf-8")
+    index_html = (ROOT / "src" / "aistudio_api" / "static" / "index.html").read_text(encoding="utf-8")
+    style_css = (ROOT / "src" / "aistudio_api" / "static" / "style.css").read_text(encoding="utf-8")
+
+    assert "chatTemplates" in app_js
+    assert "usePromptTemplate(template)" in app_js
+    assert "applyChatPreset(name)" in app_js
+    assert "clearChat()" in app_js
+    assert "copyMessage(m)" in app_js
+    assert "chatRequestSummary" in app_js
+    assert "chatCapabilityItems" in app_js
+    assert "模型调试工作台" in index_html
+    assert "prompt-template-card" in index_html
+    assert "@click=\"usePromptTemplate(template)\"" in index_html
+    assert "@click=\"applyChatPreset('balanced')\"" in index_html
+    assert "@click.stop=\"copyMessage(m)\"" in index_html
+    assert "playground-shell" in style_css
+    assert "grid-template-columns:minmax(0,1fr) 340px" in style_css
+    assert ".prompt-template-grid" in style_css
+    assert ".runtime-toggle>button.active" in style_css
+
+
 def test_static_frontend_exposes_account_health_tier_controls():
     app_js = (ROOT / "src" / "aistudio_api" / "static" / "app.js").read_text(encoding="utf-8")
     index_html = (ROOT / "src" / "aistudio_api" / "static" / "index.html").read_text(encoding="utf-8")

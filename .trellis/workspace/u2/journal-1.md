@@ -74,3 +74,36 @@ Added backend-persistent image generation session history, wired the image UI to
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: Playground workbench redesign
+
+**Date**: 2026-05-15
+**Task**: Playground workbench redesign
+**Branch**: `feature/playground-redesign`
+
+### Summary
+
+Redesigned the static Playground chat page as a model debugging workbench with request summaries, capability panels, prompt templates, presets, copy/clear actions, responsive layout, tests, and WSL real-env validation.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9c94022` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
