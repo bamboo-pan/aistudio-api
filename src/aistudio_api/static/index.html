@@ -74,60 +74,175 @@
   </div>
 
   <!-- Chat -->
-  <div id="chat-page" :class="{active:view==='chat'}">
-    <div id="chat-scroll">
-      <template x-if="msgs.length===0">
-        <div class="welcome"><h2>今天我能帮您做什么？</h2><p>发送消息来测试代理服务。</p></div>
-      </template>
-      <template x-for="(m,i) in msgs" :key="i">
-        <div class="msg" :class="m.role==='user'?'':'msg-ai'">
-          <div class="msg-inner">
-            <div class="avatar" :class="m.role==='user'?'avatar-user':'avatar-ai'" x-text="m.role==='user'?'U':'AI'"></div>
-            <div style="flex:1;min-width:0">
-              <template x-if="m.thinking">
-                <div class="think-block" @click="m.showThinking=!m.showThinking">
-                  <div class="think-toggle"><span class="think-icon">🧠</span><span>思考中</span><span class="think-arrow" :class="{open:m.showThinking}">›</span></div>
-                  <div class="think-body" x-show="m.showThinking" x-text="m.thinking"></div>
+  <div id="chat-page" class="playground-page" :class="{active:view==='chat'}">
+    <div class="playground-shell">
+      <section class="playground-main">
+        <div class="playground-header">
+          <div class="playground-title-block">
+            <div class="playground-kicker">Playground</div>
+            <h1>模型调试工作台</h1>
+          </div>
+          <div class="playground-actions">
+            <span class="playground-status-pill" :class="{'is-live':busy}" x-text="chatStatusText"></span>
+            <button class="btn btn-sm" :disabled="busy||!msgs.length" @click="clearChat()">清空会话</button>
+          </div>
+        </div>
+
+        <div class="playground-metrics">
+          <div class="playground-metric"><span>模型</span><strong x-text="model||'未选择'"></strong></div>
+          <div class="playground-metric"><span>请求</span><strong x-text="chatRequestSummary"></strong></div>
+          <div class="playground-metric"><span>附件</span><strong x-text="chatAttachmentSummary"></strong></div>
+        </div>
+
+        <div class="playground-chat-panel">
+          <div id="chat-scroll" class="playground-transcript">
+            <template x-if="msgs.length===0">
+              <div class="playground-empty">
+                <div class="playground-empty-mark">RUN</div>
+                <h2>选择一个起点</h2>
+                <div class="prompt-template-grid">
+                  <template x-for="template in chatTemplates" :key="template.title">
+                    <button type="button" class="prompt-template-card" @click="usePromptTemplate(template)">
+                      <span x-text="template.tag"></span>
+                      <strong x-text="template.title"></strong>
+                      <small x-text="template.prompt"></small>
+                    </button>
+                  </template>
                 </div>
-              </template>
-              <div class="msg-body" x-show="m.error||m.content" :class="{error:m.error}" x-text="m.error||m.content"></div>
-              <div class="msg-images" x-show="m.files&&m.files.length" x-cloak>
-                <template x-for="file in m.files" :key="file.url">
-                  <div>
-                    <img class="msg-image" x-show="file.isImage" :src="file.url" :alt="file.name||'uploaded image'">
-                    <div class="msg-file" x-show="!file.isImage"><span class="file-icon">FILE</span><span class="file-name" x-text="file.name"></span><span class="file-meta" x-text="file.mime"></span></div>
+              </div>
+            </template>
+            <template x-for="(m,i) in msgs" :key="i">
+              <div class="msg" :class="{'msg-user':m.role==='user','msg-ai':m.role!=='user','msg-error':m.error}">
+                <div class="msg-inner">
+                  <div class="avatar" :class="m.role==='user'?'avatar-user':'avatar-ai'" x-text="m.role==='user'?'U':'AI'"></div>
+                  <div class="msg-content">
+                    <div class="msg-meta">
+                      <span x-text="m.role==='user'?'User':'Assistant'"></span>
+                      <button type="button" class="msg-tool" @click.stop="copyMessage(m)" title="复制消息">
+                        <svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+                      </button>
+                    </div>
+                    <template x-if="m.thinking">
+                      <div class="think-block" @click="m.showThinking=!m.showThinking">
+                        <div class="think-toggle"><span class="think-icon">TH</span><span>思考中</span><span class="think-arrow" :class="{open:m.showThinking}">›</span></div>
+                        <div class="think-body" x-show="m.showThinking" x-text="m.thinking"></div>
+                      </div>
+                    </template>
+                    <div class="msg-body" x-show="m.error||m.content" :class="{error:m.error}" x-text="m.error||m.content"></div>
+                    <div class="msg-images" x-show="m.files&&m.files.length" x-cloak>
+                      <template x-for="file in m.files" :key="file.url">
+                        <div>
+                          <img class="msg-image" x-show="file.isImage" :src="file.url" :alt="file.name||'uploaded image'">
+                          <div class="msg-file" x-show="!file.isImage"><span class="file-icon">FILE</span><span class="file-name" x-text="file.name"></span><span class="file-meta" x-text="file.mime"></span></div>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+
+          <div id="input-area">
+            <div id="input-box">
+              <div class="chat-input-meta">
+                <span x-text="chatParameterSummary"></span>
+                <span x-text="chatRequestSummary"></span>
+              </div>
+              <div class="chat-attachments" x-show="chatFiles.length" x-cloak>
+                <template x-for="(file,index) in chatFiles" :key="file.url">
+                  <div class="chat-attachment">
+                    <img x-show="file.isImage" :src="file.url" :alt="file.name||'uploaded image'">
+                    <div class="chat-file-chip" x-show="!file.isImage"><span class="file-icon">FILE</span><span class="file-name" x-text="file.name"></span><span class="file-meta" x-text="fileSizeLabel(file.size)"></span></div>
+                    <button class="thumb-remove" @click="removeChatFile(index)" title="移除文件">×</button>
                   </div>
                 </template>
+              </div>
+              <div class="notice notice-error chat-image-error" x-show="chatFileError" x-text="chatFileError" x-cloak></div>
+              <div class="notice notice-error chat-image-error" x-show="chatHasUnsupportedFiles" x-cloak>当前模型不支持文件输入</div>
+              <div class="input-row">
+                <input x-ref="chatFileInput" type="file" :accept="chatFileAccept" multiple hidden @change="attachChatFiles($event)">
+                <button class="attach-btn" :disabled="!chatFileUploadEnabled" @click="$refs.chatFileInput.click()" title="上传文件">
+                  <svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+                </button>
+                <textarea x-ref="ta" x-model="draft" @keydown.enter.prevent="if(!$event.shiftKey)send()" @input="resizeTa()" placeholder="给 AI Studio 代理发送消息..." rows="1"></textarea>
+                <button class="send" :disabled="!chatCanSend" @click="send()" title="发送">
+                  <svg viewBox="0 0 24 24"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+                </button>
               </div>
             </div>
           </div>
         </div>
-      </template>
-    </div>
-    <div id="input-area">
-      <div id="input-box">
-        <div class="chat-attachments" x-show="chatFiles.length" x-cloak>
-          <template x-for="(file,index) in chatFiles" :key="file.url">
-            <div class="chat-attachment">
-              <img x-show="file.isImage" :src="file.url" :alt="file.name||'uploaded image'">
-              <div class="chat-file-chip" x-show="!file.isImage"><span class="file-icon">FILE</span><span class="file-name" x-text="file.name"></span><span class="file-meta" x-text="fileSizeLabel(file.size)"></span></div>
-              <button class="thumb-remove" @click="removeChatFile(index)" title="移除文件">×</button>
+      </section>
+
+      <aside class="playground-side">
+        <section class="playground-panel">
+          <div class="playground-panel-head">
+            <div>
+              <div class="playground-section-label">Request</div>
+              <h2>请求摘要</h2>
             </div>
-          </template>
-        </div>
-        <div class="notice notice-error chat-image-error" x-show="chatFileError" x-text="chatFileError" x-cloak></div>
-        <div class="notice notice-error chat-image-error" x-show="chatHasUnsupportedFiles" x-cloak>当前模型不支持文件输入</div>
-        <div class="input-row">
-          <input x-ref="chatFileInput" type="file" :accept="chatFileAccept" multiple hidden @change="attachChatFiles($event)">
-          <button class="attach-btn" :disabled="!chatFileUploadEnabled" @click="$refs.chatFileInput.click()" title="上传文件">
-            <svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
-          </button>
-          <textarea x-ref="ta" x-model="draft" @keydown.enter.prevent="if(!$event.shiftKey)send()" @input="resizeTa()" placeholder="给 AI Studio 代理发送消息..." rows="1"></textarea>
-          <button class="send" :disabled="!chatCanSend" @click="send()">
-            <svg viewBox="0 0 24 24"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
-          </button>
-        </div>
-      </div>
+          </div>
+          <div class="request-summary-list">
+            <div><span>模型</span><strong x-text="model||'未选择'"></strong></div>
+            <div><span>参数</span><strong x-text="chatParameterSummary"></strong></div>
+            <div><span>附件</span><strong x-text="chatAttachmentSummary"></strong></div>
+          </div>
+        </section>
+
+        <section class="playground-panel">
+          <div class="playground-panel-head">
+            <div>
+              <div class="playground-section-label">Capabilities</div>
+              <h2>模型能力</h2>
+            </div>
+          </div>
+          <div class="capability-grid">
+            <template x-for="item in chatCapabilityItems" :key="item.key">
+              <div class="capability-chip" :class="{available:item.available}">
+                <span x-text="item.label"></span>
+                <strong x-text="item.available?'可用':'不可用'"></strong>
+              </div>
+            </template>
+          </div>
+          <div class="capability-note" x-show="acceptedFileTypes.length" x-text="acceptedFileTypes.join(' / ')"></div>
+          <div class="notice notice-error image-inline-notice" x-show="modelError" x-text="modelError" x-cloak></div>
+        </section>
+
+        <section class="playground-panel">
+          <div class="playground-panel-head">
+            <div>
+              <div class="playground-section-label">Presets</div>
+              <h2>参数预设</h2>
+            </div>
+          </div>
+          <div class="preset-row">
+            <button type="button" class="preset-btn" :class="{active:chatPreset==='precise'}" @click="applyChatPreset('precise')">稳健</button>
+            <button type="button" class="preset-btn" :class="{active:chatPreset==='balanced'}" @click="applyChatPreset('balanced')">平衡</button>
+            <button type="button" class="preset-btn" :class="{active:chatPreset==='creative'}" @click="applyChatPreset('creative')">发散</button>
+          </div>
+          <div class="playground-control-grid">
+            <label class="playground-control" x-show="controlAvailable('temperature')"><span>Temperature</span><input class="cfg-num" type="number" x-model.number="cfg.temperature" min="0" max="2" step="0.1"></label>
+            <label class="playground-control" x-show="controlAvailable('top_p')"><span>Top P</span><input class="cfg-num" type="number" x-model.number="cfg.topP" min="0" max="1" step="0.05"></label>
+            <label class="playground-control" x-show="controlAvailable('max_tokens')"><span>Max Tokens</span><input class="cfg-num" type="number" x-model.number="cfg.maxTokens" min="1" max="65536" step="256"></label>
+          </div>
+        </section>
+
+        <section class="playground-panel">
+          <div class="playground-panel-head">
+            <div>
+              <div class="playground-section-label">Runtime</div>
+              <h2>运行开关</h2>
+            </div>
+          </div>
+          <div class="runtime-toggles">
+            <div class="runtime-toggle" x-show="controlAvailable('stream')"><span>Stream</span><button type="button" :class="{active:cfg.stream==='on'}" @click="cfg.stream=cfg.stream==='on'?'off':'on'" x-text="cfg.stream==='on'?'开启':'关闭'"></button></div>
+            <div class="runtime-toggle" x-show="controlAvailable('search')"><span>Search</span><button type="button" :class="{active:cfg.search==='on'}" @click="cfg.search=cfg.search==='on'?'off':'on'" x-text="cfg.search==='on'?'开启':'关闭'"></button></div>
+            <div class="runtime-toggle" x-show="controlAvailable('safety')"><span>Safety</span><button type="button" :class="{active:cfg.safety==='on'}" @click="cfg.safety=cfg.safety==='on'?'off':'on'" x-text="cfg.safety==='on'?'开启':'关闭'"></button></div>
+            <div class="runtime-toggle" x-show="controlAvailable('thinking')"><span>Thinking</span><div class="cselect" :class="{open:openSelect==='thinking'}" @click.stop><div class="cselect-btn" @click="toggleSelect('thinking',$event)" tabindex="0"><span x-text="cfg.thinking==='off'?'关闭':cfg.thinking==='low'?'低':cfg.thinking==='medium'?'中':cfg.thinking==='high'?'高':cfg.thinking"></span><span class="arrow"></span></div><div class="cselect-menu"><template x-for="v in ['off','low','medium','high']"><div class="cselect-opt" :class="{active:cfg.thinking===v}" @click="cfg.thinking=v;openSelect=null" x-text="v==='off'?'关闭':v==='low'?'低':v==='medium'?'中':v==='high'?'高':v"></div></template></div></div></div>
+          </div>
+        </section>
+      </aside>
     </div>
   </div>
 
