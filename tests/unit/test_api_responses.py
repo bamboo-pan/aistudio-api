@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from aistudio_api.application.api_service import stats_response
 from aistudio_api.api.responses import (
     chat_completion_response,
     normalize_usage,
@@ -10,6 +11,7 @@ from aistudio_api.api.responses import (
     to_gemini_parts,
     to_gemini_usage_metadata,
 )
+from aistudio_api.api.state import runtime_state
 
 
 def test_sse_chunk_includes_null_usage_when_requested():
@@ -145,3 +147,38 @@ def test_to_gemini_parts_can_emit_thought_part():
         {"text": "思考", "thought": True},
         {"text": "答案"},
     ]
+
+
+def test_stats_response_aggregates_image_sizes_by_resolution():
+    old_stats = runtime_state.model_stats
+    runtime_state.model_stats = {
+        "image-a": {
+            "requests": 1,
+            "success": 1,
+            "rate_limited": 0,
+            "errors": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 1,
+            "image_sizes": {"1024x1024": 2},
+            "last_used": "now",
+        },
+        "image-b": {
+            "requests": 1,
+            "success": 1,
+            "rate_limited": 0,
+            "errors": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 1,
+            "image_sizes": {"1024x1024": 1, "1024x1792": 3},
+            "last_used": "now",
+        },
+    }
+    try:
+        response = stats_response()
+    finally:
+        runtime_state.model_stats = old_stats
+
+    assert response["totals"]["image_sizes"] == {"1024x1024": 3, "1024x1792": 3}
+    assert response["totals"]["image_total"] == 6

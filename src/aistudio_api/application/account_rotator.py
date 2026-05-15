@@ -22,6 +22,7 @@ class RotationMode(str, Enum):
     ROUND_ROBIN = "round_robin"          # 顺序轮询
     LEAST_RECENTLY_USED = "lru"         # 最久未用
     LEAST_RATE_LIMITED = "least_rl"     # 最少限流
+    EXHAUSTION = "exhaustion"           # 用到额度耗尽再切换
 
 
 @dataclass
@@ -35,15 +36,18 @@ class AccountStats:
     last_used: float = 0.0           # timestamp
     last_rate_limited: float = 0.0   # timestamp
     cooldown_until: float = 0.0      # timestamp, 429 后冷却期
+    image_sizes: dict[str, int] = field(default_factory=dict)
 
     def is_available(self) -> bool:
         """检查账号是否可用（不在冷却期）。"""
         return time.time() >= self.cooldown_until
 
-    def record_success(self) -> None:
+    def record_success(self, *, image_size: str | None = None, image_count: int = 1) -> None:
         self.requests += 1
         self.success += 1
         self.last_used = time.time()
+        if image_size:
+            self.image_sizes[image_size] = self.image_sizes.get(image_size, 0) + max(1, image_count)
 
     def record_rate_limited(self, cooldown_seconds: int = 60) -> None:
         self.requests += 1
@@ -64,6 +68,7 @@ class AccountRotator:
     - round_robin: 顺序轮询，429 时跳过冷却中的账号
     - lru: 最久未用优先，适合均匀分配负载
     - least_rl: 最少限流优先，适合最大化吞吐
+    - exhaustion: 持续使用当前账号，直到限流/隔离/不可用再切换
     """
 
     def __init__(
@@ -125,6 +130,8 @@ class AccountRotator:
                 "last_rate_limited": datetime.fromtimestamp(stats.last_rate_limited, tz=timezone.utc).isoformat() if stats.last_rate_limited else None,
                 "is_available": stats.is_available() and not account.is_isolated,
                 "cooldown_remaining": max(0, int(stats.cooldown_until - time.time())),
+                "image_sizes": dict(stats.image_sizes),
+                "image_total": sum(stats.image_sizes.values()),
             }
         return result
 
@@ -200,17 +207,38 @@ class AccountRotator:
             return None
         return min(available, key=lambda x: x[1].rate_limited)
 
-    async def get_next_account(self, model: str | None = None, *, require_preferred: bool = False) -> AccountMeta | None:
+    def _pick_exhaustion(self, available: list[tuple[AccountMeta, AccountStats]]) -> tuple[AccountMeta, AccountStats] | None:
+        """耗尽模式：优先保留当前激活账号，直到它不可用。"""
+        if not available:
+            return None
+        active = self._store.get_active_account()
+        if active is not None:
+            active_pick = next(((account, stats) for account, stats in available if account.id == active.id), None)
+            if active_pick is not None:
+                self.last_selection_reason = "exhaustion mode kept the active account"
+                return active_pick
+        self.last_selection_reason = "exhaustion mode selected the next available account"
+        return self._pick_round_robin(available)
+
+    async def get_next_account(
+        self,
+        model: str | None = None,
+        *,
+        require_preferred: bool = False,
+        exclude_account_id: str | None = None,
+    ) -> AccountMeta | None:
         """获取下一个可用的账号。"""
         async with self._lock:
             available = self._get_available_accounts()
             available = self._filter_for_model(available, model, require_preferred=require_preferred)
+            if exclude_account_id:
+                available = [(account, stats) for account, stats in available if account.id != exclude_account_id]
 
             if not available:
                 if require_preferred and self.model_prefers_premium(model):
                     return None
                 # 所有账号都在冷却期，找一个冷却时间最短的
-                all_accounts = [account for account in self._store.list_accounts() if not account.is_isolated]
+                all_accounts = [account for account in self._store.list_accounts() if not account.is_isolated and account.id != exclude_account_id]
                 if not all_accounts:
                     self.last_selection_reason = "no healthy accounts are available"
                     return None
@@ -232,6 +260,8 @@ class AccountRotator:
                 pick = self._pick_lru(available)
             elif self._mode == RotationMode.LEAST_RATE_LIMITED:
                 pick = self._pick_least_rl(available)
+            elif self._mode == RotationMode.EXHAUSTION:
+                pick = self._pick_exhaustion(available)
             else:
                 pick = available[0]
 
@@ -242,15 +272,23 @@ class AccountRotator:
             logger.info("Account selected for model=%s tier=%s mode=%s reason=%s", model or "<any>", account.tier, self._mode.value, self.last_selection_reason)
             return account
 
-    async def get_next_account_with_stats(self, model: str | None = None, *, require_preferred: bool = False) -> tuple[AccountMeta, AccountStats] | None:
+    async def get_next_account_with_stats(
+        self,
+        model: str | None = None,
+        *,
+        require_preferred: bool = False,
+        exclude_account_id: str | None = None,
+    ) -> tuple[AccountMeta, AccountStats] | None:
         """获取下一个可用的账号及其统计。"""
         async with self._lock:
             available = self._get_available_accounts()
             available = self._filter_for_model(available, model, require_preferred=require_preferred)
+            if exclude_account_id:
+                available = [(account, stats) for account, stats in available if account.id != exclude_account_id]
             if not available:
                 if require_preferred and self.model_prefers_premium(model):
                     return None
-                all_accounts = [account for account in self._store.list_accounts() if not account.is_isolated]
+                all_accounts = [account for account in self._store.list_accounts() if not account.is_isolated and account.id != exclude_account_id]
                 if not all_accounts:
                     self.last_selection_reason = "no healthy accounts are available"
                     return None
@@ -269,15 +307,17 @@ class AccountRotator:
                 pick = self._pick_lru(available)
             elif self._mode == RotationMode.LEAST_RATE_LIMITED:
                 pick = self._pick_least_rl(available)
+            elif self._mode == RotationMode.EXHAUSTION:
+                pick = self._pick_exhaustion(available)
             else:
                 pick = available[0]
             return pick
 
-    def record_success(self, account_id: str) -> None:
+    def record_success(self, account_id: str, *, image_size: str | None = None, image_count: int = 1) -> None:
         """记录成功请求。"""
         if account_id not in self._stats:
             self._stats[account_id] = AccountStats(account_id=account_id)
-        self._stats[account_id].record_success()
+        self._stats[account_id].record_success(image_size=image_size, image_count=image_count)
         self._store.set_account_health(account_id, "healthy", "last request succeeded")
 
     def record_rate_limited(self, account_id: str) -> None:

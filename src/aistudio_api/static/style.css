@@ -92,6 +92,50 @@ select.sel:focus,.sel:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(
 .table-wrap table{min-width:940px}
 
 /* Account management */
+.account-pad{max-width:1320px;padding-top:24px;background:#fbfcfd}
+.account-hero{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin-bottom:18px}
+.account-hero h1{font-size:28px;font-weight:760;line-height:1.15;letter-spacing:0}
+.account-hero p{font-size:13px;color:var(--muted);margin-top:5px;line-height:1.45}
+.account-kicker{font-size:12px;color:var(--green);font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px}
+.account-hero-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.account-metrics{display:grid;grid-template-columns:minmax(220px,2fr) repeat(5,minmax(116px,1fr));gap:10px;margin-bottom:16px}
+.account-metric{min-width:0;border:1px solid var(--border);border-radius:8px;background:#fff;padding:13px 14px;display:flex;flex-direction:column;justify-content:center;gap:4px;min-height:72px}
+.account-metric span{font-size:12px;color:var(--muted);font-weight:650}
+.account-metric strong{min-width:0;font-size:20px;font-weight:720;line-height:1.15;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.metric-wide strong{font-size:17px}
+.metric-warn{color:var(--amber)}
+.account-control-row{display:grid;grid-template-columns:minmax(0,2fr) minmax(280px,1fr);gap:16px;margin-bottom:16px;align-items:stretch}
+.account-panel{border:1px solid var(--border);border-radius:8px;background:#fff;box-shadow:0 8px 24px rgba(15,23,42,.035);overflow:visible;margin-bottom:16px}
+.account-panel-head{padding:15px 18px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:12px;background:#fff;border-radius:8px 8px 0 0}
+.account-panel-head h2{font-size:16px;font-weight:720;line-height:1.25;margin-bottom:3px}
+.account-panel-head p{font-size:13px;color:var(--muted);line-height:1.4;word-break:break-word}
+.account-mode-pill{border:1px solid #a7f3d0;background:var(--green-bg);color:#065f46;border-radius:999px;padding:5px 9px;font-size:12px;font-weight:700;white-space:nowrap}
+.rotation-options{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;padding:14px 16px 0}
+.rotation-option{min-width:0;min-height:86px;border:1px solid var(--border);border-radius:8px;background:#fff;padding:12px;text-align:left;cursor:pointer;font-family:inherit;transition:border-color .15s,background .15s,box-shadow .15s;display:flex;flex-direction:column;gap:6px}
+.rotation-option:hover{border-color:#a3a3a3;background:#fcfcfc}
+.rotation-option.active{border-color:var(--green);background:var(--green-bg);box-shadow:0 0 0 2px rgba(16,163,127,.12)}
+.rotation-option strong{font-size:14px;font-weight:720;line-height:1.25;color:var(--text)}
+.rotation-option span{font-size:12px;color:var(--muted);line-height:1.35;word-break:break-word}
+.rotation-footer{padding:14px 16px 16px;display:flex;align-items:end;gap:12px;flex-wrap:wrap}
+.account-field{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--muted);font-weight:650}
+.account-field input{width:96px;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:14px;font-family:inherit;outline:none;background:#fff}
+.account-field input:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(16,163,127,.12)}
+.usage-bars{padding:14px 16px;display:flex;flex-direction:column;gap:8px}
+.usage-bar{height:36px;border:1px solid var(--border);border-radius:8px;background:var(--bg-alt);display:flex;align-items:center;justify-content:space-between;gap:10px;padding:0 11px;font-size:13px;min-width:0}
+.usage-bar span{font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.usage-bar strong{font-size:14px;color:var(--green)}
+.account-empty{padding:28px 16px;color:var(--muted);font-size:13px;text-align:center}
+.account-table-panel .table-wrap table{min-width:1060px}
+.tier-cell{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.tier-note{border-radius:999px;background:#eff6ff;color:#1e40af;padding:3px 7px;font-size:11px;font-weight:700}
+.request-stack{display:flex;flex-direction:column;gap:2px;min-width:90px}
+.request-stack strong{font-size:17px;font-weight:720;line-height:1.1}
+.request-stack span{font-size:12px;color:var(--muted);white-space:nowrap}
+.resolution-stack{display:flex;align-items:center;gap:6px;flex-wrap:wrap;max-width:300px}
+.resolution-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:999px;background:#fff;padding:4px 8px;font-size:12px;line-height:1;white-space:nowrap}
+.resolution-chip strong{color:var(--green);font-weight:750}
+.credential-panel-wide{margin-bottom:0}
+.compact-credentials{padding:16px 18px 18px}
 .notice-stack{display:flex;flex-direction:column;gap:8px;margin-bottom:20px}
 .notice{border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:13px;background:var(--bg-alt);color:var(--text)}
 .notice-main{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -309,6 +353,10 @@ select.sel:focus,.sel:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(
   .image-sessions-panel{grid-column:auto}
   .image-history-panel{grid-column:auto}
   .image-results-panel{min-height:auto}
+  .account-metrics{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .metric-wide{grid-column:1 / -1}
+  .account-control-row{grid-template-columns:1fr}
+  .rotation-options{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 
 @media(max-width:768px){
@@ -319,6 +367,22 @@ select.sel:focus,.sel:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(
   .topbar .sel{max-width:150px;font-size:12px}
   .stat-grid{grid-template-columns:1fr}
   .cfg-dropdown{width:calc(100vw - 32px);right:-8px}
+  .account-pad{padding:20px 14px 64px}
+  .account-hero{align-items:flex-start;flex-direction:column}
+  .account-hero h1{font-size:24px}
+  .account-hero-actions{width:100%;justify-content:flex-start}
+  .account-hero-actions .btn{flex:1;justify-content:center;min-width:130px}
+  .account-metrics{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .account-metric{min-height:66px;padding:11px 12px}
+  .account-metric strong{font-size:18px}
+  .metric-wide{grid-column:1 / -1}
+  .rotation-options{grid-template-columns:1fr;padding:12px 12px 0}
+  .rotation-option{min-height:70px}
+  .rotation-footer{padding:12px;align-items:stretch}
+  .rotation-footer .btn{width:100%;justify-content:center}
+  .account-panel-head{padding:14px}
+  .usage-bars{padding:12px}
+  .compact-credentials{padding:14px}
   .msg-inner{padding:0 16px}
   #input-area{padding:8px 16px 16px}
   .msg-image{width:92px;height:92px}
