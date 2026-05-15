@@ -116,3 +116,80 @@ The backend should not infer local static files from relative URLs in this contr
 ```
 
 The frontend fetches same-origin images and submits data URIs; the backend validates and converts them to temporary inline image inputs.
+
+---
+
+## Scenario: Static Playground Workbench UI
+
+### 1. Scope / Trigger
+
+- Trigger: redesigning or extending the static Playground chat page served from `src/aistudio_api/static/`.
+- Applies to `index.html`, `app.js`, `style.css`, and static frontend tests that protect Playground behavior.
+- This scenario is UI-only unless the task explicitly changes an API route or schema.
+
+### 2. Signatures
+
+- Static app state: Alpine `app()` object owns Playground state and derived getters.
+- Existing backend calls remain:
+	- `GET /v1/models` for model metadata and capabilities.
+	- `POST /v1/chat/completions` for chat requests.
+- Existing chat content block format remains unchanged:
+	- Text-only messages may send a string content value.
+	- Image files use OpenAI `image_url` blocks.
+	- Non-image files use OpenAI `file` blocks with `file_data`, `filename`, and `mime_type`.
+
+### 3. Contracts
+
+- UI enhancements must not change `/v1/chat/completions` request fields unless the API contract spec is updated in the same task.
+- Capability gating must continue to use `/v1/models` metadata through `selectedCaps` and `controlAvailable(...)`.
+- `file_input=false` must keep upload controls disabled and must not create a path where generic files can be submitted.
+- Workbench-only helpers such as prompt templates, request summaries, presets, copy actions, and clear-chat actions must stay frontend-local.
+- Static markup may be reorganized, but existing behavior anchors used by tests must be preserved or intentionally replaced with updated tests.
+
+### 4. Validation & Error Matrix
+
+- Missing or failed model metadata -> show the existing model loading error path; do not enable controls that depend on unknown capabilities.
+- Unsupported file input -> keep upload disabled and preserve the `当前模型不支持文件输入` feedback path.
+- Empty prompt with no files -> send button remains disabled.
+- Runtime preset applied to unsupported controls -> unsupported values are ignored or normalized through `applyModelCapabilities()`.
+- Narrow viewport -> primary input, send, attachment controls, and side panels must not overlap.
+
+### 5. Good/Base/Bad Cases
+
+- Good: A prompt template fills `draft`, request summary updates from current model/config/files, and the existing send path builds the same request body as before.
+- Good: A parameter preset updates only controls available for the selected model, then runs `applyModelCapabilities()`.
+- Base: Existing topbar settings dropdown still controls advanced chat settings after the Playground layout changes.
+- Bad: A UI redesign duplicates file validation logic and lets non-file-capable models submit generic file blocks.
+- Bad: A static layout looks correct on desktop but overlaps the chat panel and side panels on a mobile viewport.
+
+### 6. Tests Required
+
+- Static frontend tests assert new Playground helpers and markup anchors exist.
+- Existing static tests must continue to assert `selectedCaps`, `controlAvailable(...)`, `chatCanSend`, `chatFileAccept`, and file block request wiring.
+- Full unit tests should pass after static UI changes because the frontend is coupled to request contracts through string-level tests.
+- Browser smoke checks should include desktop and mobile viewport inspection for workbench layout changes.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```javascript
+applyChatPreset(name){
+	this.cfg.temperature = 1.4
+	this.cfg.thinking = 'medium'
+}
+```
+
+This writes settings even when the selected model does not support those controls.
+
+#### Correct
+
+```javascript
+applyChatPreset(name){
+	if(this.controlAvailable('temperature')) this.cfg.temperature = 1.4
+	if(this.controlAvailable('thinking')) this.cfg.thinking = 'medium'
+	this.applyModelCapabilities()
+}
+```
+
+This keeps presets consistent with model metadata and the existing capability gating contract.
