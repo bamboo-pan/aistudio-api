@@ -3,7 +3,7 @@
   "name": "remove-control-panel",
   "title": "Remove redundant control panel",
   "description": "",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "u1",
   "assignee": "u1",
   "createdAt": "2026-05-15",
-  "completedAt": null,
+  "completedAt": "2026-05-15",
   "branch": null,
   "base_branch": "master",
   "worktree_path": null,
@@ -36,17 +36,17 @@
         "completed_at": "2026-05-15T12:57:32Z"
       },
       "check": {
-        "completed_at": "2026-05-15T12:57:32Z",
+        "completed_at": "2026-05-15T13:09:14Z",
         "fingerprint": "e3bd01e52952e638c8de35a503a1d7963d07f6480557496618a4ffae9bb1b7b5",
-        "head": "8251dcb65b684aa509b67fe3475d2f3d44ae79d1"
+        "head": "04e175a0cbe7b0017c6e8191f970b8ded99144ca"
       },
       "spec_update": {
         "reviewed_at": "2026-05-15T12:57:32Z",
         "result": "updated"
       },
       "commit": {
-        "hash": "700aa68265476090aa91d38448b3474538a396ce",
-        "recorded_at": "2026-05-15T12:59:25Z"
+        "hash": "04e175a0cbe7b0017c6e8191f970b8ded99144ca",
+        "recorded_at": "2026-05-15T13:09:15Z"
       }
     }
   }
