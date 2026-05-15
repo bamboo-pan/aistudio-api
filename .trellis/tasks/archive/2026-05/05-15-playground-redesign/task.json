@@ -3,7 +3,7 @@
   "name": "playground-redesign",
   "title": "brainstorm: 重构 playground 页面",
   "description": "",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "u2",
   "assignee": "u2",
   "createdAt": "2026-05-15",
-  "completedAt": null,
+  "completedAt": "2026-05-15",
   "branch": "feature/playground-redesign",
   "base_branch": "master",
   "worktree_path": null,
@@ -26,7 +26,7 @@
     "prd_status": "confirmed",
     "workflow": {
       "version": 1,
-      "current_step": "awaiting_commit",
+      "current_step": "ready_to_finish",
       "vcs": {
         "kind": "git",
         "commit_required": true
@@ -36,17 +36,17 @@
         "completed_at": "2026-05-15T13:55:10Z"
       },
       "check": {
-        "completed_at": "2026-05-15T13:59:03Z",
-        "fingerprint": "4a7dd2293b17631157c813fa4ae0f2611321240ec83f917ab86bf6068a9b98b2",
-        "head": "8251dcb65b684aa509b67fe3475d2f3d44ae79d1"
+        "completed_at": "2026-05-15T14:04:02Z",
+        "fingerprint": "3df1813256c5862493efa420e7ab66e285c0abbcf298fb9a5532a10e7c37c343",
+        "head": "9c940224538cfa8a3c04fa9bf26228a9d979eda8"
       },
       "spec_update": {
         "reviewed_at": "2026-05-15T13:59:03Z",
         "result": "updated"
       },
       "commit": {
-        "hash": null,
-        "recorded_at": null
+        "hash": "9c940224538cfa8a3c04fa9bf26228a9d979eda8",
+        "recorded_at": "2026-05-15T14:04:03Z"
       }
     }
   }
