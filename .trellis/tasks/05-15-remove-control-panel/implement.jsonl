@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend spec index for the static frontend/API contract work."}
+{"file":".trellis/spec/backend/api-contracts.md","reason":"Documents /stats, account rotation, and account-management UI contract expectations."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Quality and static frontend test expectations relevant to this change."}

@@ -1,0 +1,53 @@
+{
+  "id": "remove-control-panel",
+  "name": "remove-control-panel",
+  "title": "Remove redundant control panel",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "u1",
+  "assignee": "u1",
+  "createdAt": "2026-05-15",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "prd_status": "confirmed",
+    "workflow": {
+      "version": 1,
+      "current_step": "awaiting_commit",
+      "vcs": {
+        "kind": "git",
+        "commit_required": true
+      },
+      "implement": {
+        "dispatched_at": null,
+        "completed_at": "2026-05-15T12:57:32Z"
+      },
+      "check": {
+        "completed_at": "2026-05-15T12:57:32Z",
+        "fingerprint": "e3bd01e52952e638c8de35a503a1d7963d07f6480557496618a4ffae9bb1b7b5",
+        "head": "8251dcb65b684aa509b67fe3475d2f3d44ae79d1"
+      },
+      "spec_update": {
+        "reviewed_at": "2026-05-15T12:57:32Z",
+        "result": "updated"
+      },
+      "commit": {
+        "hash": null,
+        "recorded_at": null
+      }
+    }
+  }
+}
