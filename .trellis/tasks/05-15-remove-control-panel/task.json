@@ -26,7 +26,7 @@
     "prd_status": "confirmed",
     "workflow": {
       "version": 1,
-      "current_step": "awaiting_commit",
+      "current_step": "ready_to_finish",
       "vcs": {
         "kind": "git",
         "commit_required": true
@@ -45,8 +45,8 @@
         "result": "updated"
       },
       "commit": {
-        "hash": null,
-        "recorded_at": null
+        "hash": "700aa68265476090aa91d38448b3474538a396ce",
+        "recorded_at": "2026-05-15T12:59:25Z"
       }
     }
   }
