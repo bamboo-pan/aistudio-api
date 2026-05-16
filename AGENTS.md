@@ -32,7 +32,7 @@ Managed by Trellis. Edits outside this block are preserved; edits inside may be 
 # 真实测试环境
 
 1. 在wsl home目录下下新建临时目录实际测试
-  2. \\wsl.localhost\Ubuntu-24.04\home\bamboo
-3. 真实凭据
-  4. \\wsl.localhost\Ubuntu-24.04\home\bamboo\aistudio-api\data\accounts
-5. 所有改动必须最终真实环境测试通过
+   1. \\wsl.localhost\Ubuntu-24.04\home\bamboo
+2. 真实凭据
+   1. \\wsl.localhost\Ubuntu-24.04\home\bamboo\aistudio-api\data\accounts
+3. 除了文档更新类的改动，其他所有改动必须最终真实环境测试通过

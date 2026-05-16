@@ -5,6 +5,14 @@ description: "Guides collaborative requirements discovery before implementation.
 
 # Brainstorm - Requirements Discovery (AI Coding Enhanced)
 
+**CoreRule**: Interview me relentlessly about every aspect of this plan until we reach a shared understanding. Walk down each branch of the design tree, resolving dependencies between decisions one-by-one. For each question, provide your recommended answer.
+
+Ask the questions one at a time.
+
+If a question can be answered by exploring the codebase, explore the codebase instead.
+
+---
+
 Guide AI through collaborative requirements discovery **before implementation**, optimized for AI coding workflows:
 
 * **Task-first** (capture ideas immediately)
@@ -35,7 +43,6 @@ Triggered from /start when the user describes a development task, especially whe
 
 3. **One question per message**
    Never overwhelm the user with a list of questions. Ask one, update PRD, repeat.
-   This limits batching, not the total number of questions; continue until all Blocking/Preference questions are resolved.
 
 4. **Prefer concrete options**
    For preference/decision questions, present 2–3 feasible, specific approaches with trade-offs.
@@ -202,6 +209,22 @@ Why:
 - The PRD can link to concise findings instead of duplicating raw tool output
 - Phase 1.3 can reference the same persisted files in `implement.jsonl` / `check.jsonl`
 
+❌ Bad (what you must NOT do):
+```
+Main agent: WebFetch(url-A) → WebFetch(url-B) → Bash(gh api ...)
+          → WebSearch(q1) → WebSearch(q2) → ... (10+ calls)
+          → leaves findings only in chat
+```
+→ Loses durable context after compaction and gives implementation/check no file to read.
+
+✅ Good:
+```
+Main agent: Researches topic A → writes research/topic-a.md
+      + Researches topic B → writes research/topic-b.md
+      + Researches topic C → writes research/topic-c.md
+→ Links those files from PRD and later jsonl context.
+```
+
 ### Research steps
 
 For each research topic:
@@ -211,7 +234,7 @@ For each research topic:
 3. Map conventions onto our repo constraints
 4. Write findings to `{TASK_DIR}/research/<topic>.md`
 
-The main agent then reads the persisted files and produces **2–3 feasible approaches** in PRD.
+Main agent then reads the persisted files and produces **2–3 feasible approaches** in PRD.
 
 ### Research output format (PRD)
 
@@ -313,7 +336,6 @@ Then update PRD:
 ### Rules
 
 * One question per message
-* Continue until all Blocking/Preference questions are resolved
 * Prefer multiple-choice when possible
 * After each user answer:
 
@@ -378,7 +400,7 @@ Record the outcome in PRD as an ADR-lite section:
 
 ## Step 8: Final Confirmation + Implementation Plan
 
-When open questions are resolved, confirm complete requirements with a whole-PRD structured summary and an explicit user choice:
+When open questions are resolved, confirm complete requirements with a structured summary:
 
 ### Final confirmation format
 
@@ -414,26 +436,8 @@ Here's my understanding of the complete requirements:
 * PR2: <core behavior>
 * PR3: <edge cases + docs + cleanup>
 
-Please choose the next step:
-
-1. Confirm PRD and enter implementation
-2. Revise PRD first
-3. Override confirmation and implement anyway
+Does this look correct? If yes, I'll proceed with implementation.
 ```
-
-### Anti-misclassification rule
-
-Answering a final clarification, product preference, or other sub-question only resolves that local question; it is not whole-PRD confirmation. Do not run `python ./.trellis/scripts/task.py set-prd-status <task-dir> confirmed` in the same turn as receiving a sub-question answer unless that same user message explicitly confirms the whole PRD. If the message only answers the local question, update the PRD, present this Step 8 summary, and wait for a distinct confirm, revise, or override choice.
-
-### Required status recording
-
-The PRD is not implementation-ready until the user's choice is persisted in `task.json -> meta.prd_status`:
-
-* Choice 1 → run `python ./.trellis/scripts/task.py set-prd-status <task-dir> confirmed`
-* Choice 2 → keep `prd_status=draft` and continue brainstorming
-* Choice 3 → run `python ./.trellis/scripts/task.py set-prd-status <task-dir> override`
-
-Do not enter implementation while `prd_status` is still `draft`.
 
 ### Subtask Decomposition (Complex Tasks)
 
@@ -504,13 +508,13 @@ Context / Decision / Consequences
 
 ## Integration with Start Workflow
 
-After brainstorm completes (Step 8 choice 1 or 3 recorded in `prd_status`), the flow continues to the Task Workflow's **Phase 2: Prepare for Implementation**:
+After brainstorm completes (Step 8 confirmation approved), the flow continues to the Task Workflow's **Phase 2: Prepare for Implementation**:
 
 ```text
 Brainstorm
   Step 0: Create task directory + seed PRD
   Step 1–7: Discover requirements, research, converge
-   Step 8: Final confirmation → user confirms or explicitly overrides
+  Step 8: Final confirmation → user approves
   ↓
 Task Workflow Phase 2 (Prepare for Implementation)
   Code-Spec Depth Check (if applicable)
