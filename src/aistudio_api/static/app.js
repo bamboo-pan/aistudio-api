@@ -214,7 +214,7 @@ function app(){return{
     if(this.controlAvailable('top_p')&&this.cfg.topP!==1) body.top_p=this.cfg.topP;
     if(this.controlAvailable('max_tokens')&&this.cfg.maxTokens!==8192) body.max_tokens=this.cfg.maxTokens;
     if(this.controlAvailable('stream')&&this.cfg.stream==='on') body.stream=true;
-    if(this.controlAvailable('thinking')&&this.cfg.thinking!=='off') body.thinking=this.cfg.thinking;
+    if(this.controlAvailable('thinking')) body.thinking=this.cfg.thinking;
     if(this.controlAvailable('search')&&this.cfg.search==='on') body.grounding=true;
     if(this.controlAvailable('safety')&&this.cfg.safety==='off') body.safety_off=true;
     const useStream=!!body.stream;

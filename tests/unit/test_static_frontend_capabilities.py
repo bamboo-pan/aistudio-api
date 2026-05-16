@@ -13,6 +13,8 @@ def test_static_frontend_uses_model_capabilities_for_controls():
     assert "detail?.message" in app_js
     assert "d?.error?.message" in app_js
     assert "this.controlAvailable('search')&&this.cfg.search==='on'" in app_js
+    assert "if(this.controlAvailable('thinking')) body.thinking=this.cfg.thinking" in app_js
+    assert "this.cfg.thinking!=='off') body.thinking" not in app_js
     assert "selectModel(m.id)" in index_html
     assert "controlAvailable('thinking')" in index_html
     assert "controlAvailable('stream')" in index_html
