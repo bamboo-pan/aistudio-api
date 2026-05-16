@@ -145,6 +145,7 @@ The frontend fetches same-origin images and submits data URIs; the backend valid
 - `file_input=false` must keep upload controls disabled and must not create a path where generic files can be submitted.
 - Workbench-only helpers such as prompt templates, request summaries, presets, copy actions, and clear-chat actions must stay frontend-local.
 - Assistant Markdown rendering must be frontend-only and must pass model text through a local escape/sanitize helper before any `x-html` binding; raw model HTML must render as text and unsafe link schemes must not become anchors.
+- Assistant Markdown image syntax (`![alt](url)`) must be tokenized before normal links and must reuse the same safe URL filtering before emitting an `<img>` source; unsafe image URLs must fall back to escaped text.
 - Static markup may be reorganized, but existing behavior anchors used by tests must be preserved or intentionally replaced with updated tests.
 
 ### 4. Validation & Error Matrix
@@ -160,14 +161,16 @@ The frontend fetches same-origin images and submits data URIs; the backend valid
 
 - Good: A prompt template fills `draft`, request summary updates from current model/config/files, and the existing send path builds the same request body as before.
 - Good: A parameter preset updates only controls available for the selected model, then runs `applyModelCapabilities()`.
+- Good: An image-model chat response like `![generated image 1](/generated-images/a.png)` renders as a bounded transcript image while ordinary `[label](/url)` Markdown still renders as a link.
 - Base: Existing topbar settings dropdown still controls advanced chat settings after the Playground layout changes.
 - Bad: A UI redesign duplicates file validation logic and lets non-file-capable models submit generic file blocks.
+- Bad: Parsing Markdown links before image tokens turns generated image responses into clickable text instead of visible images, or allows `data:` / `javascript:` image sources through the sanitizer.
 - Bad: A static layout looks correct on desktop but overlaps the chat panel and side panels on a mobile viewport.
 
 ### 6. Tests Required
 
 - Static frontend tests assert new Playground helpers and markup anchors exist.
-- Markdown output changes must test the `x-html` rendering hook plus HTML escaping and unsafe-link sanitization helpers.
+- Markdown output changes must test the `x-html` rendering hook plus HTML escaping, unsafe-link sanitization helpers, and image Markdown rendering/sanitization when generated-image chat output is involved.
 - Existing static tests must continue to assert `selectedCaps`, `controlAvailable(...)`, `chatCanSend`, `chatFileAccept`, and file block request wiring.
 - Full unit tests should pass after static UI changes because the frontend is coupled to request contracts through string-level tests.
 - Browser smoke checks should include desktop and mobile viewport inspection for workbench layout changes.
