@@ -6,33 +6,39 @@
 <title>AI Studio Proxy</title>
 <link rel="stylesheet" href="/static/style.css">
 </head>
-<body x-data="app()" x-init="init()" @click="configOpen=false">
+<body x-data="app()" x-init="init()" :class="{'sidebar-collapsed':sidebarCollapsed}" @click="configOpen=false">
 
 <div class="overlay" :class="{open:sidebarOpen}" @click="sidebarOpen=false"></div>
 
 <nav class="sidebar" :class="{open:sidebarOpen}">
-  <div class="sidebar-header"><div class="logo">AI</div><span>AI Studio Proxy</span></div>
-  <div class="nav-section">
-    <button class="nav-item" :class="{active:view==='chat'}" @click="go('chat')">
-      <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
-      Playground
-    </button>
-    <button class="nav-item" :class="{active:view==='images'}" @click="go('images')">
-      <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
-      图片生成
-    </button>
-    <button class="nav-item" :class="{active:view==='accounts'}" @click="go('accounts')">
-      <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
-      账号管理
+  <div class="sidebar-header">
+    <div class="logo">AI</div>
+    <span class="sidebar-title">AI Studio Proxy</span>
+    <button type="button" class="sidebar-toggle" @click="toggleSidebarCollapsed()" :title="sidebarCollapsed?'展开侧边栏':'收起侧边栏'" :aria-label="sidebarCollapsed?'展开侧边栏':'收起侧边栏'" :aria-pressed="sidebarCollapsed.toString()">
+      <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
     </button>
   </div>
-  <div class="sidebar-footer"><div class="dot"></div><span>系统在线</span></div>
+  <div class="nav-section">
+    <button class="nav-item" :class="{active:view==='chat'}" @click="go('chat')" title="Playground" aria-label="Playground">
+      <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+      <span class="nav-label">Playground</span>
+    </button>
+    <button class="nav-item" :class="{active:view==='images'}" @click="go('images')" title="图片生成" aria-label="图片生成">
+      <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+      <span class="nav-label">图片生成</span>
+    </button>
+    <button class="nav-item" :class="{active:view==='accounts'}" @click="go('accounts')" title="账号管理" aria-label="账号管理">
+      <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+      <span class="nav-label">账号管理</span>
+    </button>
+  </div>
+  <div class="sidebar-footer"><div class="dot"></div><span class="sidebar-footer-label">系统在线</span></div>
 </nav>
 
 <div class="main">
   <div class="topbar">
     <div class="topbar-left">
-      <button class="mh-btn" @click="sidebarOpen=true">☰</button>
+      <button class="mh-btn" @click="sidebarOpen=true" title="打开侧边栏" aria-label="打开侧边栏">☰</button>
       <template x-if="view==='chat'">
         <div class="cselect cselect-lg" :class="{open:openSelect==='model'}" @click.stop>
           <div class="cselect-btn" @click="toggleSelect('model',$event)" tabindex="0">

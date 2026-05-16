@@ -1,6 +1,6 @@
 
 function app(){return{
-  view:'chat',sidebarOpen:false,configOpen:false,openSelect:null,
+  view:'chat',sidebarOpen:false,sidebarCollapsed:false,configOpen:false,openSelect:null,
   stats:{},statsTotals:{},rotationMode:'round_robin',rotCfg:{mode:'round_robin',cooldown:60},
   accounts:[],rotationAccounts:{},activeId:'',activeAccount:{},accountsLoading:false,accountsError:'',activeAccountNote:'',rotationError:'',savingRotation:false,forcingNext:false,
   accountBusy:{},renameId:'',renameDraft:'',deleteConfirmId:'',
@@ -18,7 +18,10 @@ function app(){return{
   imageModel:'',imagePrompt:'',imageSize:'1024x1024',imageCount:1,imageBusy:false,imageError:'',imageResults:[],imageHistory:[],imageHistorySelection:{},imageHistoryDeleting:false,imageHistoryError:'',imageSessions:[],activeImageSessionId:'',imageSessionLoading:false,imageSessionSaving:false,imageSessionDeletingId:'',imageSessionError:'',imageLastRequest:null,imageReferences:[],imageBaseImage:null,imageConversation:[],imageReferenceError:'',imagePreview:null,
   toast:{show:false,msg:'',t:null},
 
-  init(){this.loadImageHistory();this.loadImageSessions();this.applyRouteHash();this.loadModels();this.loadStats();this.loadAccounts();this.loadRotation();window.addEventListener('hashchange',()=>this.applyRouteHash());document.addEventListener('click',()=>this.closeSelect());document.addEventListener('keydown',(event)=>this.handleSelectKeydown(event))},
+  init(){this.loadSidebarPreference();this.loadImageHistory();this.loadImageSessions();this.applyRouteHash();this.loadModels();this.loadStats();this.loadAccounts();this.loadRotation();window.addEventListener('hashchange',()=>this.applyRouteHash());document.addEventListener('click',()=>this.closeSelect());document.addEventListener('keydown',(event)=>this.handleSelectKeydown(event))},
+  loadSidebarPreference(){try{this.sidebarCollapsed=localStorage.getItem('aistudio.sidebarCollapsed')==='true'}catch(error){this.sidebarCollapsed=false}},
+  saveSidebarPreference(){try{localStorage.setItem('aistudio.sidebarCollapsed',this.sidebarCollapsed?'true':'false')}catch(error){}},
+  toggleSidebarCollapsed(){this.sidebarCollapsed=!this.sidebarCollapsed;this.saveSidebarPreference()},
   applyRouteHash(){const route=(window.location.hash||'').replace('#','');if(route==='dashboard'){this.go('accounts');return}if(['chat','images','accounts'].includes(route))this.go(route,{syncHash:false})},
   go(v,opts={}){this.view=v;this.sidebarOpen=false;if(opts.syncHash!==false&&window.location.hash!==`#${v}`)window.location.hash=v;if(v==='accounts'){this.loadAccounts();this.loadRotation();this.loadStats()}if(v==='images'){this.ensureImageDefaults();this.loadImageSessions(false)}},
   showToast(m){this.toast.msg=m;this.toast.show=true;if(this.toast.t)clearTimeout(this.toast.t);this.toast.t=setTimeout(()=>this.toast.show=false,3000)},
