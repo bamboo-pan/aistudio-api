@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/index.md","reason":"Spec index for final verification."}
+{"file":".trellis/spec/backend/api-contracts.md","reason":"Verify additive usage response contract and Playground API behavior."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Verify static Playground UI contract and required tests."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check backend-to-frontend usage field round-trip."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Check no unnecessary duplicated control/state logic was introduced."}

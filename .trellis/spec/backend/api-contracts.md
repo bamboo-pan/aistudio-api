@@ -210,3 +210,86 @@ runtime_state.record(model, "success", usage, image_size=image_plan.size, image_
 ```
 
 The success counters remain backward-compatible while resolution-level image usage is available to `/stats`, `/rotation`, and the account-management UI.
+
+---
+
+## Scenario: Playground Local Chat Sessions and Usage Telemetry
+
+### 1. Scope / Trigger
+
+- Trigger: the static Playground chat page needs browser-local conversation recovery and visible token/cache telemetry for OpenAI-compatible chat responses.
+- Applies to `src/aistudio_api/static/app.js`, `src/aistudio_api/static/index.html`, `src/aistudio_api/static/style.css`, `/v1/chat/completions` response helpers, and static frontend tests.
+- This contract is additive for API clients: existing OpenAI usage fields remain present, and cache-related fields are added when normalized usage is emitted.
+
+### 2. Signatures
+
+- Browser storage key: `aistudio.chatSessions.v1`.
+- Storage shape: `{"activeId": str, "sessions": list[ChatSession]}`.
+- `ChatSession` fields: `id`, `title`, `createdAt`, `updatedAt`, `model`, `chatPreset`, `cfg`, and lightweight `msgs`.
+- Normalized OpenAI usage fields: `prompt_tokens`, `completion_tokens`, `total_tokens`, `cached_tokens`, `prompt_tokens_details.cached_tokens`, and `completion_tokens_details.reasoning_tokens`.
+- Gemini usage metadata includes `cachedContentTokenCount` derived from the same cache-token source.
+
+### 3. Contracts
+
+- Chat sessions are localStorage-only and per browser profile; they must not require a backend chat-session API.
+- Session snapshots store enough state to restore conversation text, assistant thinking, usage, selected model, preset, and chat settings.
+- Session snapshots should remain lightweight. Uploaded file data URLs must not be persisted indefinitely; restored file messages may keep text and lightweight metadata only.
+- The Playground must remove the topbar Chat Settings dropdown when settings are already exposed inline in the workbench.
+- Streaming chat must attach the final `choices: []` SSE usage chunk to the current assistant message.
+- Non-streaming chat must attach the JSON response `usage` object to the assistant message.
+- Cache telemetry must be displayed only when present or as zero/"miss" values; missing cache fields must normalize to `0` instead of breaking UI rendering.
+
+### 4. Validation & Error Matrix
+
+- Invalid or missing localStorage payload -> create a fresh local chat session and show a local history error only when storage access itself fails.
+- localStorage quota/security error on save -> keep the in-memory session usable and surface a save error in the session panel.
+- Missing `usage` on a response -> assistant message renders normally and usage chips stay hidden.
+- Usage with no `cached_tokens` -> cache count is `0` and cache hit rate is `0%`.
+- Streaming chunk with `usage: null` and content delta -> process content normally; only a non-empty final usage object updates usage telemetry.
+
+### 5. Good/Base/Bad Cases
+
+- Good: A streamed response ends with `{"choices": [], "usage": {"prompt_tokens": 20, "cached_tokens": 12}}`; the assistant message stores usage and the session total shows 12 cached reads.
+- Good: Reloading `/static/index.html#chat` restores the active local session, model, preset, settings, messages, and usage totals.
+- Base: A response without usage still displays content and stores the conversation; no usage chips are shown for that message.
+- Bad: Removing `cached_tokens` in `normalize_usage()` hides cache-hit telemetry from both streaming and non-streaming Playground responses.
+- Bad: Persisting uploaded file `data:` URLs for every historical message can exceed localStorage quota and make all session recovery fail.
+
+### 6. Tests Required
+
+- Backend response tests assert `normalize_usage()` and `sse_usage_chunk()` include `cached_tokens` and `prompt_tokens_details.cached_tokens`.
+- Gemini metadata tests assert `cachedContentTokenCount` is derived from normalized cached tokens.
+- Static frontend tests assert the local session key, create/restore/delete handlers, usage helpers, final SSE usage handling, session panel, usage panel, and absence of the Chat Settings dropdown.
+- Browser smoke checks should cover desktop and mobile Playground layout after adding session and usage panels.
+- WSL smoke checks should serve the static page and load the real accounts directory when API/static work changes.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+def normalize_usage(usage=None):
+	return {
+		"prompt_tokens": usage.get("prompt_tokens", 0),
+		"completion_tokens": usage.get("completion_tokens", 0),
+		"total_tokens": usage.get("total_tokens", 0),
+	}
+```
+
+This drops cache-read data already parsed from AI Studio wire usage, so the frontend cannot show cache hits.
+
+#### Correct
+
+```python
+def normalize_usage(usage=None):
+	cached_tokens = (usage or {}).get("cached_tokens", 0) or 0
+	return {
+		"prompt_tokens": (usage or {}).get("prompt_tokens", 0) or 0,
+		"completion_tokens": (usage or {}).get("completion_tokens", 0) or 0,
+		"total_tokens": (usage or {}).get("total_tokens", 0) or 0,
+		"cached_tokens": cached_tokens,
+		"prompt_tokens_details": {"cached_tokens": cached_tokens},
+	}
+```
+
+The OpenAI-compatible shape remains backward-compatible while cache telemetry survives the backend-to-frontend boundary.

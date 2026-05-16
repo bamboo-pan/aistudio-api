@@ -1,0 +1,53 @@
+{
+  "id": "playground-session-history",
+  "name": "playground-session-history",
+  "title": "playground session history management",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "u1",
+  "assignee": "u1",
+  "createdAt": "2026-05-16",
+  "completedAt": "2026-05-16",
+  "branch": null,
+  "base_branch": "feature/playground-session-history",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "prd_status": "override",
+    "workflow": {
+      "version": 1,
+      "current_step": "ready_to_finish",
+      "vcs": {
+        "kind": "git",
+        "commit_required": true
+      },
+      "implement": {
+        "dispatched_at": null,
+        "completed_at": "2026-05-16T05:33:56Z"
+      },
+      "check": {
+        "completed_at": "2026-05-16T05:40:21Z",
+        "fingerprint": "9180a551642426c67bfceb99dbf1ef5ac80e6baa567a6a09f31abb0b23443feb",
+        "head": "6bdd3a3ab82562acb8f5385b9b73cfbde4c0df41"
+      },
+      "spec_update": {
+        "reviewed_at": "2026-05-16T05:36:16Z",
+        "result": "updated"
+      },
+      "commit": {
+        "hash": "6bdd3a3ab82562acb8f5385b9b73cfbde4c0df41",
+        "recorded_at": "2026-05-16T05:40:21Z"
+      }
+    }
+  }
+}

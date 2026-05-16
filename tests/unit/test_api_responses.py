@@ -53,6 +53,8 @@ def test_sse_usage_chunk_matches_openai_style_shape():
         "prompt_tokens": 5,
         "completion_tokens": 161,
         "total_tokens": 166,
+        "cached_tokens": 0,
+        "prompt_tokens_details": {"cached_tokens": 0},
         "completion_tokens_details": {"reasoning_tokens": 153},
     }
 
@@ -62,7 +64,28 @@ def test_normalize_usage_defaults_missing_values_to_zero():
         "prompt_tokens": 0,
         "completion_tokens": 0,
         "total_tokens": 0,
+        "cached_tokens": 0,
+        "prompt_tokens_details": {"cached_tokens": 0},
         "completion_tokens_details": {"reasoning_tokens": 0},
+    }
+
+
+def test_normalize_usage_preserves_cached_tokens():
+    assert normalize_usage(
+        {
+            "prompt_tokens": 20,
+            "completion_tokens": 5,
+            "total_tokens": 25,
+            "cached_tokens": 12,
+            "completion_tokens_details": {"reasoning_tokens": 2},
+        }
+    ) == {
+        "prompt_tokens": 20,
+        "completion_tokens": 5,
+        "total_tokens": 25,
+        "cached_tokens": 12,
+        "prompt_tokens_details": {"cached_tokens": 12},
+        "completion_tokens_details": {"reasoning_tokens": 2},
     }
 
 
@@ -72,12 +95,14 @@ def test_to_gemini_usage_metadata_uses_visible_and_reasoning_tokens():
             "prompt_tokens": 9,
             "completion_tokens": 316,
             "total_tokens": 325,
+            "cached_tokens": 4,
             "completion_tokens_details": {"reasoning_tokens": 290, "visible_tokens": 26},
         }
     ) == {
         "promptTokenCount": 9,
         "candidatesTokenCount": 26,
         "thoughtsTokenCount": 290,
+        "cachedContentTokenCount": 4,
         "totalTokenCount": 325,
     }
 
