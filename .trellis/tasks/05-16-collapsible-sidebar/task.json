@@ -1,0 +1,53 @@
+{
+  "id": "collapsible-sidebar",
+  "name": "collapsible-sidebar",
+  "title": "collapsible sidebar",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "u1",
+  "assignee": "u1",
+  "createdAt": "2026-05-16",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "feature/collapsible-sidebar",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "prd_status": "override",
+    "workflow": {
+      "version": 1,
+      "current_step": "awaiting_commit",
+      "vcs": {
+        "kind": "git",
+        "commit_required": true
+      },
+      "implement": {
+        "dispatched_at": null,
+        "completed_at": "2026-05-16T03:19:23Z"
+      },
+      "check": {
+        "completed_at": "2026-05-16T03:19:23Z",
+        "fingerprint": "eb63b56212f8d8bf7678b1d145a916447dc11e18bc0874a44550e505dec6351f",
+        "head": "be2e5ceb6442280f77ce9e6226333f27992e7adb"
+      },
+      "spec_update": {
+        "reviewed_at": "2026-05-16T03:19:23Z",
+        "result": "noop"
+      },
+      "commit": {
+        "hash": null,
+        "recorded_at": null
+      }
+    }
+  }
+}
