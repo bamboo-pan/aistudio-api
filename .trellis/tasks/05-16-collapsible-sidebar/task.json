@@ -26,7 +26,7 @@
     "prd_status": "override",
     "workflow": {
       "version": 1,
-      "current_step": "awaiting_commit",
+      "current_step": "ready_to_finish",
       "vcs": {
         "kind": "git",
         "commit_required": true
@@ -45,8 +45,8 @@
         "result": "noop"
       },
       "commit": {
-        "hash": null,
-        "recorded_at": null
+        "hash": "fc82fdd2f77dba4486d12954d2d99ac064662a89",
+        "recorded_at": "2026-05-16T03:49:16Z"
       }
     }
   }
