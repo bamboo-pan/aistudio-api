@@ -246,3 +246,36 @@ Fixed the Playground Thinking off control by sending an explicit thinking=off re
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: Improve frontend dynamic layout
+
+**Date**: 2026-05-16
+**Task**: Improve frontend dynamic layout
+**Branch**: `master`
+
+### Summary
+
+Expanded image generation and account management layouts for wide screens, added regression coverage, verified with unit tests and WSL real smoke.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5399e74` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
