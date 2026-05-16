@@ -28,6 +28,17 @@ def test_static_frontend_exposes_playground_workbench_tools():
     assert "applyChatPreset(name)" in app_js
     assert "clearChat()" in app_js
     assert "copyMessage(m)" in app_js
+    assert "copyMessageText(m)" in app_js
+    assert "copyMessageMarkdown(m)" in app_js
+    assert "beginEditMessage(index)" in app_js
+    assert "saveEditedMessage(index)" in app_js
+    assert "rerunMessage(index)" in app_js
+    assert "branchFromMessage(index)" in app_js
+    assert "makeMessageApp(index)" in app_js
+    assert "deleteMessage(index)" in app_js
+    assert "completeChatFromCurrentMessages()" in app_js
+    assert "chatMessageApiContent(text,files=[])" in app_js
+    assert "chatRunModeSummary" in app_js
     assert "chatSessions:[]" in app_js
     assert "loadChatSessions()" in app_js
     assert "aistudio.chatSessions.v1" in app_js
@@ -38,7 +49,7 @@ def test_static_frontend_exposes_playground_workbench_tools():
     assert "messageUsageRows(message)" in app_js
     assert "cached_tokens" in app_js
     assert "if(d.usage&&(!d.choices||!d.choices.length))" in app_js
-    assert "chatRequestSummary" in app_js
+    assert "chatRequestSummary" not in app_js
     assert "chatCapabilityItems" in app_js
     assert "模型调试工作台" in index_html
     assert "本地会话" in index_html
@@ -47,13 +58,33 @@ def test_static_frontend_exposes_playground_workbench_tools():
     assert "@click=\"newChatSession()\"" in index_html
     assert "@click=\"restoreChatSession(session)\"" in index_html
     assert "@click=\"deleteChatSession(session)\"" in index_html
+    assert "@click=\"togglePlaygroundSideCollapsed()\"" in index_html
+    assert "playgroundSideCollapsed" in index_html
+    assert "side-collapsed" in index_html
+    assert "@click=\"toggleMessageMenu(i,$event)\"" in index_html
+    assert "@click=\"beginEditMessage(i)\"" in index_html
+    assert "@click=\"rerunMessage(i)\"" in index_html
+    assert "@click=\"branchFromMessage(i)\"" in index_html
+    assert "@click=\"makeMessageApp(i)\"" in index_html
+    assert "@click=\"copyMessageText(m)\"" in index_html
+    assert "@click=\"copyMessageMarkdown(m)\"" in index_html
+    assert "@click=\"deleteMessage(i)\"" in index_html
+    assert "Make this an app" in index_html
+    assert "x-text=\"chatRunModeSummary\"" in index_html
+    assert "请求摘要" not in index_html
+    assert "playground-metrics" not in index_html
     assert "Chat Settings" not in index_html
     assert "cfg-dropdown" not in index_html
     assert "configOpen" not in app_js
     assert "@click=\"applyChatPreset('balanced')\"" in index_html
-    assert "@click.stop=\"copyMessage(m)\"" in index_html
     assert "playground-shell" in style_css
     assert "grid-template-columns:minmax(0,1fr) 340px" in style_css
+    assert ".playground-shell.side-collapsed{grid-template-columns:minmax(0,1fr) 74px}" in style_css
+    assert ".playground-shell,.playground-shell.side-collapsed{grid-template-columns:1fr" in style_css
+    assert ".playground-side.is-collapsed{width:74px" in style_css
+    assert ".playground-side-toggle" in style_css
+    assert ".msg-menu" in style_css
+    assert ".msg-edit" in style_css
     assert ".chat-session-list" in style_css
     assert ".chat-usage-grid" in style_css
     assert ".msg-usage" in style_css

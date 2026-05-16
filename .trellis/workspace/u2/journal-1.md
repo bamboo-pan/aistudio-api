@@ -177,3 +177,36 @@ Removed the unused empty-chat prompt cards from the Playground, updated static f
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: Refine playground sidebar actions
+
+**Date**: 2026-05-16
+**Task**: Refine playground sidebar actions
+**Branch**: `feature/playground-sidebar-actions`
+
+### Summary
+
+Reduced duplicate playground request metadata, added a collapsible right rail, and introduced per-message edit/rerun/branch/copy/app actions with static frontend coverage.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `345456f` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

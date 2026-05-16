@@ -60,7 +60,7 @@
 
   <!-- Chat -->
   <div id="chat-page" class="playground-page" :class="{active:view==='chat'}">
-    <div class="playground-shell">
+    <div class="playground-shell" :class="{'side-collapsed':playgroundSideCollapsed}">
       <section class="playground-main">
         <div class="playground-header">
           <div class="playground-title-block">
@@ -73,13 +73,6 @@
           </div>
         </div>
 
-        <div class="playground-metrics">
-          <div class="playground-metric"><span>模型</span><strong x-text="model||'未选择'"></strong></div>
-          <div class="playground-metric"><span>请求</span><strong x-text="chatRequestSummary"></strong></div>
-          <div class="playground-metric"><span>附件</span><strong x-text="chatAttachmentSummary"></strong></div>
-          <div class="playground-metric"><span>Token</span><strong x-text="chatUsageSummary"></strong></div>
-        </div>
-
         <div class="playground-chat-panel">
           <div id="chat-scroll" class="playground-transcript">
             <template x-for="(m,i) in msgs" :key="i">
@@ -89,9 +82,35 @@
                   <div class="msg-content">
                     <div class="msg-meta">
                       <span x-text="m.role==='user'?'User':'Assistant'"></span>
-                      <button type="button" class="msg-tool" @click.stop="copyMessage(m)" title="复制消息">
-                        <svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
-                      </button>
+                      <div class="msg-actions">
+                        <button type="button" class="msg-tool msg-rerun" x-show="m.role!=='user'" :disabled="busy" @click.stop="rerunMessage(i)" title="重跑此轮" aria-label="重跑此轮">
+                          <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 11-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg>
+                        </button>
+                        <button type="button" class="msg-tool" x-show="m.role==='user'" :disabled="busy" @click.stop="beginEditMessage(i)" title="编辑消息" aria-label="编辑消息">
+                          <svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>
+                        </button>
+                        <div class="msg-menu-wrap" @click.stop>
+                          <button type="button" class="msg-tool" @click="toggleMessageMenu(i,$event)" title="更多操作" aria-label="更多操作" :aria-expanded="(messageMenuIndex===i).toString()">
+                            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+                          </button>
+                          <div class="msg-menu" x-show="messageMenuIndex===i" x-cloak>
+                            <button type="button" x-show="m.role==='user'" :disabled="busy" @click="beginEditMessage(i)"><svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg><span>Edit</span></button>
+                            <button type="button" :disabled="busy" @click="rerunMessage(i)"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 11-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg><span>Rerun this turn</span></button>
+                            <button type="button" :disabled="busy" @click="branchFromMessage(i)"><svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><path d="M8.2 8.2L15.8 15.8"/><path d="M18 8a6 6 0 00-6 6"/></svg><span>Branch from here</span></button>
+                            <button type="button" @click="copyMessageText(m)"><svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg><span>Copy as text</span></button>
+                            <button type="button" @click="copyMessageMarkdown(m)"><svg viewBox="0 0 24 24"><path d="M5 3h8l6 6v12H5z"/><path d="M13 3v6h6"/><path d="M8 15h8"/><path d="M8 18h5"/></svg><span>Copy as markdown</span></button>
+                            <button type="button" :disabled="busy" @click="makeMessageApp(i)"><svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/><path d="M8 9h8"/><path d="M8 13h3"/><path d="M14 13h2"/><path d="M8 17h8"/></svg><span>Make this an app</span></button>
+                            <button type="button" class="danger" :disabled="busy" @click="deleteMessage(i)"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg><span>Delete</span></button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="msg-edit" x-show="editingMessageIndex===i" x-cloak>
+                      <textarea x-model="editingMessageDraft" rows="3" @keydown.enter.prevent="if(!$event.shiftKey)saveEditedMessage(i)"></textarea>
+                      <div class="msg-edit-actions">
+                        <button type="button" class="btn btn-sm" @click="cancelEditMessage()">取消</button>
+                        <button type="button" class="btn btn-sm btn-primary" :disabled="busy" @click="saveEditedMessage(i)">保存并重跑</button>
+                      </div>
                     </div>
                     <template x-if="m.thinking">
                       <div class="think-block" @click="m.showThinking=!m.showThinking">
@@ -123,7 +142,7 @@
             <div id="input-box">
               <div class="chat-input-meta">
                 <span x-text="chatParameterSummary"></span>
-                <span x-text="chatRequestSummary"></span>
+                <span x-text="chatRunModeSummary"></span>
               </div>
               <div class="chat-attachments" x-show="chatFiles.length" x-cloak>
                 <template x-for="(file,index) in chatFiles" :key="file.url">
@@ -151,7 +170,10 @@
         </div>
       </section>
 
-      <aside class="playground-side">
+      <aside class="playground-side" :class="{'is-collapsed':playgroundSideCollapsed}">
+        <button type="button" class="playground-side-toggle" @click="togglePlaygroundSideCollapsed()" :title="playgroundSideCollapsed?'展开右侧栏':'收起右侧栏'" :aria-label="playgroundSideCollapsed?'展开右侧栏':'收起右侧栏'" :aria-pressed="playgroundSideCollapsed.toString()">
+          <svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
         <section class="playground-panel chat-session-panel">
           <div class="playground-panel-head">
             <div>
@@ -172,20 +194,6 @@
                 <button class="chat-session-delete" :disabled="busy" @click="deleteChatSession(session)" title="删除会话" aria-label="删除会话">×</button>
               </div>
             </template>
-          </div>
-        </section>
-
-        <section class="playground-panel">
-          <div class="playground-panel-head">
-            <div>
-              <div class="playground-section-label">Request</div>
-              <h2>请求摘要</h2>
-            </div>
-          </div>
-          <div class="request-summary-list">
-            <div><span>模型</span><strong x-text="model||'未选择'"></strong></div>
-            <div><span>参数</span><strong x-text="chatParameterSummary"></strong></div>
-            <div><span>附件</span><strong x-text="chatAttachmentSummary"></strong></div>
           </div>
         </section>
 
