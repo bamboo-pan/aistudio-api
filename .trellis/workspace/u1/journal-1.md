@@ -180,3 +180,36 @@ Added a desktop-collapsible static sidebar with persisted local preference, pres
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: Playground chat session history
+
+**Date**: 2026-05-16
+**Task**: Playground chat session history
+**Branch**: `feature/playground-session-history`
+
+### Summary
+
+Added localStorage-backed Playground chat sessions, consolidated chat settings, surfaced token/cache usage telemetry, and documented the usage contract.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6bdd3a3` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
