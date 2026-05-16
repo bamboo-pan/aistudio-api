@@ -5,57 +5,49 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import time
+import re
 import urllib.request
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger("aistudio.premium_detect")
 
 
 TIER_DETECT_JS = r"""() => {
-    const body = document.body.innerText.toLowerCase();
+    const bodyText = document.body ? (document.body.innerText || '') : '';
 
-    const headerEls = document.querySelectorAll('header, [role="banner"], nav');
-    let headerText = '';
-    headerEls.forEach(el => {
-        const t = el.innerText.trim();
-        if (t && t.length < 1000) headerText += t + '\n';
-    });
+    const textOf = (el) => String(el.innerText || el.textContent || '').trim();
+    const collectText = (selector, maxLength = 2000) => Array.from(document.querySelectorAll(selector))
+        .map(textOf)
+        .filter(Boolean)
+        .filter(text => text.length < maxLength)
+        .join('\n');
 
-    const emailMatch = headerText.match(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/i);
+    const headerText = collectText('header, [role="banner"], nav');
+    const buttonText = collectText('button, [role="button"], [aria-label]');
+    const overlayText = collectText('[role="dialog"], [role="menu"], .cdk-overlay-pane');
+    const allText = [headerText, buttonText, overlayText, bodyText].filter(Boolean).join('\n');
+
+    const emailMatch = allText.match(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/i);
     const email = emailMatch ? emailMatch[0] : null;
-    const lines = headerText.split('\n').map(l => l.trim()).filter(Boolean);
-    let tier = 'free';
-
-    if (email) {
-        const emailIdx = lines.findIndex(l => l.includes(email));
-        if (emailIdx >= 0) {
-            for (let i = Math.max(0, emailIdx - 1); i <= Math.min(lines.length - 1, emailIdx + 2); i++) {
-                const line = lines[i].toUpperCase().trim();
-                if (line === 'PRO' || line === 'AI PRO') {
-                    tier = 'pro';
-                    break;
-                }
-                if (line === 'ULTRA' || line === 'AI ULTRA') {
-                    tier = 'ultra';
-                    break;
-                }
-            }
-        }
-    }
-
-    if (tier === 'free' && (body.includes('upgrade to unlock') || body.includes('upgrade to get'))) {
-        tier = 'free';
-    }
 
     return {
-        tier: tier,
         email: email,
-        header: headerText.substring(0, 500),
+        header: headerText.substring(0, 1000),
+        text: allText.substring(0, 8000),
     };
+}"""
+
+
+ACCOUNT_MENU_CLICK_JS = r"""(email) => {
+    if (!email) return false;
+    const needle = String(email).toLowerCase();
+    const candidates = Array.from(document.querySelectorAll('button, [role="button"], [aria-label]'));
+    const target = candidates.find(el => String(el.innerText || el.textContent || el.getAttribute('aria-label') || '').toLowerCase().includes(needle));
+    if (!target) return false;
+    target.click();
+    return true;
 }"""
 
 
@@ -63,6 +55,92 @@ class AccountTier(str, Enum):
     FREE = "free"
     PRO = "pro"
     ULTRA = "ultra"
+
+
+EMAIL_RE = re.compile(r"[\w.+-]+@[\w.-]+\.[a-z]{2,}", re.IGNORECASE)
+TIER_TOKEN_RE = {
+    AccountTier.PRO: re.compile(r"(?<![A-Za-z0-9_-])(?:google\s+)?(?:ai\s+)?pro(?![A-Za-z0-9_-])", re.IGNORECASE),
+    AccountTier.ULTRA: re.compile(r"(?<![A-Za-z0-9_-])(?:google\s+)?(?:ai\s+)?ultra(?![A-Za-z0-9_-])", re.IGNORECASE),
+}
+ACCOUNT_CONTEXT_MARKERS = (
+    "manage membership",
+    "membership",
+    "switch account",
+    "sign out",
+    "google account",
+)
+UPGRADE_OFFER_MARKERS = (
+    "upgrade",
+    "try google ai",
+    "get google ai",
+    "subscribe",
+    "start trial",
+)
+
+
+def _text_lines(text: str | None) -> list[str]:
+    return [line.strip() for line in re.split(r"[\r\n]+", text or "") if line.strip()]
+
+
+def _has_tier_token(text: str, tier: AccountTier) -> bool:
+    return bool(TIER_TOKEN_RE[tier].search(text))
+
+
+def _is_upgrade_offer(text: str) -> bool:
+    lowered = text.lower()
+    return any(marker in lowered for marker in UPGRADE_OFFER_MARKERS)
+
+
+def _is_tier_context(line: str, email: str | None) -> bool:
+    lowered = line.lower()
+    if email and email.lower() in lowered:
+        return True
+    if any(marker in lowered for marker in ACCOUNT_CONTEXT_MARKERS):
+        return True
+    return False
+
+
+def parse_account_tier_from_text(text: str | None, email: str | None = None) -> AccountTier:
+    """Classify an AI Studio account tier from visible page/account-menu text."""
+    lines = _text_lines(text)
+    if not lines:
+        return AccountTier.FREE
+
+    email_lower = email.lower() if email else None
+    if email_lower:
+        for index, line in enumerate(lines):
+            if email_lower not in line.lower():
+                continue
+            window = "\n".join(lines[max(0, index - 2): index + 3])
+            if _is_upgrade_offer(window):
+                continue
+            for tier in (AccountTier.ULTRA, AccountTier.PRO):
+                if _has_tier_token(window, tier):
+                    return tier
+
+    for tier in (AccountTier.ULTRA, AccountTier.PRO):
+        for index, line in enumerate(lines):
+            window = "\n".join(lines[max(0, index - 2): index + 3])
+            if _is_upgrade_offer(window):
+                continue
+            if _has_tier_token(line, tier) and _is_tier_context(window, email):
+                return tier
+
+    return AccountTier.FREE
+
+
+def _tier_result_from_page_data(data: dict) -> TierResult:
+    email = data.get("email") if isinstance(data.get("email"), str) else None
+    header = data.get("header") if isinstance(data.get("header"), str) else ""
+    text = data.get("text") if isinstance(data.get("text"), str) else header
+    if email is None:
+        match = EMAIL_RE.search(text)
+        email = match.group(0) if match else None
+    return TierResult(
+        tier=parse_account_tier_from_text(text, email=email),
+        email=email,
+        raw_header=header,
+    )
 
 
 @dataclass
@@ -97,18 +175,23 @@ async def detect_tier(
     try:
         await page.goto(
             "https://aistudio.google.com/",
-            wait_until="networkidle",
+            wait_until="domcontentloaded",
             timeout=timeout_ms,
         )
-        await asyncio.sleep(2)
-
-        result = await page.evaluate(TIER_DETECT_JS)
-
-        return TierResult(
-            tier=AccountTier(result["tier"]),
-            email=result.get("email"),
-            raw_header=result.get("header"),
+        await page.wait_for_function(
+            "() => document.body && document.body.innerText && document.body.innerText.length > 0",
+            timeout=timeout_ms,
         )
+        await page.wait_for_timeout(2500)
+
+        result = _tier_result_from_page_data(await page.evaluate(TIER_DETECT_JS))
+        if result.tier == AccountTier.FREE and result.email:
+            opened = await page.evaluate(ACCOUNT_MENU_CLICK_JS, result.email)
+            if opened:
+                await page.wait_for_timeout(1000)
+                result = _tier_result_from_page_data(await page.evaluate(TIER_DETECT_JS))
+
+        return result
     finally:
         await page.close()
 
@@ -119,16 +202,21 @@ def detect_tier_sync(browser_context, timeout_ms: int = 30000) -> TierResult:
     try:
         page.goto(
             "https://aistudio.google.com/",
-            wait_until="networkidle",
+            wait_until="domcontentloaded",
             timeout=timeout_ms,
         )
-        time.sleep(2)
-        result = page.evaluate(TIER_DETECT_JS)
-        return TierResult(
-            tier=AccountTier(result["tier"]),
-            email=result.get("email"),
-            raw_header=result.get("header"),
+        page.wait_for_function(
+            "() => document.body && document.body.innerText && document.body.innerText.length > 0",
+            timeout=timeout_ms,
         )
+        page.wait_for_timeout(2500)
+        result = _tier_result_from_page_data(page.evaluate(TIER_DETECT_JS))
+        if result.tier == AccountTier.FREE and result.email:
+            opened = page.evaluate(ACCOUNT_MENU_CLICK_JS, result.email)
+            if opened:
+                page.wait_for_timeout(1000)
+                result = _tier_result_from_page_data(page.evaluate(TIER_DETECT_JS))
+        return result
     finally:
         page.close()
 

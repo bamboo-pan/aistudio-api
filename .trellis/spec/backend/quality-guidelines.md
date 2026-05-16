@@ -205,8 +205,72 @@ req = ChatRequest(model=image_model, messages=[...], thinking=user_thinking)
 ```python
 capabilities = get_model_capabilities(req.model, strict=True)
 if not capabilities.text_output or capabilities.image_output:
-		raise _bad_request("optimizer model must be text-only")
+	raise _bad_request("optimizer model must be text-only")
 thinking = req.thinking if capabilities.thinking else "off"
+```
+
+---
+
+### Scenario: AI Studio Account Tier Detection
+
+#### 1. Scope / Trigger
+
+- Trigger: Code that detects, refreshes, or persists account `tier` from a browser-authenticated AI Studio page.
+- Applies to `tier_detector`, `BrowserSession.detect_tier_for_auth_file`, account health checks, and tests around `/accounts/{id}/test`.
+
+#### 2. Signatures
+
+- Python API: `parse_account_tier_from_text(text: str | None, email: str | None = None) -> AccountTier`
+- Python API: `detect_tier_sync(browser_context, timeout_ms: int = 30000) -> TierResult`
+- Browser session API: `BrowserSession.detect_tier_for_auth_file(auth_file: str, timeout_ms: int = 30000) -> TierResult`
+- HTTP API: `POST /accounts/{account_id}/test` may refresh the stored tier when a browser session is available.
+
+#### 3. Contracts
+
+- Stored tiers remain normalized to `free`, `pro`, or `ultra`.
+- Explicit auth-file tier detection must test the provided `auth_file`; it must not require the active browser auth state to be configured first.
+- Page detection must wait until `document.body.innerText` is available before evaluating DOM text.
+- Detection should inspect account-context text such as the email account button and account menu, because AI Studio can expose `PRO`/`ULTRA` there instead of in a standalone header badge.
+- Upgrade or marketing text such as `Upgrade to Google AI Pro` must not be treated as proof that the signed-in account is Pro.
+- Logs, test artifacts, and task notes must not include cookies, tokens, or raw account identifiers beyond intentionally redacted values.
+
+#### 4. Validation & Error Matrix
+
+- `auth_file` missing -> raise the existing file/auth error path.
+- Storage state cannot create a context -> fall back to applying cookies when supported; otherwise surface the existing invalid-auth error.
+- Page redirects to Google sign-in -> report missing/invalid auth diagnostics without printing secrets.
+- Body text never becomes available before timeout -> propagate a browser timeout/error.
+- No account-context Pro/Ultra signal -> return `AccountTier.FREE`.
+
+#### 5. Good/Base/Bad Cases
+
+- Good: `<email> PRO` on the account button returns `AccountTier.PRO`.
+- Good: account menu text containing `Manage membership` and `Google AI Ultra` returns `AccountTier.ULTRA`.
+- Base: no premium account-context signal returns `AccountTier.FREE`.
+- Bad: `Upgrade to Google AI Pro` returns `AccountTier.PRO`.
+- Bad: checking a non-active account fails because no active auth is configured.
+
+#### 6. Tests Required
+
+- Unit tests for premium labels near the email/account menu context.
+- Unit tests for upgrade/marketing text staying Free.
+- Regression test that explicit `auth_file` detection does not call the active browser context warmup path.
+- Real WSL credential test for browser/account-tier changes when upstream AI Studio DOM behavior is involved.
+
+#### 7. Wrong vs Correct
+
+##### Wrong
+
+```python
+self._ensure_browser_sync()
+ctx = self._browser.new_context(storage_state=auth_file)
+```
+
+##### Correct
+
+```python
+self._ensure_browser_process_sync()
+ctx = self._browser.new_context(storage_state=auth_file)
 ```
 
 ---

@@ -1,5 +1,7 @@
 import pytest
 
+from aistudio_api.infrastructure.account import tier_detector
+from aistudio_api.infrastructure.account.tier_detector import AccountTier, TierResult
 from aistudio_api.infrastructure.gateway.session import AI_STUDIO_URL, BrowserSession
 
 
@@ -77,6 +79,41 @@ class BrowserSessionForTest(BrowserSession):
 
     def _install_hooks_sync(self, page) -> None:
         self.install_calls += 1
+
+
+class FakeTierContext:
+    def __init__(self):
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+class FakeTierBrowser:
+    def __init__(self):
+        self.storage_states = []
+        self.contexts = []
+
+    def new_context(self, **kwargs):
+        self.storage_states.append(kwargs.get("storage_state"))
+        context = FakeTierContext()
+        self.contexts.append(context)
+        return context
+
+
+class TierDetectionSessionForTest(BrowserSession):
+    def __init__(self):
+        super().__init__(port=0)
+        self.browser = FakeTierBrowser()
+        self.ensure_process_calls = 0
+
+    def _ensure_browser_process_sync(self):
+        self.ensure_process_calls += 1
+        self._browser = self.browser
+        return self.browser
+
+    def _ensure_browser_sync(self):
+        raise AssertionError("tier detection for an explicit auth file must not preheat the active browser context")
 
 
 def test_chat_url_detection_requires_aistudio_chat_route():
@@ -211,3 +248,20 @@ def test_install_hook_failure_reports_page_diagnostics():
     assert "default_MakerSuite=False" in message
     assert "textarea=True" in message
     assert "body=Chat shell visible without runtime" in message
+
+
+def test_detect_tier_for_auth_file_does_not_require_active_auth(monkeypatch):
+    session = TierDetectionSessionForTest()
+
+    def fake_detect_tier_sync(context, timeout_ms):
+        assert timeout_ms == 12345
+        return TierResult(tier=AccountTier.PRO, email="user@example.com", raw_header="user@example.com PRO")
+
+    monkeypatch.setattr(tier_detector, "detect_tier_sync", fake_detect_tier_sync)
+
+    result = session._detect_tier_for_auth_file_sync("/tmp/auth.json", timeout_ms=12345)
+
+    assert result.tier == AccountTier.PRO
+    assert session.ensure_process_calls == 1
+    assert session.browser.storage_states == ["/tmp/auth.json"]
+    assert session.browser.contexts[0].closed is True
