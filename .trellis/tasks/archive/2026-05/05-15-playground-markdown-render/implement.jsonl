@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/index.md","reason":"Spec layer index for the single-repo backend package that serves the static Playground UI."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Contains the Static Playground Workbench UI contract, safety constraints, and required static frontend tests."}
+{"file":".trellis/spec/backend/api-contracts.md","reason":"Confirms chat API contracts should remain unchanged while adding frontend-only rendering."}
+{"file":".trellis/spec/guides/index.md","reason":"Shared thinking guide index required before implementation."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Applies because this task adds local helper functions and must first check for existing similar logic."}
