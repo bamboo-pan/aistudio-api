@@ -475,7 +475,7 @@ def _validate_unsupported_image_fields(req: ImageRequest) -> None:
     if not unsupported:
         return
     fields = ", ".join(unsupported)
-    supported = "prompt, model, n, size, response_format, images"
+    supported = "prompt, model, n, size, response_format, images, timeout"
     ignored = ", ".join(IMAGE_IGNORED_OPENAI_FIELDS)
     raise ValueError(
         f"Unsupported image generation field(s): {fields}. Supported fields: {supported}. "
@@ -601,6 +601,7 @@ def _validate_image_request(req: ImageRequest):
         raise ValueError(f"n must be at least {IMAGE_N_MIN}")
     if req.n > IMAGE_N_MAX:
         raise ValueError(f"n must be {IMAGE_N_MAX} or less")
+    validate_number_range("timeout", req.timeout, minimum=1, integer=True)
     response_format = _normalize_image_response_format(req.response_format)
     return plan_image_generation(req.model, req.size), response_format
 
@@ -1341,6 +1342,8 @@ async def handle_image_generation(req: ImageRequest, client: AIStudioClient):
                         }
                         if image_paths:
                             image_kwargs["images"] = image_paths
+                        if req.timeout is not None:
+                            image_kwargs["timeout"] = req.timeout
                         output = await client.generate_image(**image_kwargs)
                         if not output.images:
                             raise RequestError(0, "AI Studio returned no image data")

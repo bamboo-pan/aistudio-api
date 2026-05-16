@@ -425,6 +425,11 @@
                   <input class="image-count" type="number" :min="imageCountMin" :max="imageCountMax" step="1" x-model.number="imageCount" @change="normalizeImageCount()">
                   <div class="control-hint" x-text="imageCountHint"></div>
                 </div>
+                <div class="image-control image-timeout-control">
+                  <div class="control-label">超时秒数</div>
+                  <input class="image-count" type="number" min="1" step="1" placeholder="默认" x-model="imageTimeout" @change="normalizeImageTimeout()">
+                  <div class="control-hint" x-text="imageTimeoutSummary"></div>
+                </div>
                 <div class="image-control">
                   <div class="control-label">响应格式</div>
                   <div class="image-param-value" x-text="imageResponseFormat"></div>

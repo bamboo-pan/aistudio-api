@@ -181,9 +181,12 @@ curl http://localhost:8080/v1/images/generations \
     "prompt": "画一座雨夜霓虹城市",
     "n": 2,
     "size": "1024x1024",
-    "response_format": "url"
+    "response_format": "url",
+    "timeout": 180
   }'
 ```
+
+`timeout` 为可选的单次图片生成超时秒数；不填时使用 `AISTUDIO_TIMEOUT_REPLAY`（默认 120 秒）。WebUI 图片生成页也提供“超时秒数”输入框，留空即使用服务端默认。
 
 响应会包含 `url`、`b64_json`、`path`、`delete_url`、`mime_type` 和 `size_bytes`。生成图片会持久化到服务端目录，可通过 WebUI 删除，也可调用：
 
@@ -333,7 +336,7 @@ curl -X POST http://localhost:8080/rotation/next
 | `AISTUDIO_CAMOUFOX_HEADLESS` | `1` | 网关浏览器是否无头运行；登录浏览器始终有头 |
 | `AISTUDIO_CAMOUFOX_PYTHON` | 空 | 指定启动 Camoufox 的 Python 解释器 |
 | `AISTUDIO_PROXY_SERVER` | 空 | Camoufox 浏览器代理，例如 WSL 使用 Windows 代理时可设为 `http://<WSL 网关 IP>:7890` |
-| `AISTUDIO_TIMEOUT_REPLAY` | `120` | 非流式回放超时秒数，图片生成大图耗时较久时可调大 |
+| `AISTUDIO_TIMEOUT_REPLAY` | `120` | 非流式回放默认超时秒数；图片生成可在 WebUI 或请求 `timeout` 字段中按单次请求覆盖 |
 | `AISTUDIO_TIMEOUT_STREAM` | `120` | 流式请求超时秒数 |
 | `AISTUDIO_TIMEOUT_CAPTURE` | `30` | 请求捕获超时秒数 |
 | `AISTUDIO_SNAPSHOT_CACHE_TTL` | `3600` | BotGuard snapshot 缓存时间秒数 |
