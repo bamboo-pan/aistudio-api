@@ -3,7 +3,7 @@
   "name": "collapsible-sidebar",
   "title": "collapsible sidebar",
   "description": "",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "u1",
   "assignee": "u1",
   "createdAt": "2026-05-16",
-  "completedAt": null,
+  "completedAt": "2026-05-16",
   "branch": null,
   "base_branch": "feature/collapsible-sidebar",
   "worktree_path": null,
@@ -36,17 +36,17 @@
         "completed_at": "2026-05-16T03:19:23Z"
       },
       "check": {
-        "completed_at": "2026-05-16T03:19:23Z",
+        "completed_at": "2026-05-16T03:53:55Z",
         "fingerprint": "eb63b56212f8d8bf7678b1d145a916447dc11e18bc0874a44550e505dec6351f",
-        "head": "be2e5ceb6442280f77ce9e6226333f27992e7adb"
+        "head": "8dce2589af8fe09847618320c698972a8fc9126e"
       },
       "spec_update": {
         "reviewed_at": "2026-05-16T03:19:23Z",
         "result": "noop"
       },
       "commit": {
-        "hash": "fc82fdd2f77dba4486d12954d2d99ac064662a89",
-        "recorded_at": "2026-05-16T03:49:16Z"
+        "hash": "8dce2589af8fe09847618320c698972a8fc9126e",
+        "recorded_at": "2026-05-16T03:53:55Z"
       }
     }
   }
