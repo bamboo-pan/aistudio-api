@@ -1,8 +1,12 @@
 开发流程：
-
-1. 开始前先确认工作区状态：`git status`。如果存在非本次任务改动，直接撤销。
-2. 在 `master` 上同步远端最新代码：`git fetch` 后执行 `git pull --ff-only origin master`。
-3. 从最新 `master` 根据任务新建 feature 分支。
-4. 除非有不得不停下来跟用户确认的点，否则不要中断，一直执行到完成
-5. 完成后再运行 `/finish-work`收尾,不用再找用户确认commit信息
-6. 确认最终状态无误后，将分支推送到远端，确保工作区干净
+1. 开始前先确认工作区状态：`git status`，如果有任何改动，直接stash，确保工作区干净
+2. 在 `master` 上pull远端最新代码到本地，git pull --ff-only origin master
+3. 基于master,根据任务新建 feature 分支，实现用户指定的任务
+4. 完成后再运行 `/finish-work`收尾,不用再找用户确认commit信息
+合并流程：
+1. 先git fetch origin，将origin/master合并到当前分支，如果有冲突处理掉，至少运行与合并影响面相关的测试，必要时跑wsl真实测试
+2. 创建PR将合并后的分支merge回主分支
+3. 本地切换到 master，git pull --ff-only origin master，确认合并处理完成
+4. 确认 PR 已合并，且本地分支已合并进 master，删除已经被合并进master的分支,通知用户完成
+通用部分：
+1. 除非有不得不停下来跟用户确认的点，否则不要中断，一直执行到完成
