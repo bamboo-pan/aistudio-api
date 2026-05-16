@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 4
+- **Total Sessions**: 5
 - **Last Active**: 2026-05-16
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~147 | Active |
+| `journal-1.md` | ~182 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 5 | 2026-05-16 | Collapsible sidebar | `faa24c9`, `fc82fdd`, `8dce258` | `feature/collapsible-sidebar` |
 | 4 | 2026-05-16 | Playground Markdown Rendering | `7d1a1f8` | `feat/playground-markdown-render` |
 | 3 | 2026-05-14 | Refactor account management usage controls | `68f9d03`, `9f8fc53` | `feature/account-management-usage-refactor` |
 | 2 | 2026-05-13 | Redesign image generation page | `d62bb83` | `feature/redesign-image-generation-page` |

@@ -41,6 +41,25 @@ def test_static_frontend_exposes_playground_workbench_tools():
     assert ".runtime-toggle>button.active" in style_css
 
 
+def test_static_frontend_exposes_collapsible_sidebar():
+    app_js = (ROOT / "src" / "aistudio_api" / "static" / "app.js").read_text(encoding="utf-8")
+    index_html = (ROOT / "src" / "aistudio_api" / "static" / "index.html").read_text(encoding="utf-8")
+    style_css = (ROOT / "src" / "aistudio_api" / "static" / "style.css").read_text(encoding="utf-8")
+
+    assert "sidebarCollapsed:false" in app_js
+    assert "loadSidebarPreference()" in app_js
+    assert "toggleSidebarCollapsed()" in app_js
+    assert "aistudio.sidebarCollapsed" in app_js
+    assert ":class=\"{'sidebar-collapsed':sidebarCollapsed}\"" in index_html
+    assert "sidebar-toggle" in index_html
+    assert "nav-label" in index_html
+    assert "sidebar-footer-label" in index_html
+    assert ".sidebar-collapsed .sidebar{width:72px" in style_css
+    assert ".sidebar-collapsed .sidebar-title,.sidebar-collapsed .nav-label,.sidebar-collapsed .sidebar-footer-label{display:none}" in style_css
+    assert ".sidebar-collapsed .sidebar-toggle svg{transform:rotate(180deg)}" in style_css
+    assert ".sidebar-collapsed .sidebar{width:300px}" in style_css
+
+
 def test_static_frontend_renders_playground_markdown_safely():
     app_js = (ROOT / "src" / "aistudio_api" / "static" / "app.js").read_text(encoding="utf-8")
     index_html = (ROOT / "src" / "aistudio_api" / "static" / "index.html").read_text(encoding="utf-8")

@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/index.md","reason":"Spec index for the single-repo backend/static frontend package."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Static Playground Workbench UI scenario covers static frontend behavior and test expectations."}
+{"file":".trellis/spec/guides/index.md","reason":"Shared thinking guide for avoiding cross-layer and reuse misses."}
