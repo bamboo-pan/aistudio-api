@@ -1,0 +1,53 @@
+{
+  "id": "refactor-readme",
+  "name": "refactor-readme",
+  "title": "refactor README from latest repository state",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "u2",
+  "assignee": "u2",
+  "createdAt": "2026-05-15",
+  "completedAt": "2026-05-16",
+  "branch": null,
+  "base_branch": "docs/refactor-readme",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "prd_status": "confirmed",
+    "workflow": {
+      "version": 1,
+      "current_step": "ready_to_finish",
+      "vcs": {
+        "kind": "git",
+        "commit_required": true
+      },
+      "implement": {
+        "dispatched_at": null,
+        "completed_at": "2026-05-16T00:47:26Z"
+      },
+      "check": {
+        "completed_at": "2026-05-16T00:47:27Z",
+        "fingerprint": "a31ead755c70e1177f7f490715ccc8aaa00d1b983600d66ac2b630b6fd8501e2",
+        "head": "2e146969d7057ec2c5d9d257aa8bfe2f2fae2429"
+      },
+      "spec_update": {
+        "reviewed_at": "2026-05-16T00:47:27Z",
+        "result": "noop"
+      },
+      "commit": {
+        "hash": "6bf915a00853d8c90f8899d635b5522d7d87223c",
+        "recorded_at": "2026-05-16T00:50:31Z"
+      }
+    }
+  }
+}
