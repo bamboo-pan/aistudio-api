@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/index.md","reason":"Spec layer index for final quality verification."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Quality check must validate Static Playground Workbench UI behavior and test coverage."}
+{"file":".trellis/spec/backend/api-contracts.md","reason":"Quality check must confirm chat request/response contracts remain unchanged."}
+{"file":".trellis/spec/guides/index.md","reason":"Shared thinking guide index for final verification."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Quality check should verify the new renderer did not duplicate an existing helper."}

@@ -1,0 +1,53 @@
+{
+  "id": "playground-markdown-render",
+  "name": "playground-markdown-render",
+  "title": "playground output markdown rendering",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "u1",
+  "assignee": "u1",
+  "createdAt": "2026-05-15",
+  "completedAt": "2026-05-16",
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "prd_status": "override",
+    "workflow": {
+      "version": 1,
+      "current_step": "ready_to_finish",
+      "vcs": {
+        "kind": "git",
+        "commit_required": true
+      },
+      "implement": {
+        "dispatched_at": null,
+        "completed_at": "2026-05-16T00:34:09Z"
+      },
+      "check": {
+        "completed_at": "2026-05-16T00:34:09Z",
+        "fingerprint": "c9180bf413a5c4a6747a02a9a70d465db707924078bcc7a42df0c8ef3d2e3cfc",
+        "head": "7d1a1f83c41a2abf763722cb61ee3b536bce1033"
+      },
+      "spec_update": {
+        "reviewed_at": "2026-05-16T00:34:10Z",
+        "result": "updated"
+      },
+      "commit": {
+        "hash": "7d1a1f83c41a2abf763722cb61ee3b536bce1033",
+        "recorded_at": "2026-05-16T00:34:10Z"
+      }
+    }
+  }
+}

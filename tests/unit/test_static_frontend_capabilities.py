@@ -41,6 +41,26 @@ def test_static_frontend_exposes_playground_workbench_tools():
     assert ".runtime-toggle>button.active" in style_css
 
 
+def test_static_frontend_renders_playground_markdown_safely():
+    app_js = (ROOT / "src" / "aistudio_api" / "static" / "app.js").read_text(encoding="utf-8")
+    index_html = (ROOT / "src" / "aistudio_api" / "static" / "index.html").read_text(encoding="utf-8")
+    style_css = (ROOT / "src" / "aistudio_api" / "static" / "style.css").read_text(encoding="utf-8")
+
+    assert "escapeHtml(value)" in app_js
+    assert "safeMarkdownUrl(value)" in app_js
+    assert "renderMarkdownInline(value)" in app_js
+    assert "markdownToHtml(value)" in app_js
+    assert "messageBodyHtml(m)" in app_js
+    assert "javascript|vbscript|data" in app_js
+    assert "target=\"_blank\"" in app_js
+    assert "x-html=\"messageBodyHtml(m)\"" in index_html
+    assert "'markdown-body':!m.error&&m.role!=='user'" in index_html
+    assert "x-text=\"m.error||m.content\"" not in index_html
+    assert ".msg-body.markdown-body" in style_css
+    assert ".markdown-body pre" in style_css
+    assert "white-space:normal" in style_css
+
+
 def test_static_frontend_exposes_account_health_tier_controls():
     app_js = (ROOT / "src" / "aistudio_api" / "static" / "app.js").read_text(encoding="utf-8")
     index_html = (ROOT / "src" / "aistudio_api" / "static" / "index.html").read_text(encoding="utf-8")
