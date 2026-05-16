@@ -143,3 +143,37 @@ Rendered generated-image Markdown as safe bounded images in the Playground trans
 ### Next Steps
 
 - None - task complete
+
+
+## Session 5: Remove Playground start cards
+
+**Date**: 2026-05-16
+**Task**: Remove Playground start cards
+**Branch**: `feature/remove-start-cards`
+
+### Summary
+
+Removed the unused empty-chat prompt cards from the Playground, updated static frontend tests, and verified on Windows/browser/WSL.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a0c3f55` | (see git log) |
+| `63fba09` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
