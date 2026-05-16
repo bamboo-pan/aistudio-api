@@ -210,3 +210,36 @@ Reduced duplicate playground request metadata, added a collapsible right rail, a
 ### Next Steps
 
 - None - task complete
+
+
+## Session 7: Fix Camoufox launcher import path
+
+**Date**: 2026-05-16
+**Task**: Fix Camoufox launcher import path
+**Branch**: `master`
+
+### Summary
+
+Fixed direct file execution of the Camoufox launcher in src-layout checkouts, added a launcher regression test, documented the subprocess import-path contract, verified with full unit tests and WSL real launcher startup, and merged PR #26.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5af91b9` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
