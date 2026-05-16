@@ -151,16 +151,16 @@ Phase 3: Finish  → distill lessons + wrap-up
 
 [workflow-state:no_task]
 No active task. **A Direct answer** — pure Q&A / explanation / lookup / chat; no file writes + one-line answer + repo reads ≤ 2 files → AI judges, no override needed.
-**B Create a task** — any implementation / code change / build / refactor work. Entry sequence: (1) `python ./.trellis/scripts/task.py create "<title>"` to create the task (status=planning, breadcrumb switches to [workflow-state:planning] for brainstorm + jsonl phase guidance) → (2) load `trellis-brainstorm` skill to discuss requirements with the user and iterate on prd.md → (3) once prd is done, jsonl is curated, and the Step 8 whole-PRD confirmation choice has been recorded (`confirmed` or `override`), run `task.py start <task-dir>` to enter [workflow-state:in_progress] for the implementation skeleton. For research-heavy external/technical discovery, the main session researches directly and persists findings to `{TASK_DIR}/research/*.md`. **"It looks small" is NOT grounds for downgrading B to A or C**.
+**B Create a task** — any implementation / code change / build / refactor work. Entry sequence: (1) `python ./.trellis/scripts/task.py create "<title>"` to create the task (status=planning, breadcrumb switches to [workflow-state:planning] for brainstorm + jsonl phase guidance) → (2) load `trellis-brainstorm` skill to discuss requirements with the user and iterate on prd.md → (3) once prd is done and jsonl is curated, run `task.py start <task-dir>` to enter [workflow-state:in_progress] for the implementation skeleton. For research-heavy external/technical discovery, the main session researches directly and persists findings to `{TASK_DIR}/research/*.md`. **"It looks small" is NOT grounds for downgrading B to A or C**.
 **C Inline change** (per-turn only, escape hatch for B) — the user's CURRENT message MUST contain one of: "skip trellis" / "no task" / "just do it" / "don't create a task" / "跳过 trellis" / "别走流程" / "小修一下" / "直接改" / "先别建任务" → briefly acknowledge ("ok, skipping trellis flow this turn"), then inline. **Without seeing one of these phrases you must NOT inline on your own**; do not invent an override the user never said.
 [/workflow-state:no_task]
 
 ### Phase 1: Plan
 - 1.0 Create task `[required · once]` (just `task.py create`; status enters planning)
-- 1.1 Requirement exploration `[required · repeatable]` — converge the PRD, then use `trellis-brainstorm` Step 8 for a whole-PRD confirm/revise/override choice
+- 1.1 Requirement exploration `[required · repeatable]`
 - 1.2 Research `[optional · repeatable]`
 - 1.3 Configure context `[required · once]` — Claude Code, Cursor, OpenCode, Codex, Kiro, Gemini, Qoder, CodeBuddy, Copilot, Droid, Pi
-- 1.4 Activate task `[required · once]` (run `task.py start` only after `meta.prd_status` is `confirmed` or `override`; status → in_progress)
+- 1.4 Activate task `[required · once]` (run `task.py start`; status → in_progress)
 - 1.5 Completion criteria
 
 <!-- Per-turn breadcrumb: shown throughout Phase 1 (status='planning') -->
@@ -168,11 +168,20 @@ No active task. **A Direct answer** — pure Q&A / explanation / lookup / chat; 
 [workflow-state:planning]
 Load the `trellis-brainstorm` skill and iterate on prd.md with the user.
 Phase 1.3 (required, once): before `task.py start`, you MUST curate `implement.jsonl` and `check.jsonl` — list the spec / research files the main session must read for implementation and checking. You may skip only if the jsonl already has curated entries (the seed `_example` row alone doesn't count).
-Before implementation, use `trellis-brainstorm` Step 8: present a whole-PRD confirmation summary and require a distinct user choice: confirm, revise, or override. A local answer to a final clarification/product preference question is not PRD confirmation; do NOT run `set-prd-status confirmed` in that same turn unless the same user message explicitly confirms the whole PRD.
-Record the result with `python ./.trellis/scripts/task.py set-prd-status <task-dir> confirmed` or `... override`. While `meta.prd_status` is `draft` (or missing), do NOT start implementation and do NOT run `task.py start`.
-Once jsonl is curated and `meta.prd_status` is `confirmed` or `override`, run `task.py start <task-dir>` to flip status to in_progress.
+Then run `task.py start <task-dir>` to flip status to in_progress.
 Research output **must** land in `{TASK_DIR}/research/*.md`, written by the main session. The PRD only links to persisted research files instead of duplicating raw research in chat.
 [/workflow-state:planning]
+
+<!-- Per-turn breadcrumb: shown throughout Phase 1 when codex.dispatch_mode=inline.
+  Kept for backward compatibility; the single-flow workflow still uses the
+  main session and still curates jsonl context before `task.py start`. -->
+
+[workflow-state:planning-inline]
+Load the `trellis-brainstorm` skill and iterate on prd.md with the user.
+Phase 1.3 (required, once): before `task.py start`, you MUST curate `implement.jsonl` and `check.jsonl` — list the spec / research files the main session must read for implementation and checking. You may skip only if the jsonl already has curated entries (the seed `_example` row alone doesn't count).
+Then run `task.py start <task-dir>` to flip status to in_progress.
+Research output **must** land in `{TASK_DIR}/research/*.md`, written by the main session. The PRD only links to persisted research files instead of duplicating raw research in chat.
+[/workflow-state:planning-inline]
 
 ### Phase 2: Execute
 - 2.1 Implement `[required · repeatable]`
@@ -188,10 +197,22 @@ Research output **must** land in `{TASK_DIR}/research/*.md`, written by the main
 [workflow-state:in_progress]
 **Flow**: main-session implement → main-session check → trellis-update-spec → commit (Phase 3.4) → `/trellis:finish-work`.
 **Next required action**: load `trellis-before-dev`, read `prd.md`, curated jsonl entries, and any `{TASK_DIR}/research/*.md`, then implement directly in the main session per Phase 2.1. After implementation, load/run `trellis-check` in the main session per Phase 2.2 before reporting completion.
-**No-repeat rule**: before each `[once]` or repeatable quality step, inspect the existing artifacts/results first. If PRD confirmation, jsonl curation, implementation, check, or spec-update judgment is already complete for the current code state, skip the completed work and continue from the next unfinished step.
+**No-repeat rule**: before each `[once]` or repeatable quality step, inspect the existing artifacts/results first. If jsonl curation, implementation, check, or spec-update judgment is already complete for the current code state, skip the completed work and continue from the next unfinished step.
 **Main-session role**: perform implementation, verification, the Phase 3.3 spec update gate, and then drive Phase 3.4 commit — state the commit plan in user-facing text, run `git commit`, and do this BEFORE suggesting `/trellis:finish-work`. `/finish-work` refuses to run on a dirty working tree (paths outside `.trellis/workspace/` and `.trellis/tasks/`).
 **Phase 3.3 spec update gate (required, once)**: after `trellis-check`, explicitly load/run/walk through `trellis-update-spec` and record whether spec updates were made or intentionally left unchanged before Phase 3.4 commit. Spec edits made during implementation/check do NOT replace this explicit main-session judgment.
 [/workflow-state:in_progress]
+
+<!-- Per-turn breadcrumb: shown while status='in_progress' when
+  codex.dispatch_mode=inline. Kept for backward compatibility; it now uses
+  the same single-flow main-session behavior as [workflow-state:in_progress]. -->
+
+[workflow-state:in_progress-inline]
+**Flow**: main-session implement → main-session check → trellis-update-spec → commit (Phase 3.4) → `/trellis:finish-work`.
+**Next required action**: load `trellis-before-dev`, read `prd.md`, curated jsonl entries, and any `{TASK_DIR}/research/*.md`, then implement directly in the main session per Phase 2.1. After implementation, load/run `trellis-check` in the main session per Phase 2.2 before reporting completion.
+**No-repeat rule**: before each `[once]` or repeatable quality step, inspect the existing artifacts/results first. If jsonl curation, implementation, check, or spec-update judgment is already complete for the current code state, skip the completed work and continue from the next unfinished step.
+**Main-session role**: perform implementation, verification, the Phase 3.3 spec update gate, and then drive Phase 3.4 commit — state the commit plan in user-facing text, run `git commit`, and do this BEFORE suggesting `/trellis:finish-work`. `/finish-work` refuses to run on a dirty working tree (paths outside `.trellis/workspace/` and `.trellis/tasks/`).
+**Phase 3.3 spec update gate (required, once)**: after `trellis-check`, explicitly load/run/walk through `trellis-update-spec` and record whether spec updates were made or intentionally left unchanged before Phase 3.4 commit. Spec edits made during implementation/check do NOT replace this explicit main-session judgment.
+[/workflow-state:in_progress-inline]
 
 ### Phase 3: Finish
 - 3.1 Quality verification `[required · repeatable]`
@@ -278,7 +299,7 @@ Skip when `python ./.trellis/scripts/task.py current --source` already points to
 Load the `trellis-brainstorm` skill and explore requirements interactively with the user per the skill's guidance.
 
 The brainstorm skill will guide you to:
-- Ask one question at a time; continue until all Blocking/Preference questions are resolved
+- Ask one question at a time
 - Prefer researching over asking the user
 - Prefer offering options over open-ended questions
 - Update `prd.md` immediately after each user answer
@@ -373,7 +394,7 @@ Goal: turn the prd into code that passes quality checks.
 
 1. Load the `trellis-before-dev` skill to read project guidelines
 2. Read `{TASK_DIR}/prd.md` for requirements
-3. Read curated entries from `{TASK_DIR}/implement.jsonl` and consult materials under `{TASK_DIR}/research/`
+3. Consult materials under `{TASK_DIR}/research/`
 4. Implement the code per requirements
 5. Run project lint and type-check
 
@@ -423,9 +444,7 @@ Load the `trellis-update-spec` skill and review whether this task produced new k
 - Pitfalls you hit
 - New technical decisions
 
-Update the docs under `.trellis/spec/` accordingly. This is a required main-session gate before Phase 3.4: after `trellis-check`, explicitly load/run/walk through `trellis-update-spec` and record whether spec updates were made or intentionally left unchanged.
-
-Spec edits made during implementation/check do NOT replace this explicit Phase 3.3 judgment. Even if specs were already edited during implementation, the main session still walks through `trellis-update-spec` and records the outcome.
+Update the docs under `.trellis/spec/` accordingly. Even if the conclusion is "nothing to update", walk through the judgment.
 
 #### 3.4 Commit changes `[required · once]`
 

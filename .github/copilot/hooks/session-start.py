@@ -1,16 +1,45 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Copilot Session Start Hook - Emit Trellis session-start diagnostics.
+Copilot Session Start Hook - Emit Trellis session-start context.
 
-GitHub Copilot's documented SessionStart behavior ignores hook output, so this
-script must not be treated as proof that model-visible context was injected.
-The JSON shape is kept for parity with other Trellis hooks and future host
-support, but current Copilot users should rely on UserPromptSubmit breadcrumbs
-and hook logs instead.
+Microsoft VS Code Agent hooks are in preview and have been documented since
+VS Code 1.110 (February 2026). The official documentation
+(https://code.visualstudio.com/docs/copilot/customization/hooks) defines
+`SessionStart.hookSpecificOutput.additionalContext` as the field used to inject
+additional context into the agent's conversation.
+
+This script emits the spec-compliant SessionStart payload. Whether Copilot
+actually consumes `additionalContext` depends on the user's installed VS Code
+and Copilot versions, which is outside Trellis's control. UserPromptSubmit
+breadcrumbs remain available as a per-turn complement.
 """
 
 from __future__ import annotations
+
+import sys
+
+# Force UTF-8 on stdin/stdout/stderr on Windows. Default codepage there is
+# cp936 / cp1252 / etc. — non-ASCII content (Chinese task names, prd snippets)
+# both in stdin (hook payload from host CLI) and stdout (our emitted blocks)
+# raises UnicodeDecodeError / UnicodeEncodeError. Equivalent to `python -X utf8`
+# but applied per-stream so we don't depend on host CLI's command wiring.
+if sys.platform.startswith("win"):
+    import io as _io
+    for _stream_name in ("stdin", "stdout", "stderr"):
+        _stream = getattr(sys, _stream_name, None)
+        if _stream is None:
+            continue
+        if hasattr(_stream, "reconfigure"):
+            try:
+                _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
+            except Exception:
+                pass
+        elif hasattr(_stream, "detach"):
+            try:
+                setattr(sys, _stream_name, _io.TextIOWrapper(_stream.detach(), encoding="utf-8", errors="replace"))
+            except Exception:
+                pass
 
 import json
 import os
@@ -21,10 +50,63 @@ import warnings
 from io import StringIO
 from pathlib import Path
 
+
+def _normalize_windows_shell_path(path_str: str) -> str:
+    """Normalize Unix-style shell paths to real Windows paths.
+
+    On Windows, shells like Git Bash / MSYS2 / Cygwin may report paths like
+    `/d/Users/...` or `/cygdrive/d/Users/...`. `Path.resolve()` will misinterpret
+    these as `D:/d/Users...` on drive D: (or similar), breaking repo root
+    detection.
+
+    This function is intentionally conservative: it only rewrites patterns that
+    unambiguously represent a drive letter mount.
+    """
+    if not isinstance(path_str, str) or not path_str:
+        return path_str
+
+    # Only relevant on Windows; keep other platforms untouched.
+    if not sys.platform.startswith("win"):
+        return path_str
+
+    p = path_str.strip()
+
+    # Already a Windows drive path (C:\... or C:/...)
+    if re.match(r"^[A-Za-z]:[\/]", p):
+        return p
+
+    # MSYS/Git-Bash style: /c/Users/... or /d/Work/...
+    m = re.match(r"^/([A-Za-z])/(.*)", p)
+    if m:
+        drive, rest = m.group(1).upper(), m.group(2)
+        rest = rest.replace('/', '\\')
+        return f"{drive}:\\{rest}"
+
+    # Cygwin style: /cygdrive/c/Users/...
+    m = re.match(r"^/cygdrive/([A-Za-z])/(.*)", p)
+    if m:
+        drive, rest = m.group(1).upper(), m.group(2)
+        rest = rest.replace('/', '\\')
+        return f"{drive}:\\{rest}"
+
+    # WSL mounted drive (sometimes leaked into env): /mnt/c/Users/...
+    m = re.match(r"^/mnt/([A-Za-z])/(.*)", p)
+    if m:
+        drive, rest = m.group(1).upper(), m.group(2)
+        rest = rest.replace('/', '\\')
+        return f"{drive}:\\{rest}"
+
+    return path_str
+
+
 warnings.filterwarnings("ignore")
 
 
 def should_skip_injection() -> bool:
+    if os.environ.get("TRELLIS_HOOKS") == "0":
+        return True
+    if os.environ.get("TRELLIS_DISABLE_HOOKS") == "1":
+        return True
     return os.environ.get("COPILOT_NON_INTERACTIVE") == "1"
 
 
@@ -63,18 +145,6 @@ def _has_curated_jsonl_entry(jsonl_path: Path) -> bool:
     except (OSError, UnicodeDecodeError):
         return False
     return False
-
-
-def _get_prd_status(task_data: dict) -> str:
-    meta = task_data.get("meta")
-    if isinstance(meta, dict):
-        value = meta.get("prd_status")
-        if value in ("draft", "confirmed", "override"):
-            return value
-    status = task_data.get("status")
-    if status in ("in_progress", "completed"):
-        return "confirmed"
-    return "draft"
 
 
 def read_file(path: Path, fallback: str = "") -> str:
@@ -158,12 +228,7 @@ def _resolve_task_dir(trellis_dir: Path, task_ref: str) -> Path:
 def _get_task_status(trellis_dir: Path, hook_input: dict) -> str:
     active = _resolve_active_task(trellis_dir, hook_input)
     if not active.task_path:
-        return (
-            f"Status: NO ACTIVE TASK\nSource: {active.source}\n"
-            "Next: Describe what you want to work on\n"
-            "Research reminder: for research-heavy external/technical discovery, research in the main "
-            "session and persist findings to `{TASK_DIR}/research/*.md` before linking them from the PRD."
-        )
+        return f"Status: NO ACTIVE TASK\nSource: {active.source}\nNext: Describe what you want to work on"
 
     task_ref = active.task_path
     task_dir = _resolve_task_dir(trellis_dir, task_ref)
@@ -194,36 +259,10 @@ def _get_task_status(trellis_dir: Path, hook_input: dict) -> str:
     has_prd = (task_dir / "prd.md").is_file()
 
     if not has_prd:
-        return (
-            f"Status: NOT READY\nTask: {task_title}\nSource: {active.source}\n"
-            "Missing: prd.md not created\n"
-            "Next: Write PRD (see workflow.md Phase 1.1) then curate implement.jsonl per Phase 1.3\n"
-            "Research reminder: do external/technical discovery in the main session; findings must go "
-            "to `{TASK_DIR}/research/*.md`, and the PRD should link to those files."
-        )
+        return f"Status: NOT READY\nTask: {task_title}\nSource: {active.source}\nMissing: prd.md not created\nNext: Write PRD (see workflow.md Phase 1.1) then curate implement.jsonl per Phase 1.3"
 
     if not has_context:
-        return f"Status: NOT READY\nTask: {task_title}\nSource: {active.source}\nMissing: implement.jsonl / check.jsonl missing or empty\nNext: Curate entries per workflow.md Phase 1.3 (spec + persisted research files from `{{TASK_DIR}}/research/*.md` only), then `task.py start`"
-
-    prd_status = _get_prd_status(task_data)
-    if prd_status == "draft":
-        return (
-            f"Status: PLANNING (PRD confirmation)\nTask: {task_title}\n"
-            f"Source: {active.source}\n"
-            "Next: use `trellis-brainstorm` Step 8 to present a whole-PRD confirmation summary, "
-            "then wait for a distinct user choice: confirm, revise, or override. "
-            "A local answer to a final clarification/product preference question is not PRD confirmation; "
-            "do NOT run `set-prd-status confirmed` in that same turn unless the same user message "
-            "explicitly confirms the whole PRD."
-        )
-
-    if task_status == "planning":
-        return (
-            f"Status: PLANNING (Phase 1.4)\nTask: {task_title}\n"
-            f"Source: {active.source}\n"
-            f"Next: run `python ./.trellis/scripts/task.py start {task_dir.name}` to enter Phase 2. "
-            f"The PRD gate is already satisfied (`prd_status={prd_status}`)."
-        )
+        return f"Status: NOT READY\nTask: {task_title}\nSource: {active.source}\nMissing: implement.jsonl / check.jsonl missing or empty\nNext: Curate entries per workflow.md Phase 1.3 (spec + research files only), then `task.py start`"
 
     return (
         f"Status: READY\nTask: {task_title}\n"
@@ -306,7 +345,7 @@ def main() -> None:
         hook_input = json.loads(sys.stdin.read())
         if not isinstance(hook_input, dict):
             hook_input = {}
-        project_dir = Path(hook_input.get("cwd", ".")).resolve()
+        project_dir = Path(_normalize_windows_shell_path(hook_input.get("cwd", "."))).resolve()
     except (json.JSONDecodeError, KeyError):
         hook_input = {}
         project_dir = Path(".").resolve()
@@ -398,10 +437,6 @@ If a task is READY, execute its Next required action without asking whether to c
     context = output.getvalue()
     result = {
         "suppressOutput": True,
-        "systemMessage": (
-            f"Trellis SessionStart diagnostics emitted ({len(context)} chars); "
-            "Copilot currently ignores sessionStart hook output."
-        ),
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",
             "additionalContext": context,
