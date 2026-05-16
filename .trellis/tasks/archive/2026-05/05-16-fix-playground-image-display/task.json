@@ -1,0 +1,53 @@
+{
+  "id": "fix-playground-image-display",
+  "name": "fix-playground-image-display",
+  "title": "fix playground image display",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "u2",
+  "assignee": "u2",
+  "createdAt": "2026-05-16",
+  "completedAt": "2026-05-16",
+  "branch": "fix-playground-image-display",
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "prd_status": "override",
+    "workflow": {
+      "version": 1,
+      "current_step": "ready_to_finish",
+      "vcs": {
+        "kind": "git",
+        "commit_required": true
+      },
+      "implement": {
+        "dispatched_at": null,
+        "completed_at": "2026-05-16T03:49:20Z"
+      },
+      "check": {
+        "completed_at": "2026-05-16T03:49:20Z",
+        "fingerprint": "70900b156841178a116c30c42be52d8d3d19cdbb310ccb9e00601392685f538c",
+        "head": "9ea75079c5c20851601498a3d3ef50ea7e303f1f"
+      },
+      "spec_update": {
+        "reviewed_at": "2026-05-16T03:49:21Z",
+        "result": "updated"
+      },
+      "commit": {
+        "hash": "9ea75079c5c20851601498a3d3ef50ea7e303f1f",
+        "recorded_at": "2026-05-16T03:49:21Z"
+      }
+    }
+  }
+}

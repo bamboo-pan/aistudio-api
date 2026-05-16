@@ -231,6 +231,7 @@ select.sel:focus,.sel:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(
 .markdown-body pre{margin:0 0 10px;padding:12px;border:1px solid var(--border);border-radius:8px;background:#0f172a;color:#e5e7eb;overflow-x:auto;line-height:1.55;white-space:pre}
 .markdown-body pre code{display:block;padding:0;border:none;background:transparent;color:inherit;font-size:13px;white-space:pre}
 .markdown-body a{color:#0f766e;text-decoration:underline;text-underline-offset:2px;word-break:break-word}
+.markdown-body img.markdown-image{display:block;max-width:min(100%,520px);max-height:520px;object-fit:contain;border:1px solid var(--border);border-radius:8px;background:var(--bg-alt);margin:6px 0 10px}
 .msg-images{display:flex;flex-wrap:wrap;gap:8px;margin-top:2px}
 .msg-image{width:112px;height:112px;object-fit:cover;border:1px solid var(--border);border-radius:8px;background:var(--bg-alt)}
 .msg-file{width:220px;min-height:64px;border:1px solid var(--border);border-radius:8px;background:#fff;display:grid;grid-template-columns:42px minmax(0,1fr);grid-template-rows:auto auto;gap:2px 8px;align-items:center;padding:10px}

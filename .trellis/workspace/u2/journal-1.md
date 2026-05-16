@@ -107,3 +107,39 @@ Redesigned the static Playground chat page as a model debugging workbench with r
 ### Next Steps
 
 - None - task complete
+
+
+## Session 4: Fix playground image display
+
+**Date**: 2026-05-16
+**Task**: Fix playground image display
+**Branch**: `fix-playground-image-display`
+
+### Summary
+
+Rendered generated-image Markdown as safe bounded images in the Playground transcript; added static frontend regression coverage, documented the Markdown image contract, verified on Windows and WSL with real account configuration.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7b02c25` | (see git log) |
+| `f2b3f68` | (see git log) |
+| `9ea7507` | (see git log) |
+| `07cc395` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -51,6 +51,10 @@ def test_static_frontend_renders_playground_markdown_safely():
     assert "renderMarkdownInline(value)" in app_js
     assert "markdownToHtml(value)" in app_js
     assert "messageBodyHtml(m)" in app_js
+    assert "imageTokens=[]" in app_js
+    assert "<img class=\"markdown-image\"" in app_js
+    assert "src=\"${this.escapeHtml(safe)}\"" in app_js
+    assert "safe?`<img class=\"markdown-image\"" in app_js
     assert "javascript|vbscript|data" in app_js
     assert "target=\"_blank\"" in app_js
     assert "x-html=\"messageBodyHtml(m)\"" in index_html
@@ -58,6 +62,7 @@ def test_static_frontend_renders_playground_markdown_safely():
     assert "x-text=\"m.error||m.content\"" not in index_html
     assert ".msg-body.markdown-body" in style_css
     assert ".markdown-body pre" in style_css
+    assert ".markdown-body img.markdown-image" in style_css
     assert "white-space:normal" in style_css
 
 
