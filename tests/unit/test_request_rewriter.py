@@ -126,3 +126,18 @@ def test_modify_body_strips_unsupported_image_generation_config_and_sets_size():
     assert body[3][17] is None
     assert body[3][26] == [None, "1K"]
     assert body[10] is None
+
+
+def test_modify_body_uses_requested_model_even_when_template_model_differs():
+    original = '["models/gemini-3-flash-preview",[[[[null,"old"]],"user"]],null,[null,null,null,128],"!snap",null,null]'
+
+    rewritten = modify_body(
+        original,
+        model="gemini-3.1-flash-image-preview",
+        prompt="new image",
+        sanitize_plain_text=False,
+        enable_thinking=False,
+    )
+
+    body = json.loads(rewritten)
+    assert body[0] == "models/gemini-3.1-flash-image-preview"

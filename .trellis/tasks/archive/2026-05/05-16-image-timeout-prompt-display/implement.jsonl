@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend conventions index for gateway and API changes"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Quality expectations and testing guidance for backend changes"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Search/reuse guidance for config and shared timeout behavior"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Cross-layer frontend/backend behavior for prompt optimizer and config docs"}

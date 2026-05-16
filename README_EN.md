@@ -333,7 +333,7 @@ Use environment variables or a `.env` file:
 | `AISTUDIO_CAMOUFOX_HEADLESS` | `1` | Whether the gateway browser runs headless; login browser is always headed |
 | `AISTUDIO_CAMOUFOX_PYTHON` | empty | Python executable used to launch Camoufox |
 | `AISTUDIO_PROXY_SERVER` | empty | Camoufox browser proxy, for example `http://<WSL gateway IP>:7890` when WSL must use a Windows proxy |
-| `AISTUDIO_TIMEOUT_REPLAY` | `120` | Non-streaming replay timeout in seconds |
+| `AISTUDIO_TIMEOUT_REPLAY` | `120` | Non-streaming replay timeout in seconds; increase it for slow large-image generation |
 | `AISTUDIO_TIMEOUT_STREAM` | `120` | Streaming request timeout in seconds |
 | `AISTUDIO_TIMEOUT_CAPTURE` | `30` | Request-capture timeout in seconds |
 | `AISTUDIO_SNAPSHOT_CACHE_TTL` | `3600` | BotGuard snapshot cache TTL in seconds |
