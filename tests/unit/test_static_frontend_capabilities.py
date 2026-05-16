@@ -309,7 +309,26 @@ def test_static_frontend_custom_select_supports_keyboard_and_scrollable_image_me
     assert "image-studio-compose" in index_html
     assert "imageSubmitHint" in app_js
     assert "imageRunSummary" in app_js
-    assert ".image-form-panel{grid-row:span 3;position:relative;overflow:visible" in style_css
+    assert ".image-form-panel{grid-column:1;grid-row:1 / span 2;position:relative;overflow:visible" in style_css
     assert ".image-studio-controls{grid-template-columns:1fr 1fr" in style_css
     assert "position:sticky" not in style_css.split("/* Image generation */", 1)[1].split("/* Toast */", 1)[0]
     assert "@media(max-width:960px)" in style_css
+
+
+def test_static_frontend_uses_dynamic_desktop_layouts():
+    index_html = (ROOT / "src" / "aistudio_api" / "static" / "index.html").read_text(encoding="utf-8")
+    style_css = (ROOT / "src" / "aistudio_api" / "static" / "style.css").read_text(encoding="utf-8")
+
+    assert ".account-pad{max-width:none" in style_css
+    assert ".image-studio-pad{max-width:none" in style_css
+    assert "image-main-column" in index_html
+    assert "image-side-column" in index_html
+    assert ".image-main-column,.image-side-column{min-width:0;display:flex;flex-direction:column;gap:18px}" in style_css
+    assert "@media(min-width:1440px)" in style_css
+    assert ".image-workspace{grid-template-columns:minmax(380px,460px) minmax(520px,1.45fr) minmax(300px,.75fr);grid-auto-flow:dense}" in style_css
+    assert ".image-main-column{grid-column:2;grid-row:1}" in style_css
+    assert ".image-side-column{grid-column:3;grid-row:1}" in style_css
+    assert ".image-result-gallery{grid-template-columns:repeat(auto-fit,minmax(360px,1fr))}" in style_css
+    assert "@media(min-width:1840px)" in style_css
+    assert ".image-result-card .image-thumb{aspect-ratio:auto;min-height:260px}" in style_css
+    assert ".image-result-card .image-thumb img{width:auto;height:auto;max-width:100%;max-height:min(70vh,760px);object-fit:contain}" in style_css

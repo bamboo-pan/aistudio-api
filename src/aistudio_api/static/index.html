@@ -453,7 +453,8 @@
             </div>
           </section>
 
-          <section class="image-panel image-results-panel">
+          <div class="image-main-column">
+            <section class="image-panel image-results-panel">
             <div class="image-panel-head image-results-head">
               <div>
                 <div class="image-section-label">当前输出</div>
@@ -491,9 +492,54 @@
               <h3 x-text="imageReferenceCount?'正在编辑图片':'正在生成图片'"></h3>
               <p x-text="imageRunSummary"></p>
             </div>
-          </section>
+            </section>
 
-          <section class="image-panel image-sessions-panel">
+            <section class="image-panel image-history-panel">
+              <div class="image-panel-head">
+                <div>
+                  <div class="image-section-label">素材库</div>
+                  <h2>本地历史</h2>
+                </div>
+                <span class="panel-meta" x-text="selectedHistoryCount?selectedHistoryCount+' 已选':imageHistory.length?imageHistory.length+' 张':''"></span>
+              </div>
+              <div class="image-history-tools" x-show="imageHistory.length" x-cloak>
+                <button class="btn btn-sm" :disabled="imageHistoryDeleting" @click="allHistorySelected?clearImageSelection():selectAllImageHistory()" x-text="allHistorySelected?'清除选择':'全选'"></button>
+                <button class="btn btn-sm" :disabled="!selectedHistoryCount||imageBusy" @click="pinSelectedHistory()">加入参考</button>
+                <button class="btn btn-sm" :disabled="!selectedHistoryCount||imageHistoryDeleting" @click="downloadSelectedImages()">下载所选</button>
+                <button class="btn btn-sm btn-danger-outline" :disabled="!selectedHistoryCount||imageHistoryDeleting" @click="deleteSelectedImages()" x-text="imageHistoryDeleting?'删除中':'删除所选'"></button>
+                <button class="btn btn-sm" :disabled="!imageHistory.length||imageHistoryDeleting" @click="clearImageHistory()">清空</button>
+              </div>
+              <div class="notice notice-error image-history-error" x-show="imageHistoryError" x-text="imageHistoryError" x-cloak></div>
+              <div class="image-gallery history-gallery" x-show="imageHistory.length" x-cloak>
+                <template x-for="item in imageHistory" :key="historyItemId(item)">
+                  <div class="image-card image-card-compact image-history-card" :class="{selected:isHistorySelected(item)}">
+                    <label class="image-select-check" @click.stop>
+                      <input type="checkbox" :checked="isHistorySelected(item)" @change="toggleHistorySelection(item)">
+                      <span></span>
+                    </label>
+                    <button type="button" class="image-thumb" @click="openImagePreview(item)" title="预览图片">
+                      <img :src="imageUrl(item)" :alt="item.prompt||'history image'">
+                    </button>
+                    <div class="image-card-body">
+                      <div class="image-card-title" x-text="item.prompt"></div>
+                      <div class="image-card-meta" x-text="item.model+' · '+item.size+' · '+fmtImageTime(item.created)"></div>
+                      <div class="image-card-actions">
+                        <button class="btn btn-sm" @click="downloadImage(item)">下载</button>
+                        <button class="btn btn-sm" @click="setBaseImage(item)">设为基图</button>
+                        <button class="btn btn-sm" @click="pinImageReference(item,'history')">作参考</button>
+                        <button class="btn btn-sm" @click="retryImage(item)">重试</button>
+                        <button class="btn btn-sm btn-danger-outline" :disabled="imageHistoryDeleting" @click="deleteHistoryImage(item)">删除</button>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+              </div>
+              <div class="image-empty image-compact-empty" x-show="!imageHistory.length">生成后的图片会自动进入本地历史。</div>
+            </section>
+          </div>
+
+          <div class="image-side-column">
+            <section class="image-panel image-sessions-panel">
             <div class="image-panel-head">
               <div>
                 <div class="image-section-label">会话历史</div>
@@ -522,9 +568,9 @@
             </div>
             <div class="image-empty image-compact-empty" x-show="!imageSessions.length&&!imageSessionLoading">生成成功后会自动保存到后端会话历史。</div>
             <div class="image-empty image-compact-empty" x-show="imageSessionLoading">正在加载会话历史...</div>
-          </section>
+            </section>
 
-          <section class="image-panel image-session-panel">
+            <section class="image-panel image-session-panel">
             <div class="image-panel-head">
               <div>
                 <div class="image-section-label">上下文</div>
@@ -550,50 +596,8 @@
             <div class="image-empty image-compact-empty" x-show="!imageConversation.length">
               首次生成后会记录提示词和输出，便于继续编辑。
             </div>
-          </section>
-
-          <section class="image-panel image-history-panel">
-            <div class="image-panel-head">
-              <div>
-                <div class="image-section-label">素材库</div>
-                <h2>本地历史</h2>
-              </div>
-              <span class="panel-meta" x-text="selectedHistoryCount?selectedHistoryCount+' 已选':imageHistory.length?imageHistory.length+' 张':''"></span>
-            </div>
-            <div class="image-history-tools" x-show="imageHistory.length" x-cloak>
-              <button class="btn btn-sm" :disabled="imageHistoryDeleting" @click="allHistorySelected?clearImageSelection():selectAllImageHistory()" x-text="allHistorySelected?'清除选择':'全选'"></button>
-              <button class="btn btn-sm" :disabled="!selectedHistoryCount||imageBusy" @click="pinSelectedHistory()">加入参考</button>
-              <button class="btn btn-sm" :disabled="!selectedHistoryCount||imageHistoryDeleting" @click="downloadSelectedImages()">下载所选</button>
-              <button class="btn btn-sm btn-danger-outline" :disabled="!selectedHistoryCount||imageHistoryDeleting" @click="deleteSelectedImages()" x-text="imageHistoryDeleting?'删除中':'删除所选'"></button>
-              <button class="btn btn-sm" :disabled="!imageHistory.length||imageHistoryDeleting" @click="clearImageHistory()">清空</button>
-            </div>
-            <div class="notice notice-error image-history-error" x-show="imageHistoryError" x-text="imageHistoryError" x-cloak></div>
-            <div class="image-gallery history-gallery" x-show="imageHistory.length" x-cloak>
-              <template x-for="item in imageHistory" :key="historyItemId(item)">
-                <div class="image-card image-card-compact image-history-card" :class="{selected:isHistorySelected(item)}">
-                  <label class="image-select-check" @click.stop>
-                    <input type="checkbox" :checked="isHistorySelected(item)" @change="toggleHistorySelection(item)">
-                    <span></span>
-                  </label>
-                  <button type="button" class="image-thumb" @click="openImagePreview(item)" title="预览图片">
-                    <img :src="imageUrl(item)" :alt="item.prompt||'history image'">
-                  </button>
-                  <div class="image-card-body">
-                    <div class="image-card-title" x-text="item.prompt"></div>
-                    <div class="image-card-meta" x-text="item.model+' · '+item.size+' · '+fmtImageTime(item.created)"></div>
-                    <div class="image-card-actions">
-                      <button class="btn btn-sm" @click="downloadImage(item)">下载</button>
-                      <button class="btn btn-sm" @click="setBaseImage(item)">设为基图</button>
-                      <button class="btn btn-sm" @click="pinImageReference(item,'history')">作参考</button>
-                      <button class="btn btn-sm" @click="retryImage(item)">重试</button>
-                      <button class="btn btn-sm btn-danger-outline" :disabled="imageHistoryDeleting" @click="deleteHistoryImage(item)">删除</button>
-                    </div>
-                  </div>
-                </div>
-              </template>
-            </div>
-            <div class="image-empty image-compact-empty" x-show="!imageHistory.length">生成后的图片会自动进入本地历史。</div>
-          </section>
+            </section>
+          </div>
         </div>
       </div>
     </div>
