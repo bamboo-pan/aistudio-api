@@ -351,6 +351,9 @@ ctx = self._browser.new_context(storage_state=auth_file)
 - Cache API: `SnapshotCache.put(prompt: str, snapshot: str, url: str, headers: dict, body: str, model: str | None = None) -> None`
 - Capture API: `RequestCaptureService.capture(prompt: str, model: str, ...) -> CapturedRequest | None`
 - Replay API: `RequestReplayService.replay(captured, body: str, timeout: int | None = None) -> tuple[int, bytes]`
+- OpenAI image API: `POST /v1/images/generations`
+- Image request schema: `ImageRequest.timeout: int | None`
+- Gateway API: `AIStudioClient.generate_image(..., timeout: int | None = None) -> ModelOutput`
 - Environment key: `AISTUDIO_TIMEOUT_REPLAY` controls non-streaming replay timeout in seconds.
 
 #### 3. Contracts
@@ -360,12 +363,17 @@ ctx = self._browser.new_context(storage_state=auth_file)
 - Snapshot cache entries for reusable prompt bodies must be scoped by both prompt and model to prevent a text-model/template body from being reused for an image-model request with the same prompt.
 - Callers should omit replay `timeout` unless they intentionally need a per-call override; the default must flow from `settings.timeout_replay` / `AISTUDIO_TIMEOUT_REPLAY`.
 - Image generation must use the same non-streaming replay timeout configuration as other non-streaming generation paths.
+- `/v1/images/generations` may accept an optional request-level `timeout` override in seconds for image generation only.
+- `ImageRequest.timeout` must be a positive integer when supplied; omit it to use `settings.timeout_replay`.
+- `handle_image_generation()` must pass `timeout` to `AIStudioClient.generate_image()` only when `req.timeout is not None`; default requests must not be converted into explicit per-call overrides.
+- Static image UI timeout controls must serialize `timeout` only when the user has set a positive value; blank means server default.
 
 #### 4. Validation & Error Matrix
 
 - Template body model differs from requested model -> rewrite to requested model before replay and logging.
 - Same prompt is used with two different models -> cache lookup must return the entry for the matching model only.
 - `timeout` is `None` at replay boundary -> use `settings.timeout_replay`.
+- `/v1/images/generations` has `timeout <= 0`, non-numeric, or non-integer -> `400 invalid_request_error` before upstream calls.
 - Large image generation times out with default replay timeout -> users can increase `AISTUDIO_TIMEOUT_REPLAY`; do not add hidden hard-coded image timeout values.
 
 #### 5. Good/Base/Bad Cases
@@ -373,9 +381,12 @@ ctx = self._browser.new_context(storage_state=auth_file)
 - Good: Capturing with a template body containing `models/gemini-3-flash-preview` and requested model `gemini-3.1-flash-image-preview` produces a captured body/log model of `models/gemini-3.1-flash-image-preview`.
 - Good: `SnapshotCache` stores `("same prompt", "text-model")` and `("same prompt", "image-model")` as separate entries.
 - Base: An explicit replay timeout override is still honored for a specialized caller.
+- Good: `/v1/images/generations` with `timeout: 240` forwards `240` through `AIStudioClient.generate_image()` to replay.
+- Base: `/v1/images/generations` without `timeout` sends no per-call timeout and replay uses `settings.timeout_replay`.
 - Bad: `RequestCaptureService` calls `modify_body(..., model=template.model or model)` and silently sticks to the template model.
 - Bad: Cache key is only `prompt`, causing cross-model body reuse.
 - Bad: Image generation passes `timeout=120` directly and ignores `AISTUDIO_TIMEOUT_REPLAY` changes.
+- Bad: UI serializes `timeout: 0`, `timeout: ""`, or a hidden default value, making blank/default behavior indistinguishable from an explicit override.
 
 #### 6. Tests Required
 
@@ -383,6 +394,8 @@ ctx = self._browser.new_context(storage_state=auth_file)
 - Capture service regression: `CapturedRequest.model` reflects the requested model even when the captured template body contains another model.
 - Snapshot cache regression: same prompt with different models returns separate cached bodies and misses for unrelated models.
 - Real WSL credential test for browser/gateway/image changes that depend on upstream AI Studio behavior; set a non-default `AISTUDIO_TIMEOUT_REPLAY` and verify image generation succeeds without timeout.
+- Image timeout override regression: request-level `timeout` is forwarded when supplied, omitted when absent, and invalid values are rejected before client calls.
+- Static frontend regression: image timeout input exists, blank means default, and request construction includes `timeout` only for positive user input.
 
 #### 7. Wrong vs Correct
 
@@ -400,6 +413,21 @@ status, raw = await replay_service.replay(captured, body=body, timeout=120)
 body = modify_body(template.body, model=model, prompt=prompt, snapshot=snapshot)
 cached = snapshot_cache.get(prompt, model=model)
 status, raw = await replay_service.replay(captured, body=body)
+```
+
+##### Correct request-level image timeout override
+
+```python
+image_kwargs = {"prompt": prompt, "model": model}
+if req.timeout is not None:
+	image_kwargs["timeout"] = req.timeout
+output = await client.generate_image(**image_kwargs)
+```
+
+```javascript
+const timeout = this.normalizeImageTimeout()
+const body = { model: this.imageModel, prompt, size: this.imageSize }
+if (timeout) body.timeout = timeout
 ```
 
 ---

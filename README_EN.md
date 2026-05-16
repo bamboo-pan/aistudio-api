@@ -181,9 +181,12 @@ curl http://localhost:8080/v1/images/generations \
     "prompt": "Draw a neon city in the rain",
     "n": 2,
     "size": "1024x1024",
-    "response_format": "url"
+    "response_format": "url",
+    "timeout": 180
   }'
 ```
+
+`timeout` is an optional per-request image generation timeout in seconds. When omitted, the server uses `AISTUDIO_TIMEOUT_REPLAY` (default 120 seconds). The WebUI image generation page also includes a timeout field; leave it blank to use the server default.
 
 The response includes `url`, `b64_json`, `path`, `delete_url`, `mime_type`, and `size_bytes`. Generated images are persisted on the server. Delete them from the WebUI or call:
 
@@ -333,7 +336,7 @@ Use environment variables or a `.env` file:
 | `AISTUDIO_CAMOUFOX_HEADLESS` | `1` | Whether the gateway browser runs headless; login browser is always headed |
 | `AISTUDIO_CAMOUFOX_PYTHON` | empty | Python executable used to launch Camoufox |
 | `AISTUDIO_PROXY_SERVER` | empty | Camoufox browser proxy, for example `http://<WSL gateway IP>:7890` when WSL must use a Windows proxy |
-| `AISTUDIO_TIMEOUT_REPLAY` | `120` | Non-streaming replay timeout in seconds; increase it for slow large-image generation |
+| `AISTUDIO_TIMEOUT_REPLAY` | `120` | Default non-streaming replay timeout in seconds; image generation can override it per request from the WebUI or `timeout` request field |
 | `AISTUDIO_TIMEOUT_STREAM` | `120` | Streaming request timeout in seconds |
 | `AISTUDIO_TIMEOUT_CAPTURE` | `30` | Request-capture timeout in seconds |
 | `AISTUDIO_SNAPSHOT_CACHE_TTL` | `3600` | BotGuard snapshot cache TTL in seconds |

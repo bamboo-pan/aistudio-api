@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend package index and pre-development entry point for API/image generation changes."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Contains replay timeout and image generation contracts relevant to request-level timeout overrides."}
