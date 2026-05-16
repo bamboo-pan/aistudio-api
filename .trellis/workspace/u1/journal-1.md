@@ -145,3 +145,38 @@ Added safe Markdown rendering for Playground assistant output, including local s
 ### Next Steps
 
 - None - task complete
+
+
+## Session 5: Collapsible sidebar
+
+**Date**: 2026-05-16
+**Task**: Collapsible sidebar
+**Branch**: `feature/collapsible-sidebar`
+
+### Summary
+
+Added a desktop-collapsible static sidebar with persisted local preference, preserved mobile drawer behavior, updated static frontend coverage, verified on Windows and WSL, and archived the Trellis task.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `faa24c9` | (see git log) |
+| `fc82fdd` | (see git log) |
+| `8dce258` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
