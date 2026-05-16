@@ -202,6 +202,15 @@ def test_static_frontend_exposes_image_upload_and_generation_page():
     assert ":min=\"imageCountMin\"" in index_html
     assert ":max=\"imageCountMax\"" in index_html
     assert "imageCountHint" in index_html
+    assert "imageTimeout:''" in app_js
+    assert "imageTimeoutSummary" in app_js
+    assert "normalizeImageTimeout()" in app_js
+    assert "if(timeout)body.timeout=timeout" in app_js
+    assert "this.imageTimeout=this.imageLastRequest.timeout?String(this.imageLastRequest.timeout):''" in app_js
+    assert "this.imageLastRequest?.timeout?String(this.imageLastRequest.timeout):''" in app_js
+    assert "超时秒数" in index_html
+    assert "x-model=\"imageTimeout\"" in index_html
+    assert "@change=\"normalizeImageTimeout()\"" in index_html
     assert "imageResponseFormat" in index_html
     assert "imageGenerationMeta" in app_js
     assert "response_format:this.imageResponseFormat" in app_js

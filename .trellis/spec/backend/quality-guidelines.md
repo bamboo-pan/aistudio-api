@@ -34,6 +34,21 @@ Questions to answer:
 
 (To be filled by the team)
 
+##### Correct request-level image timeout override
+
+```python
+image_kwargs = {"prompt": prompt, "model": model}
+if req.timeout is not None:
+	image_kwargs["timeout"] = req.timeout
+output = await client.generate_image(**image_kwargs)
+```
+
+```javascript
+const timeout = this.normalizeImageTimeout()
+const body = { model: this.imageModel, prompt, size: this.imageSize }
+if (timeout) body.timeout = timeout
+```
+
 ---
 
 ## Testing Requirements

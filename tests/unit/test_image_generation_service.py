@@ -22,21 +22,23 @@ from aistudio_api.domain.models import Candidate, GeneratedImage, ModelOutput
 
 
 SQUARE_PROMPT_SUFFIX = "Use a square 1:1 composition."
+_UNSET = object()
 
 
 class FakeImageClient:
     def __init__(self):
         self.calls = []
 
-    async def generate_image(self, *, prompt, model, generation_config_overrides=None, images=None):
-        self.calls.append(
-            {
-                "prompt": prompt,
-                "model": model,
-                "generation_config_overrides": generation_config_overrides,
-                "images": images,
-            }
-        )
+    async def generate_image(self, *, prompt, model, generation_config_overrides=None, images=None, timeout=_UNSET):
+        call = {
+            "prompt": prompt,
+            "model": model,
+            "generation_config_overrides": generation_config_overrides,
+            "images": images,
+        }
+        if timeout is not _UNSET:
+            call["timeout"] = timeout
+        self.calls.append(call)
         image_bytes = f"image-{len(self.calls)}".encode("ascii")
         return ModelOutput(
             candidates=[
@@ -50,35 +52,40 @@ class FakeImageClient:
 
 
 class FakeEmptyImageClient(FakeImageClient):
-    async def generate_image(self, *, prompt, model, generation_config_overrides=None, images=None):
-        self.calls.append(
-            {
-                "prompt": prompt,
-                "model": model,
-                "generation_config_overrides": generation_config_overrides,
-                "images": images,
-            }
-        )
+    async def generate_image(self, *, prompt, model, generation_config_overrides=None, images=None, timeout=_UNSET):
+        call = {
+            "prompt": prompt,
+            "model": model,
+            "generation_config_overrides": generation_config_overrides,
+            "images": images,
+        }
+        if timeout is not _UNSET:
+            call["timeout"] = timeout
+        self.calls.append(call)
         return ModelOutput(candidates=[Candidate(text="no image")])
 
 
 class FakeErrorImageClient(FakeImageClient):
-    async def generate_image(self, *, prompt, model, generation_config_overrides=None, images=None):
-        self.calls.append({"prompt": prompt, "model": model, "images": images})
+    async def generate_image(self, *, prompt, model, generation_config_overrides=None, images=None, timeout=_UNSET):
+        call = {"prompt": prompt, "model": model, "images": images}
+        if timeout is not _UNSET:
+            call["timeout"] = timeout
+        self.calls.append(call)
         raise RequestError(0, "capture failed")
 
 
 class FakeSecondImageErrorClient(FakeImageClient):
-    async def generate_image(self, *, prompt, model, generation_config_overrides=None, images=None):
+    async def generate_image(self, *, prompt, model, generation_config_overrides=None, images=None, timeout=_UNSET):
         if self.calls:
-            self.calls.append({"prompt": prompt, "model": model, "images": images})
+            call = {"prompt": prompt, "model": model, "images": images}
+            if timeout is not _UNSET:
+                call["timeout"] = timeout
+            self.calls.append(call)
             raise RequestError(0, "second capture failed")
-        return await super().generate_image(
-            prompt=prompt,
-            model=model,
-            generation_config_overrides=generation_config_overrides,
-            images=images,
-        )
+        kwargs = {"prompt": prompt, "model": model, "generation_config_overrides": generation_config_overrides, "images": images}
+        if timeout is not _UNSET:
+            kwargs["timeout"] = timeout
+        return await super().generate_image(**kwargs)
 
 
 class FakeChatClient:
@@ -193,7 +200,36 @@ def test_image_generation_runs_n_sequential_calls_and_aggregates_images():
     assert all(call["generation_config_overrides"] == {"output_image_size": [None, "1K"]} for call in client.calls)
     assert all(call["prompt"] == f"draw a city\n\n{SQUARE_PROMPT_SUFFIX}" for call in client.calls)
     assert all(call["images"] is None for call in client.calls)
+    assert all("timeout" not in call for call in client.calls)
     assert [base64.b64decode(item["b64_json"]) for item in response["data"]] == [b"image-1", b"image-2"]
+
+
+def test_image_generation_forwards_explicit_timeout_to_client():
+    client = FakeImageClient()
+    req = ImageRequest(
+        prompt="draw a city",
+        model="gemini-3.1-flash-image-preview",
+        timeout=241,
+    )
+
+    response = run_with_runtime(handle_image_generation(req, client))
+
+    assert response["data"][0]["b64_json"]
+    assert len(client.calls) == 1
+    assert client.calls[0]["timeout"] == 241
+
+
+@pytest.mark.parametrize("timeout", [0, -1])
+def test_image_generation_rejects_invalid_timeout_before_client_call(timeout):
+    client = FakeImageClient()
+    req = ImageRequest(prompt="draw", model="gemini-3.1-flash-image-preview", timeout=timeout)
+
+    with pytest.raises(HTTPException) as error:
+        run_with_runtime(handle_image_generation(req, client))
+
+    assert error.value.status_code == 400
+    assert "timeout" in error.value.detail["message"]
+    assert client.calls == []
 
 
 def test_image_generation_passes_data_uri_images_to_client_and_cleans_temp_file():
@@ -382,6 +418,12 @@ def test_image_generation_accepts_compatibility_user_field_without_claiming_effe
 
     assert len(client.calls) == 1
     assert response["data"][0]["b64_json"]
+
+
+def test_image_request_accepts_timeout_but_still_rejects_unknown_extra_fields():
+    req = ImageRequest.model_validate({"prompt": "draw", "timeout": 180})
+
+    assert req.timeout == 180
 
 
 def test_image_request_rejects_unknown_extra_fields():

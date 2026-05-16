@@ -305,6 +305,7 @@ class AIStudioClient:
         save_path: Optional[str] = None,
         generation_config_overrides: dict | None = None,
         images: Optional[list[str]] = None,
+        timeout: int | None = None,
     ) -> ModelOutput:
         if self._use_pure_http:
             raise RequestError(501, "Pure HTTP mode is experimental and does not support image generation; use browser mode")
@@ -323,7 +324,7 @@ class AIStudioClient:
             sanitize_plain_text=False,
             enable_thinking=False,
         )
-        status, raw = await self._replay_service.replay(captured, body=modified_body)
+        status, raw = await self._replay_service.replay(captured, body=modified_body, timeout=timeout)
         raw_text = raw.decode("utf-8", errors="replace")
         self._dump_raw_exchange(
             kind="generate_image",

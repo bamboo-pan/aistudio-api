@@ -75,6 +75,7 @@ class ImageRequest(BaseModel):
     output_compression: Optional[int] = None
     output_format: Optional[str] = None
     partial_images: Optional[int] = None
+    timeout: Optional[int] = None
     user: Optional[str] = None
 
 
