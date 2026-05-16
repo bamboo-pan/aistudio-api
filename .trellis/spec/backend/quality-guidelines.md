@@ -218,6 +218,69 @@ thinking = req.thinking if capabilities.thinking else "off"
 - Trigger: Code that detects, refreshes, or persists account `tier` from a browser-authenticated AI Studio page.
 - Applies to `tier_detector`, `BrowserSession.detect_tier_for_auth_file`, account health checks, and tests around `/accounts/{id}/test`.
 
+---
+
+### Scenario: Gateway Template Capture Latency
+
+#### 1. Scope / Trigger
+
+- Trigger: Code captures or refreshes an AI Studio `GenerateContent` request template for browser replay.
+- Applies to `BrowserSession._capture_template_sync`, request capture services, and gateway tests that model Playwright request/route behavior.
+
+#### 2. Signatures
+
+- Template fields required downstream: `url`, `headers`, `body`.
+- Source request fields: `route.request.url`, `route.request.headers`, `route.request.post_data`.
+- Dummy trigger prompt: the internal template capture request, not the user's actual prompt.
+
+#### 3. Contracts
+
+- Template capture must collect request metadata as soon as the `GenerateContent` request is issued.
+- Template capture must not wait for the dummy upstream model response body to complete.
+- The dummy `GenerateContent` request should be aborted after template metadata is captured so cold-template latency is not tied to model generation latency.
+- Temporary Playwright routes/listeners must be removed even if capture fails.
+- After aborting the dummy request, the hook page should still return to an idle state before the captured template is cached.
+
+#### 4. Validation & Error Matrix
+
+- No request body or too-short body -> continue the route and keep waiting for a valid GenerateContent request.
+- Template not captured before timeout -> raise a template capture timeout.
+- Route/listener cleanup skipped -> bug; future captures may intercept unrelated traffic.
+- Response-body based template capture -> performance bug; it reintroduces dummy-generation latency.
+
+#### 5. Good/Base/Bad Cases
+
+- Good: A temporary route captures `request.url`, `request.headers`, and `request.post_data`, aborts that request, removes the route, waits for idle, then caches the template.
+- Base: Cached templates are returned without installing a new route.
+- Bad: A response listener calls `response.text()` before accepting the template.
+
+#### 6. Tests Required
+
+- Unit test proving template capture uses request/route metadata and aborts the dummy request.
+- Unit test or assertion proving temporary route/listener cleanup happens.
+- Real WSL browser/API smoke test for gateway capture changes.
+
+#### 7. Wrong vs Correct
+
+##### Wrong
+
+```python
+def on_response(response):
+	text = response.text()
+	captured["body"] = response.request.post_data
+```
+
+##### Correct
+
+```python
+def on_route(route):
+	request = route.request
+	captured["url"] = request.url
+	captured["headers"] = dict(request.headers)
+	captured["body"] = request.post_data
+	route.abort()
+```
+
 #### 2. Signatures
 
 - Python API: `parse_account_tier_from_text(text: str | None, email: str | None = None) -> AccountTier`

@@ -530,25 +530,23 @@ class BrowserSession:
         page = self._ensure_botguard_service_sync()
         log.debug(f"[timing] botguard done in {_t.time()-_t0:.1f}s, starting template capture")
         captured: dict[str, Any] = {}
+        route_pattern = "**/*GenerateContent*"
 
-        def on_response(response):
-            if "GenerateContent" not in response.url or "Count" in response.url or captured:
+        def on_route(route):
+            request = route.request
+            if "GenerateContent" not in request.url or "Count" in request.url or captured:
+                route.continue_()
                 return
-            try:
-                text = response.text()
-            except Exception:
-                return
-            if len(text) <= 100:
-                return
-            req = response.request
-            body = req.post_data
+            body = request.post_data
             if not body or len(body) <= 100:
+                route.continue_()
                 return
-            captured["url"] = req.url
-            captured["headers"] = dict(req.headers)
+            captured["url"] = request.url
+            captured["headers"] = dict(request.headers)
             captured["body"] = body
+            route.abort()
 
-        page.on("response", on_response)
+        page.route(route_pattern, on_route)
         try:
             textarea = page.query_selector("textarea")
             if textarea is None:
@@ -558,19 +556,19 @@ class BrowserSession:
             if not self._click_run_button_sync(page):
                 raise RuntimeError("failed to trigger send during template capture")
 
-            for _ in range(30):
-                page.wait_for_timeout(1000)
+            for _ in range(300):
                 if captured:
                     break
+                page.wait_for_timeout(100)
             if not captured:
                 raise RuntimeError(f"template capture timeout for model={model}")
-
-            self._wait_until_idle_sync(page)
-            self._templates[model] = captured
-            log.debug(f"[timing] template captured for {model} in {_t.time()-_t0:.1f}s")
-            return captured
         finally:
-            page.remove_listener("response", on_response)
+            page.unroute(route_pattern, on_route)
+
+        self._wait_until_idle_sync(page)
+        self._templates[model] = captured
+        log.debug(f"[timing] template captured for {model} in {_t.time()-_t0:.1f}s")
+        return captured
 
     def _generate_snapshot_sync(self, contents: list[AistudioContent]) -> str:
         page = self._ensure_botguard_service_sync()
