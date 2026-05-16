@@ -233,6 +233,7 @@ def test_static_frontend_exposes_image_prompt_templates_and_optimizer():
     assert "promptOptimizerSupportsThinking" in app_js
     assert "optimizeImagePrompt()" in app_js
     assert "applyImagePromptOption(option)" in app_js
+    assert "this.imagePromptOptions=[]" in app_js
     assert "/v1/images/prompt-optimizations" in app_js
     assert "style_template:this.imageStyleTemplate" in app_js
     assert "thinking:this.promptOptimizerSupportsThinking?this.imagePromptOptimizerThinking:'off'" in app_js

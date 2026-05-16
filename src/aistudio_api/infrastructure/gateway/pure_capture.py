@@ -68,7 +68,7 @@ class PureHttpCaptureService:
 
         # Check cache first
         if not images and not force_refresh:
-            cached = self._snapshot_cache.get(prompt)
+            cached = self._snapshot_cache.get(prompt, model=model)
             if cached:
                 _snapshot, url, headers, body = cached
                 return CapturedRequest(url=url, headers=headers, body=body)
@@ -86,7 +86,7 @@ class PureHttpCaptureService:
         headers = self._build_headers()
 
         # Cache the result
-        self._snapshot_cache.put(prompt, snapshot, DEFAULT_URL, headers, body)
+        self._snapshot_cache.put(prompt, snapshot, DEFAULT_URL, headers, body, model=model)
 
         return CapturedRequest(
             url=DEFAULT_URL,

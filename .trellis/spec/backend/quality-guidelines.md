@@ -275,6 +275,72 @@ ctx = self._browser.new_context(storage_state=auth_file)
 
 ---
 
+### Scenario: AI Studio Captured Request Model and Snapshot Cache Scope
+
+#### 1. Scope / Trigger
+
+- Trigger: Backend code captures, rewrites, replays, or caches AI Studio `GenerateContent` request templates.
+- Applies to browser capture, pure HTTP capture, request rewriting, snapshot caching, and image/text generation paths that reuse captured request bodies.
+
+#### 2. Signatures
+
+- Cache API: `SnapshotCache.get(prompt: str, model: str | None = None) -> tuple | None`
+- Cache API: `SnapshotCache.put(prompt: str, snapshot: str, url: str, headers: dict, body: str, model: str | None = None) -> None`
+- Capture API: `RequestCaptureService.capture(prompt: str, model: str, ...) -> CapturedRequest | None`
+- Replay API: `RequestReplayService.replay(captured, body: str, timeout: int | None = None) -> tuple[int, bytes]`
+- Environment key: `AISTUDIO_TIMEOUT_REPLAY` controls non-streaming replay timeout in seconds.
+
+#### 3. Contracts
+
+- Captured templates are transport templates only; their embedded model must not override the model requested by the caller.
+- Rewritten bodies must set wire field index `0` to the caller-requested model, normalized with the `models/` prefix during encoding.
+- Snapshot cache entries for reusable prompt bodies must be scoped by both prompt and model to prevent a text-model/template body from being reused for an image-model request with the same prompt.
+- Callers should omit replay `timeout` unless they intentionally need a per-call override; the default must flow from `settings.timeout_replay` / `AISTUDIO_TIMEOUT_REPLAY`.
+- Image generation must use the same non-streaming replay timeout configuration as other non-streaming generation paths.
+
+#### 4. Validation & Error Matrix
+
+- Template body model differs from requested model -> rewrite to requested model before replay and logging.
+- Same prompt is used with two different models -> cache lookup must return the entry for the matching model only.
+- `timeout` is `None` at replay boundary -> use `settings.timeout_replay`.
+- Large image generation times out with default replay timeout -> users can increase `AISTUDIO_TIMEOUT_REPLAY`; do not add hidden hard-coded image timeout values.
+
+#### 5. Good/Base/Bad Cases
+
+- Good: Capturing with a template body containing `models/gemini-3-flash-preview` and requested model `gemini-3.1-flash-image-preview` produces a captured body/log model of `models/gemini-3.1-flash-image-preview`.
+- Good: `SnapshotCache` stores `("same prompt", "text-model")` and `("same prompt", "image-model")` as separate entries.
+- Base: An explicit replay timeout override is still honored for a specialized caller.
+- Bad: `RequestCaptureService` calls `modify_body(..., model=template.model or model)` and silently sticks to the template model.
+- Bad: Cache key is only `prompt`, causing cross-model body reuse.
+- Bad: Image generation passes `timeout=120` directly and ignores `AISTUDIO_TIMEOUT_REPLAY` changes.
+
+#### 6. Tests Required
+
+- Request rewriter unit test: template model differs from requested model and encoded body index `0` equals the requested model with `models/` prefix.
+- Capture service regression: `CapturedRequest.model` reflects the requested model even when the captured template body contains another model.
+- Snapshot cache regression: same prompt with different models returns separate cached bodies and misses for unrelated models.
+- Real WSL credential test for browser/gateway/image changes that depend on upstream AI Studio behavior; set a non-default `AISTUDIO_TIMEOUT_REPLAY` and verify image generation succeeds without timeout.
+
+#### 7. Wrong vs Correct
+
+##### Wrong
+
+```python
+body = modify_body(template.body, model=template.model or model, prompt=prompt, snapshot=snapshot)
+cached = snapshot_cache.get(prompt)
+status, raw = await replay_service.replay(captured, body=body, timeout=120)
+```
+
+##### Correct
+
+```python
+body = modify_body(template.body, model=model, prompt=prompt, snapshot=snapshot)
+cached = snapshot_cache.get(prompt, model=model)
+status, raw = await replay_service.replay(captured, body=body)
+```
+
+---
+
 ## Testing Requirements
 
 <!-- What level of testing is expected -->
