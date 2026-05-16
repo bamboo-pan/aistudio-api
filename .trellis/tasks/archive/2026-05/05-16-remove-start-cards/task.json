@@ -3,7 +3,7 @@
   "name": "remove-start-cards",
   "title": "remove unused start cards",
   "description": "",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "u2",
   "assignee": "u2",
   "createdAt": "2026-05-16",
-  "completedAt": null,
+  "completedAt": "2026-05-16",
   "branch": null,
   "base_branch": "feature/remove-start-cards",
   "worktree_path": null,
@@ -36,17 +36,17 @@
         "completed_at": "2026-05-16T06:30:26Z"
       },
       "check": {
-        "completed_at": "2026-05-16T06:30:43Z",
+        "completed_at": "2026-05-16T06:36:26Z",
         "fingerprint": "8b791c1a3b99066e7d48f2d9c458442f4119ba7405a6b28c28b5770736311ceb",
-        "head": "2cc56d6e105cb941421f26ebcf349d6c6a8cd20a"
+        "head": "63fba09e5a13354312827726195aedf1ca4fed07"
       },
       "spec_update": {
         "reviewed_at": "2026-05-16T06:31:01Z",
         "result": "noop"
       },
       "commit": {
-        "hash": "a0c3f55be3db6902c15520ce368fe9b57f33883b",
-        "recorded_at": "2026-05-16T06:32:31Z"
+        "hash": "63fba09e5a13354312827726195aedf1ca4fed07",
+        "recorded_at": "2026-05-16T06:36:49Z"
       }
     }
   }
