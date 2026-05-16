@@ -6,12 +6,12 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 
-from aistudio_api.application.api_service import handle_chat, handle_image_generation, handle_messages, handle_openai_responses, parse_image_request
+from aistudio_api.application.api_service import handle_chat, handle_image_generation, handle_image_prompt_optimization, handle_messages, handle_openai_responses, parse_image_request
 from aistudio_api.domain.model_capabilities import get_model_metadata, list_model_metadata
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
 
 from .dependencies import get_client
-from .schemas import ChatRequest
+from .schemas import ChatRequest, ImagePromptOptimizationRequest
 
 router = APIRouter()
 
@@ -48,4 +48,9 @@ async def messages(req: dict, client: AIStudioClient = Depends(get_client)):
 async def image_generations(req: Any = Body(...), client: AIStudioClient = Depends(get_client)):
     req = parse_image_request(req)
     return await handle_image_generation(req, client)
+
+
+@router.post("/v1/images/prompt-optimizations")
+async def image_prompt_optimizations(req: ImagePromptOptimizationRequest, client: AIStudioClient = Depends(get_client)):
+    return await handle_image_prompt_optimization(req, client)
 

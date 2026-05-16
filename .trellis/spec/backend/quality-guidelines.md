@@ -142,6 +142,73 @@ if (controlAvailable('thinking') && cfg.thinking !== 'off') body.thinking = cfg.
 if (controlAvailable('thinking')) body.thinking = cfg.thinking;
 ```
 
+### Scenario: Image Prompt Optimization Endpoint
+
+#### 1. Scope / Trigger
+
+- Trigger: Adding or changing the image prompt optimization API used by the static image generation UI.
+- Applies when backend code introduces a UI-only helper endpoint that reuses text chat generation to prepare prompts for image models.
+
+#### 2. Signatures
+
+- API: `POST /v1/images/prompt-optimizations`
+- Handler schema: `ImagePromptOptimizationRequest`
+- Service entry point: `handle_image_prompt_optimization(req, client)`
+
+#### 3. Contracts
+
+- Request fields:
+	- `prompt: string` — required, non-empty after trimming.
+	- `model: string` — required by default schema fallback; must be a registered text-output model and must not be an image-output model.
+	- `style_template: string` — one of the registered image style template ids; `none` preserves the original style direction.
+	- `thinking: "off" | "low" | "medium" | "high" | bool | null` — forwarded only when the selected optimization model supports thinking; otherwise normalized to `off`.
+- Response fields:
+	- `object: "image_prompt_optimization"`
+	- `model: string`
+	- `style_template: string`
+	- `style_label: string`
+	- `options: [{ title: string, special: string, prompt: string }]` — exactly three items.
+	- `usage` — optional chat usage from the underlying model call.
+
+#### 4. Validation & Error Matrix
+
+- Empty `prompt` -> `400 invalid_request_error`.
+- Unknown `style_template` -> `400 invalid_request_error`.
+- Unknown model -> `400 invalid_request_error`.
+- Image-output model selected as optimizer -> `400 invalid_request_error`.
+- Optimizer returns malformed JSON or not exactly 3 options -> `502 upstream_error`.
+
+#### 5. Good/Base/Bad Cases
+
+- Good: UI sends a raw prompt, `photorealistic`, `gemini-3-flash-preview`, and `thinking: "off"`; backend returns exactly three labeled prompt options.
+- Base: UI selects a text model without thinking support; backend normalizes thinking to `off` and still optimizes.
+- Bad: UI sends an image generation model as optimizer; backend rejects before any upstream call.
+
+#### 6. Tests Required
+
+- Service unit test: asserts exactly three returned options and style metadata.
+- Service unit test: asserts non-off thinking is forwarded to capable text models.
+- Service unit test: asserts thinking is normalized for text models without thinking support.
+- API route test: asserts invalid style template returns `400` and does not call the client.
+- Static frontend test: asserts UI exposes style templates, optimizer model selection, thinking control, endpoint path, and apply-option action.
+
+#### 7. Wrong vs Correct
+
+##### Wrong
+
+```python
+req = ChatRequest(model=image_model, messages=[...], thinking=user_thinking)
+```
+
+##### Correct
+
+```python
+capabilities = get_model_capabilities(req.model, strict=True)
+if not capabilities.text_output or capabilities.image_output:
+		raise _bad_request("optimizer model must be text-only")
+thinking = req.thinking if capabilities.thinking else "off"
+```
+
 ---
 
 ## Testing Requirements

@@ -14,9 +14,9 @@ from aistudio_api.config import settings
 from aistudio_api.api.dependencies import get_client
 from aistudio_api.api.routes_openai import router as openai_router
 from aistudio_api.api.routes_generated_images import register_generated_image_routes
-from aistudio_api.api.schemas import ChatRequest, ImageRequest
+from aistudio_api.api.schemas import ChatRequest, ImagePromptOptimizationRequest, ImageRequest
 from aistudio_api.api.state import runtime_state
-from aistudio_api.application.api_service import handle_chat, handle_image_generation
+from aistudio_api.application.api_service import handle_chat, handle_image_generation, handle_image_prompt_optimization
 from aistudio_api.domain.errors import RequestError
 from aistudio_api.domain.models import Candidate, GeneratedImage, ModelOutput
 
@@ -88,6 +88,31 @@ class FakeChatClient:
     async def generate_content(self, **kwargs):
         self.calls.append(kwargs)
         return ModelOutput(candidates=[Candidate(text='{"ok":true}')], usage={"total_tokens": 1})
+
+
+class FakePromptOptimizerClient:
+    def __init__(self):
+        self.calls = []
+
+    async def generate_content(self, **kwargs):
+        self.calls.append(kwargs)
+        return ModelOutput(
+            candidates=[
+                Candidate(
+                    text=json.dumps(
+                        {
+                            "options": [
+                                {"title": "构图稳定版", "special": "主体和空间关系更明确", "prompt": "优化提示词一"},
+                                {"title": "质感精修版", "special": "强化材质、光线和细节", "prompt": "优化提示词二"},
+                                {"title": "氛围创意版", "special": "加入镜头感和情绪变化", "prompt": "优化提示词三"},
+                            ]
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            ],
+            usage={"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
+        )
 
 
 def run_with_runtime(coro, *, generated_images_dir=None):
@@ -609,3 +634,77 @@ def test_chat_completion_passes_structured_response_format_to_gateway():
     assert call["generation_config_overrides"]["response_mime_type"] == "application/json"
     assert call["generation_config_overrides"]["response_schema"] == [6, None, None, None, None, None, [["ok", [4]]]]
     assert call["sanitize_plain_text"] is False
+
+
+def test_image_prompt_optimization_returns_three_options_and_forwards_thinking():
+    client = FakePromptOptimizerClient()
+    req = ImagePromptOptimizationRequest(
+        prompt="一张产品海报",
+        model="gemini-3-flash-preview",
+        style_template="photorealistic",
+        thinking="low",
+    )
+
+    response = run_with_runtime(handle_image_prompt_optimization(req, client))
+
+    assert response["object"] == "image_prompt_optimization"
+    assert response["model"] == "gemini-3-flash-preview"
+    assert response["style_template"] == "photorealistic"
+    assert response["style_label"] == "写实摄影"
+    assert [item["title"] for item in response["options"]] == ["构图稳定版", "质感精修版", "氛围创意版"]
+    call = client.calls[0]
+    assert call["model"] == "gemini-3-flash-preview"
+    assert call["generation_config_overrides"]["request_flag"] == 1
+    assert call["generation_config_overrides"]["response_mime_type"] == "application/json"
+    assert "写实摄影" in call["capture_prompt"]
+    assert "一张产品海报" in call["capture_prompt"]
+    assert call["sanitize_plain_text"] is False
+
+
+def test_image_prompt_optimization_normalizes_thinking_for_unsupported_model():
+    client = FakePromptOptimizerClient()
+    req = ImagePromptOptimizationRequest(
+        prompt="一张产品海报",
+        model="gemini-3.1-flash-tts-preview",
+        style_template="comic",
+        thinking="high",
+    )
+
+    response = run_with_runtime(handle_image_prompt_optimization(req, client))
+
+    assert response["options"][0]["prompt"] == "优化提示词一"
+    call = client.calls[0]
+    assert call["model"] == "gemini-3.1-flash-tts-preview"
+    assert call["generation_config_overrides"] is None
+
+
+def test_image_prompt_optimization_rejects_image_model_before_client_call():
+    client = FakePromptOptimizerClient()
+    req = ImagePromptOptimizationRequest(
+        prompt="一张产品海报",
+        model="gemini-3.1-flash-image-preview",
+        style_template="none",
+    )
+
+    with pytest.raises(HTTPException) as error:
+        run_with_runtime(handle_image_prompt_optimization(req, client))
+
+    assert error.value.status_code == 400
+    assert "text prompt optimization model" in error.value.detail["message"]
+    assert client.calls == []
+
+
+def test_image_prompt_optimization_route_rejects_unknown_style_template():
+    client = FakePromptOptimizerClient()
+
+    response = request_app(
+        openai_app(client),
+        "POST",
+        "/v1/images/prompt-optimizations",
+        json={"prompt": "一张产品海报", "model": "gemini-3-flash-preview", "style_template": "unknown"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["type"] == "invalid_request_error"
+    assert "style_template" in response.json()["detail"]["message"]
+    assert client.calls == []
