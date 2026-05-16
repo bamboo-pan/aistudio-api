@@ -13,11 +13,17 @@ def new_chat_id() -> str:
 
 
 def normalize_usage(usage: dict | None = None) -> dict:
+    prompt_details = (usage or {}).get("prompt_tokens_details") or {}
     completion_details = (usage or {}).get("completion_tokens_details") or {}
+    cached_tokens = (usage or {}).get("cached_tokens", prompt_details.get("cached_tokens", 0) if isinstance(prompt_details, dict) else 0) or 0
     return {
         "prompt_tokens": (usage or {}).get("prompt_tokens", 0) or 0,
         "completion_tokens": (usage or {}).get("completion_tokens", 0) or 0,
         "total_tokens": (usage or {}).get("total_tokens", 0) or 0,
+        "cached_tokens": cached_tokens,
+        "prompt_tokens_details": {
+            "cached_tokens": cached_tokens,
+        },
         "completion_tokens_details": {
             "reasoning_tokens": completion_details.get("reasoning_tokens", 0) or 0,
         },
@@ -25,14 +31,17 @@ def normalize_usage(usage: dict | None = None) -> dict:
 
 
 def to_gemini_usage_metadata(usage: dict | None = None) -> dict:
+    prompt_details = (usage or {}).get("prompt_tokens_details") or {}
     completion_details = (usage or {}).get("completion_tokens_details") or {}
     reasoning_tokens = completion_details.get("reasoning_tokens", 0) or 0
     visible_tokens = completion_details.get("visible_tokens")
     candidates_tokens = visible_tokens if visible_tokens is not None else (usage or {}).get("completion_tokens", 0)
+    cached_tokens = (usage or {}).get("cached_tokens", prompt_details.get("cached_tokens", 0) if isinstance(prompt_details, dict) else 0) or 0
     return {
         "promptTokenCount": (usage or {}).get("prompt_tokens", 0) or 0,
         "candidatesTokenCount": candidates_tokens or 0,
         "thoughtsTokenCount": reasoning_tokens,
+        "cachedContentTokenCount": cached_tokens,
         "totalTokenCount": (usage or {}).get("total_tokens", 0) or 0,
     }
 

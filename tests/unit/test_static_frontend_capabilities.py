@@ -28,9 +28,28 @@ def test_static_frontend_exposes_playground_workbench_tools():
     assert "applyChatPreset(name)" in app_js
     assert "clearChat()" in app_js
     assert "copyMessage(m)" in app_js
+    assert "chatSessions:[]" in app_js
+    assert "loadChatSessions()" in app_js
+    assert "aistudio.chatSessions.v1" in app_js
+    assert "restoreChatSession(session)" in app_js
+    assert "deleteChatSession(session)" in app_js
+    assert "newChatSession()" in app_js
+    assert "chatUsageRows" in app_js
+    assert "messageUsageRows(message)" in app_js
+    assert "cached_tokens" in app_js
+    assert "if(d.usage&&(!d.choices||!d.choices.length))" in app_js
     assert "chatRequestSummary" in app_js
     assert "chatCapabilityItems" in app_js
     assert "模型调试工作台" in index_html
+    assert "本地会话" in index_html
+    assert "Token 统计" in index_html
+    assert "messageUsageRows(m)" in index_html
+    assert "@click=\"newChatSession()\"" in index_html
+    assert "@click=\"restoreChatSession(session)\"" in index_html
+    assert "@click=\"deleteChatSession(session)\"" in index_html
+    assert "Chat Settings" not in index_html
+    assert "cfg-dropdown" not in index_html
+    assert "configOpen" not in app_js
     assert "prompt-template-card" in index_html
     assert "@click=\"usePromptTemplate(template)\"" in index_html
     assert "@click=\"applyChatPreset('balanced')\"" in index_html
@@ -38,6 +57,9 @@ def test_static_frontend_exposes_playground_workbench_tools():
     assert "playground-shell" in style_css
     assert "grid-template-columns:minmax(0,1fr) 340px" in style_css
     assert ".prompt-template-grid" in style_css
+    assert ".chat-session-list" in style_css
+    assert ".chat-usage-grid" in style_css
+    assert ".msg-usage" in style_css
     assert ".runtime-toggle>button.active" in style_css
 
 

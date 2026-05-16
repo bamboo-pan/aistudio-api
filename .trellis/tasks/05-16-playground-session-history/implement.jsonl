@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/index.md","reason":"Spec index for backend/static playground work."}
+{"file":".trellis/spec/backend/api-contracts.md","reason":"Usage response shape and static playground API contracts."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Static Playground workbench UI quality and testing expectations."}
+{"file":".trellis/spec/guides/index.md","reason":"Shared thinking guide index for cross-layer and reuse checks."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Usage data flows from backend response to frontend display and storage."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse existing localStorage/session and control patterns where possible."}

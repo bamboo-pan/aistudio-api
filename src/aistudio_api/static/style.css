@@ -201,7 +201,7 @@ select.sel:focus,.sel:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(
 .playground-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
 .playground-status-pill{border:1px solid var(--border);border-radius:999px;background:#fff;padding:6px 10px;font-size:12px;color:var(--muted);font-weight:700;white-space:nowrap}
 .playground-status-pill.is-live{background:#eff6ff;border-color:#bfdbfe;color:#1e40af}
-.playground-metrics{display:grid;grid-template-columns:minmax(180px,1fr) minmax(260px,2fr) minmax(220px,1.2fr);gap:10px}
+.playground-metrics{display:grid;grid-template-columns:minmax(150px,1fr) minmax(220px,1.4fr) minmax(180px,1fr) minmax(160px,1fr);gap:10px}
 .playground-metric{min-width:0;border:1px solid var(--border);border-radius:8px;background:#fff;padding:11px 12px;display:flex;flex-direction:column;gap:4px;box-shadow:0 6px 18px rgba(15,23,42,.035)}
 .playground-metric span{font-size:12px;color:var(--muted);font-weight:700}
 .playground-metric strong{font-size:14px;font-weight:700;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -232,6 +232,10 @@ select.sel:focus,.sel:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(
 .msg-body{line-height:1.7;white-space:pre-wrap;word-break:break-word;font-size:15px}
 .msg-body.error{color:var(--red)}
 .msg-body.markdown-body{white-space:normal}
+.msg-usage{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:2px}
+.msg-usage span{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--border);border-radius:999px;background:#fff;padding:4px 8px;font-size:12px;line-height:1;color:var(--muted);font-weight:650;max-width:100%}
+.msg-usage b{font-weight:700;color:var(--muted)}
+.msg-usage strong{font-weight:760;color:var(--text)}
 .markdown-body>:first-child{margin-top:0}
 .markdown-body>:last-child{margin-bottom:0}
 .markdown-body p{margin:0 0 10px}
@@ -289,6 +293,23 @@ select.sel:focus,.sel:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(
 .playground-panel{border:1px solid var(--border);border-radius:8px;background:#fff;box-shadow:0 8px 24px rgba(15,23,42,.035);overflow:visible}
 .playground-panel-head{padding:14px 15px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
 .playground-panel-head h2{font-size:15px;font-weight:730;line-height:1.25}
+.chat-session-error{margin:12px 15px 0}
+.chat-session-list{padding:10px 12px 12px;display:flex;flex-direction:column;gap:8px;max-height:300px;overflow-y:auto}
+.chat-session-item{min-width:0;border:1px solid var(--border);border-radius:8px;background:#fff;display:grid;grid-template-columns:minmax(0,1fr) 28px;gap:6px;align-items:start;padding:8px;transition:border-color .15s,box-shadow .15s,background .15s}
+.chat-session-item.active{border-color:var(--green);background:var(--green-bg);box-shadow:0 0 0 2px rgba(16,163,127,.12)}
+.chat-session-main{min-width:0;border:0;background:transparent;text-align:left;cursor:pointer;font-family:inherit;display:flex;flex-direction:column;gap:3px;padding:0;color:var(--text)}
+.chat-session-main:disabled{cursor:not-allowed;opacity:.65}
+.chat-session-main strong,.chat-session-main span,.chat-session-main small{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-session-main strong{font-size:13px;line-height:1.3;font-weight:730}
+.chat-session-main span{font-size:12px;line-height:1.35;color:var(--muted)}
+.chat-session-main small{font-size:11px;line-height:1.3;color:var(--muted)}
+.chat-session-delete{width:28px;height:28px;border:1px solid var(--border);border-radius:7px;background:#fff;color:var(--muted);cursor:pointer;font-size:18px;line-height:1;display:flex;align-items:center;justify-content:center}
+.chat-session-delete:hover{background:#fef2f2;border-color:#fecaca;color:#991b1b}
+.chat-session-delete:disabled{opacity:.45;cursor:not-allowed;background:#fff;color:var(--muted)}
+.chat-usage-grid{padding:12px 15px 15px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.chat-usage-cell{min-width:0;border:1px solid var(--border);border-radius:8px;background:var(--bg-alt);padding:10px;display:flex;flex-direction:column;gap:4px}
+.chat-usage-cell span{font-size:12px;color:var(--muted);font-weight:700;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chat-usage-cell strong{font-size:17px;font-weight:760;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .request-summary-list{padding:12px 15px;display:flex;flex-direction:column;gap:10px}
 .request-summary-list div{min-width:0;display:flex;flex-direction:column;gap:3px;border-bottom:1px solid #f0f0f0;padding-bottom:9px}
 .request-summary-list div:last-child{border-bottom:none;padding-bottom:0}
@@ -467,6 +488,8 @@ select.sel:focus,.sel:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(
   .playground-actions .btn{flex:1;justify-content:center;min-width:120px}
   .playground-status-pill{min-height:32px;display:flex;align-items:center}
   .playground-chat-panel{height:560px}
+  .chat-session-list{max-height:240px}
+  .chat-usage-grid{grid-template-columns:1fr}
   .prompt-template-grid{grid-template-columns:1fr}
   .prompt-template-card{min-height:96px}
   .playground-empty{padding:28px 14px}
