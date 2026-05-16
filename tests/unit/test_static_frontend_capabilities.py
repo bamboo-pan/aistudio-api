@@ -218,6 +218,37 @@ def test_static_frontend_exposes_image_upload_and_generation_page():
     assert "deleteSelectedImages()" in index_html
     assert "deleteHistoryImage(item)" in index_html
     assert "imageHistorySelection" in app_js
+
+
+def test_static_frontend_exposes_image_prompt_templates_and_optimizer():
+    app_js = (ROOT / "src" / "aistudio_api" / "static" / "app.js").read_text(encoding="utf-8")
+    index_html = (ROOT / "src" / "aistudio_api" / "static" / "index.html").read_text(encoding="utf-8")
+    style_css = (ROOT / "src" / "aistudio_api" / "static" / "style.css").read_text(encoding="utf-8")
+
+    assert "imageStyleTemplate:'none'" in app_js
+    assert "imageStyleTemplates" in app_js
+    assert "photorealistic" in app_js
+    assert "comic" in app_js
+    assert "textModels" in app_js
+    assert "promptOptimizerSupportsThinking" in app_js
+    assert "optimizeImagePrompt()" in app_js
+    assert "applyImagePromptOption(option)" in app_js
+    assert "/v1/images/prompt-optimizations" in app_js
+    assert "style_template:this.imageStyleTemplate" in app_js
+    assert "thinking:this.promptOptimizerSupportsThinking?this.imagePromptOptimizerThinking:'off'" in app_js
+    assert "imagePromptForRequest(prompt)" in app_js
+    assert "Style template:" in app_js
+    assert "promptOptionApplied" in app_js
+    assert "风格模板" in index_html
+    assert "提示词优化" in index_html
+    assert "优化模型" in index_html
+    assert "@click=\"optimizeImagePrompt()\"" in index_html
+    assert "@click=\"applyImagePromptOption(option)\"" in index_html
+    assert "imagePromptOptions" in index_html
+    assert "imagePromptOptimizerThinking" in index_html
+    assert ".image-prompt-optimizer" in style_css
+    assert ".prompt-option-card" in style_css
+    assert ".optimizer-controls" in style_css
     assert "sameOriginRequestPath" in app_js
     assert "explicit&&item?.path" in app_js
     assert "attachImageReferences($event)" in index_html

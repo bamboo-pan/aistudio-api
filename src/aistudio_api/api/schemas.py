@@ -78,6 +78,15 @@ class ImageRequest(BaseModel):
     user: Optional[str] = None
 
 
+class ImagePromptOptimizationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    prompt: str
+    model: str = DEFAULT_TEXT_MODEL
+    style_template: str = "none"
+    thinking: Optional[str | bool] = "off"
+
+
 class ImageMessage(BaseModel):
     type: str = "image_url"
     image_url: ImageUrl

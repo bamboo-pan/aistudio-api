@@ -45,12 +45,83 @@ from aistudio_api.api.responses import (
     to_gemini_usage_metadata,
     to_openai_tool_calls,
 )
-from aistudio_api.api.schemas import ChatRequest, GeminiGenerateContentRequest, ImageRequest
+from aistudio_api.api.schemas import ChatRequest, GeminiGenerateContentRequest, ImagePromptOptimizationRequest, ImageRequest
 from aistudio_api.api.state import runtime_state
 
 logger = logging.getLogger("aistudio.server")
 
 MAX_IMAGE_EDIT_INPUTS = 10
+
+
+IMAGE_STYLE_TEMPLATES: dict[str, dict[str, str]] = {
+    "none": {
+        "label": "无模板",
+        "description": "不追加固定风格，尽量保留原始表达。",
+        "prompt_hint": "",
+    },
+    "photorealistic": {
+        "label": "写实摄影",
+        "description": "对应官方 photography / photorealistic 提示类别。",
+        "prompt_hint": "Render as a photorealistic image with natural materials, believable lighting, camera/lens cues, depth of field, and high-detail textures.",
+    },
+    "comic": {
+        "label": "漫画插画",
+        "description": "对应 illustration / graphic art 提示类别。",
+        "prompt_hint": "Render as a polished comic illustration with clean line art, expressive shapes, controlled colors, readable composition, and strong visual storytelling.",
+    },
+    "digital-art": {
+        "label": "数字艺术",
+        "description": "对应 digital art / concept art 提示类别。",
+        "prompt_hint": "Render as cinematic digital art with polished art direction, stylized lighting, detailed environment design, and a high-quality finished look.",
+    },
+    "watercolor": {
+        "label": "水彩",
+        "description": "对应 painting / traditional media 提示类别。",
+        "prompt_hint": "Render as watercolor artwork with translucent washes, soft edges, paper texture, organic color blending, and delicate hand-painted detail.",
+    },
+    "oil-painting": {
+        "label": "油画",
+        "description": "对应 painting / historical art references 提示类别。",
+        "prompt_hint": "Render as an oil painting with visible brushwork, layered paint texture, rich value contrast, classical composition, and museum-quality finish.",
+    },
+    "anime": {
+        "label": "动漫",
+        "description": "对应 stylized illustration / animation 提示类别。",
+        "prompt_hint": "Render in anime-inspired cel animation style with expressive characters, clean silhouettes, crisp shading, vivid but controlled colors, and cinematic framing.",
+    },
+    "3d-render": {
+        "label": "3D 渲染",
+        "description": "对应 3D / product visualization 提示类别。",
+        "prompt_hint": "Render as a high-quality 3D scene with physically based materials, clean geometry, studio lighting, realistic shadows, and precise surface detail.",
+    },
+    "pixel-art": {
+        "label": "像素艺术",
+        "description": "对应 stylized illustration / game art 提示类别。",
+        "prompt_hint": "Render as pixel art with a crisp low-resolution pixel grid, limited color palette, readable silhouettes, and retro game asset clarity.",
+    },
+}
+
+
+IMAGE_PROMPT_OPTIMIZATION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "options": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "special": {"type": "string"},
+                    "prompt": {"type": "string"},
+                },
+                "required": ["title", "special", "prompt"],
+            },
+        }
+    },
+    "required": ["options"],
+}
 
 
 THINKING_LEVELS = {
@@ -257,6 +328,122 @@ def _thinking_overrides(value: str | bool | None) -> dict | None:
     if level is None:
         raise ValueError("thinking must be one of: off, low, medium, high")
     return {"thinking_config": AistudioThinkingConfig(level).to_wire(), "request_flag": 1}
+
+
+def _style_template_for(template_id: str) -> dict[str, str]:
+    template = IMAGE_STYLE_TEMPLATES.get((template_id or "none").strip())
+    if template is None:
+        supported = ", ".join(IMAGE_STYLE_TEMPLATES)
+        raise ValueError(f"style_template must be one of: {supported}")
+    return template
+
+
+def _optimizer_system_prompt() -> str:
+    return (
+        "You are an expert prompt optimizer for image generation models. "
+        "Return exactly three optimized prompt options as JSON matching the requested schema. "
+        "Each option must preserve the user's intent, make the visual scene concrete, and be directly usable as an image prompt. "
+        "Write titles and special notes in Chinese. Write optimized prompts in the user's language unless technical visual modifiers are clearer in English. "
+        "Do not include markdown, explanations, or extra keys."
+    )
+
+
+def _optimizer_user_prompt(raw_prompt: str, style_template_id: str, style_template: dict[str, str]) -> str:
+    style_hint = style_template.get("prompt_hint") or "No fixed style template. Preserve the original style direction."
+    return (
+        f"原始提示词:\n{raw_prompt}\n\n"
+        f"风格模板: {style_template['label']} ({style_template_id})\n"
+        f"模板说明: {style_template['description']}\n"
+        f"模板提示: {style_hint}\n\n"
+        "请输出 3 个优化版本:\n"
+        "1. 一个强调主体与构图的稳定版本。\n"
+        "2. 一个强调光线、材质与质感的精修版本。\n"
+        "3. 一个强调氛围、镜头感或创意变化的版本。\n"
+        "每个版本都必须包含 title、special、prompt。"
+    )
+
+
+def _extract_json_object(text: str) -> dict[str, Any]:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        lines = cleaned.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].startswith("```"):
+            lines = lines[:-1]
+        cleaned = "\n".join(lines).strip()
+    try:
+        data = json.loads(cleaned)
+    except json.JSONDecodeError:
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start < 0 or end <= start:
+            raise ValueError("optimizer response was not valid JSON") from None
+        data = json.loads(cleaned[start : end + 1])
+    if not isinstance(data, dict):
+        raise ValueError("optimizer response JSON must be an object")
+    return data
+
+
+def _normalize_prompt_optimization_options(payload: dict[str, Any]) -> list[dict[str, str]]:
+    raw_options = payload.get("options")
+    if not isinstance(raw_options, list) or len(raw_options) != 3:
+        raise ValueError("optimizer response must include exactly 3 options")
+    options: list[dict[str, str]] = []
+    for index, item in enumerate(raw_options, start=1):
+        if not isinstance(item, dict):
+            raise ValueError("optimizer response options must be objects")
+        title = str(item.get("title") or f"版本 {index}").strip()
+        special = str(item.get("special") or item.get("note") or "").strip()
+        prompt = str(item.get("prompt") or "").strip()
+        if not prompt:
+            raise ValueError("optimizer response option prompt is required")
+        options.append({"title": title, "special": special, "prompt": prompt})
+    return options
+
+
+async def handle_image_prompt_optimization(req: ImagePromptOptimizationRequest, client: AIStudioClient) -> dict[str, Any]:
+    raw_prompt = req.prompt.strip()
+    if not raw_prompt:
+        raise _bad_request("prompt is required", "invalid_request_error")
+    try:
+        style_template = _style_template_for(req.style_template)
+        capabilities = get_model_capabilities(req.model, strict=True)
+    except ValueError as exc:
+        raise _bad_request(str(exc), "invalid_request_error") from exc
+    if not capabilities.text_output or capabilities.image_output:
+        raise _bad_request(f"Model '{req.model}' must be a text prompt optimization model", "invalid_request_error")
+    thinking = req.thinking
+    if not capabilities.thinking:
+        thinking = "off"
+
+    chat_req = ChatRequest(
+        model=capabilities.id,
+        messages=[
+            {"role": "system", "content": _optimizer_system_prompt()},
+            {"role": "user", "content": _optimizer_user_prompt(raw_prompt, req.style_template, style_template)},
+        ],
+        thinking=thinking,
+        temperature=0.8,
+        response_format={"type": "json_schema", "json_schema": {"schema": IMAGE_PROMPT_OPTIMIZATION_SCHEMA}},
+    )
+    if not capabilities.structured_output:
+        chat_req.response_format = None
+
+    chat_response = await handle_chat(chat_req, client)
+    content = _chat_text(chat_response)
+    try:
+        options = _normalize_prompt_optimization_options(_extract_json_object(content))
+    except ValueError as exc:
+        raise HTTPException(502, detail={"message": str(exc), "type": "upstream_error"}) from exc
+    return {
+        "object": "image_prompt_optimization",
+        "model": capabilities.id,
+        "style_template": req.style_template,
+        "style_label": style_template["label"],
+        "options": options,
+        "usage": chat_response.get("usage"),
+    }
 
 
 def _merge_usage(total: dict, usage: dict | None) -> dict:

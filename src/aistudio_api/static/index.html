@@ -289,13 +289,71 @@
                 <span class="studio-step-index">1</span>
                 <div>
                   <h2>描述画面</h2>
-                  <p>写清主体、风格、光线和构图，后续编辑会沿用当前上下文。</p>
+                  <p>写清主体、风格、光线和构图，可先套用模板再优化提示词。</p>
                 </div>
               </div>
-              <textarea class="image-prompt" x-model="imagePrompt" placeholder="例如：一张干净的产品海报，玻璃杯放在浅灰色石材台面上，自然侧光，背景有少量绿植虚化" rows="7"></textarea>
+              <div class="image-style-row">
+                <div class="image-control">
+                  <div class="control-label">风格模板</div>
+                  <div class="cselect image-select" :class="{open:openSelect==='imageStyleTemplate'}" @click.stop>
+                    <div class="cselect-btn" @click="toggleSelect('imageStyleTemplate',$event)" tabindex="0"><span x-text="imageStyleLabel"></span><span class="arrow"></span></div>
+                    <div class="cselect-menu image-style-menu">
+                      <template x-for="template in imageStyleTemplates" :key="template.id">
+                        <div class="cselect-opt image-style-option" :class="{active:imageStyleTemplate===template.id}" @click="selectImageStyleTemplate(template.id)">
+                          <span x-text="template.label"></span><small x-text="template.desc"></small>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
+                  <div class="control-hint" x-text="imageStyleHint"></div>
+                </div>
+              </div>
+              <textarea class="image-prompt" x-model="imagePrompt" @input="imagePromptChanged()" placeholder="例如：一张干净的产品海报，玻璃杯放在浅灰色石材台面上，自然侧光，背景有少量绿植虚化" rows="7"></textarea>
               <div class="image-prompt-footer">
                 <span x-text="imagePrompt.trim()?imagePrompt.trim().length+' 字':'等待输入提示词'"></span>
-                <span x-text="imageReferenceCount?imageReferenceCount+' 张素材参与编辑':'纯文本生成'"></span>
+                <span x-text="imageStyleTemplate==='none'?'无模板':imageStyleLabel"></span>
+              </div>
+              <div class="image-prompt-optimizer">
+                <div class="optimizer-head">
+                  <div>
+                    <div class="image-section-label">Prompt Optimizer</div>
+                    <h3>提示词优化</h3>
+                  </div>
+                  <button class="btn btn-sm btn-primary" :disabled="!imagePromptOptimizeCanSubmit" @click="optimizeImagePrompt()" x-text="imagePromptOptimizing?'优化中':'优化提示词'"></button>
+                </div>
+                <div class="optimizer-controls">
+                  <div class="image-control">
+                    <div class="control-label">优化模型</div>
+                    <div class="cselect image-select" :class="{open:openSelect==='imagePromptOptimizerModel'}" @click.stop>
+                      <div class="cselect-btn" @click="toggleSelect('imagePromptOptimizerModel',$event)" tabindex="0"><span x-text="imagePromptOptimizerModel||'选择模型'"></span><span class="arrow"></span></div>
+                      <div class="cselect-menu">
+                        <template x-for="m in textModels" :key="m.id"><div class="cselect-opt" :class="{active:imagePromptOptimizerModel===m.id}" @click="selectPromptOptimizerModel(m.id)" x-text="m.id"></div></template>
+                        <div class="cselect-opt" aria-disabled="true" x-show="!textModels.length">暂无文本模型</div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="image-control">
+                    <div class="control-label">思考</div>
+                    <div class="cselect image-select" :class="{open:openSelect==='imagePromptOptimizerThinking'}" @click.stop>
+                      <div class="cselect-btn" @click="toggleSelect('imagePromptOptimizerThinking',$event)" tabindex="0"><span x-text="!promptOptimizerSupportsThinking?'不支持':imagePromptOptimizerThinking==='off'?'关闭':imagePromptOptimizerThinking==='low'?'低':imagePromptOptimizerThinking==='medium'?'中':imagePromptOptimizerThinking==='high'?'高':imagePromptOptimizerThinking"></span><span class="arrow"></span></div>
+                      <div class="cselect-menu">
+                        <template x-for="v in ['off','low','medium','high']" :key="v"><div class="cselect-opt" :class="{active:imagePromptOptimizerThinking===v}" :aria-disabled="(!promptOptimizerSupportsThinking&&v!=='off').toString()" @click="setPromptOptimizerThinking(v)" x-text="v==='off'?'关闭':v==='low'?'低':v==='medium'?'中':v==='high'?'高':v"></div></template>
+                      </div>
+                    </div>
+                    <div class="control-hint" x-text="promptOptimizerSupportsThinking?'按优化模型能力发送 thinking':'当前优化模型不支持思考'"></div>
+                  </div>
+                </div>
+                <div class="notice notice-error image-prompt-optimize-error" x-show="imagePromptOptimizeError" x-text="imagePromptOptimizeError" x-cloak></div>
+                <div class="prompt-option-list" x-show="imagePromptOptions.length" x-cloak>
+                  <template x-for="(option,index) in imagePromptOptions" :key="option.title+index">
+                    <div class="prompt-option-card">
+                      <div class="prompt-option-meta"><span x-text="'版本 '+(index+1)"></span><strong x-text="option.title"></strong></div>
+                      <p x-text="option.special"></p>
+                      <div class="prompt-option-text" x-text="option.prompt"></div>
+                      <button class="btn btn-sm" :disabled="imageBusy" @click="applyImagePromptOption(option)">应用此版本</button>
+                    </div>
+                  </template>
+                </div>
               </div>
             </div>
 
