@@ -1,8 +1,47 @@
+import json
+
 import pytest
 
 from aistudio_api.infrastructure.account import tier_detector
 from aistudio_api.infrastructure.account.tier_detector import AccountTier, TierResult
 from aistudio_api.infrastructure.gateway.session import AI_STUDIO_URL, BrowserSession
+
+
+class FakeRequest:
+    def __init__(self, url: str, post_data: str, headers: dict[str, str]):
+        self.url = url
+        self.post_data = post_data
+        self.headers = headers
+
+
+class FakeRoute:
+    def __init__(self, request: FakeRequest):
+        self.request = request
+        self.aborted = False
+        self.continued = False
+
+    def abort(self):
+        self.aborted = True
+
+    def continue_(self):
+        self.continued = True
+
+
+class FakeTextArea:
+    def __init__(self, page: "FakePage"):
+        self.page = page
+
+    def fill(self, value: str):
+        self.page.filled_texts.append(value)
+
+
+class FakeButton:
+    def __init__(self, page: "FakePage"):
+        self.page = page
+
+    def click(self):
+        self.page.clicks += 1
+        self.page.trigger_generate_content_request()
 
 
 class FakePage:
@@ -30,6 +69,16 @@ class FakePage:
         self.goto_error = goto_error
         self.goto_urls: list[str] = []
         self.wait_calls: list[int] = []
+        self.filled_texts: list[str] = []
+        self.clicks = 0
+        self.route_handlers: list[tuple[str, object]] = []
+        self.unroute_calls: list[str] = []
+        self.routed_requests: list[FakeRoute] = []
+        self.generate_content_body = json.dumps(
+            ["gemini-3-flash-preview", {"payload": "x" * 120}, None, None, "snapshot"],
+            ensure_ascii=False,
+        )
+        self.generate_content_headers = {"authorization": "Bearer token", "content-type": "application/json"}
 
     def goto(self, url: str, **kwargs):
         self.url = self.goto_redirect_url or url
@@ -54,11 +103,31 @@ class FakePage:
 
     def query_selector(self, selector: str):
         if selector == "textarea" and self.has_textarea:
-            return object()
+            return FakeTextArea(self)
+        if selector == "button:has-text('Run')":
+            return FakeButton(self)
         return None
 
     def title(self):
         return self.title_text
+
+    def route(self, pattern: str, handler):
+        self.route_handlers.append((pattern, handler))
+
+    def unroute(self, pattern: str, handler):
+        self.unroute_calls.append(pattern)
+        self.route_handlers = [(p, h) for p, h in self.route_handlers if p != pattern or h is not handler]
+
+    def trigger_generate_content_request(self):
+        request = FakeRequest(
+            "https://aistudio.google.com/_/BardChatUi/data/batchexecute/GenerateContent",
+            self.generate_content_body,
+            self.generate_content_headers,
+        )
+        route = FakeRoute(request)
+        self.routed_requests.append(route)
+        for _, handler in list(self.route_handlers):
+            handler(route)
 
 
 class BrowserSessionForTest(BrowserSession):
@@ -114,6 +183,18 @@ class TierDetectionSessionForTest(BrowserSession):
 
     def _ensure_browser_sync(self):
         raise AssertionError("tier detection for an explicit auth file must not preheat the active browser context")
+
+
+class TemplateCaptureSessionForTest(BrowserSessionForTest):
+    def __init__(self, page: FakePage):
+        super().__init__(page)
+        self.wait_until_idle_calls = 0
+
+    def _ensure_botguard_service_sync(self):
+        return self._hook_page
+
+    def _wait_until_idle_sync(self, page) -> None:
+        self.wait_until_idle_calls += 1
 
 
 def test_chat_url_detection_requires_aistudio_chat_route():
@@ -265,3 +346,22 @@ def test_detect_tier_for_auth_file_does_not_require_active_auth(monkeypatch):
     assert session.ensure_process_calls == 1
     assert session.browser.storage_states == ["/tmp/auth.json"]
     assert session.browser.contexts[0].closed is True
+
+
+def test_capture_template_uses_request_route_and_aborts_dummy_generation():
+    page = FakePage(url=AI_STUDIO_URL, has_default_makersuite=True, has_textarea=True)
+    session = TemplateCaptureSessionForTest(page)
+
+    captured = session._capture_template_sync("gemini-3-flash-preview")
+
+    assert captured == {
+        "url": "https://aistudio.google.com/_/BardChatUi/data/batchexecute/GenerateContent",
+        "headers": page.generate_content_headers,
+        "body": page.generate_content_body,
+    }
+    assert page.filled_texts == ["template"]
+    assert len(page.routed_requests) == 1
+    assert page.routed_requests[0].aborted is True
+    assert page.routed_requests[0].continued is False
+    assert page.unroute_calls == ["**/*GenerateContent*"]
+    assert session.wait_until_idle_calls == 1

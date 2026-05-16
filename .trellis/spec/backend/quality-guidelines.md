@@ -218,6 +218,69 @@ thinking = req.thinking if capabilities.thinking else "off"
 - Trigger: Code that detects, refreshes, or persists account `tier` from a browser-authenticated AI Studio page.
 - Applies to `tier_detector`, `BrowserSession.detect_tier_for_auth_file`, account health checks, and tests around `/accounts/{id}/test`.
 
+---
+
+### Scenario: Gateway Template Capture Latency
+
+#### 1. Scope / Trigger
+
+- Trigger: Code captures or refreshes an AI Studio `GenerateContent` request template for browser replay.
+- Applies to `BrowserSession._capture_template_sync`, request capture services, and gateway tests that model Playwright request/route behavior.
+
+#### 2. Signatures
+
+- Template fields required downstream: `url`, `headers`, `body`.
+- Source request fields: `route.request.url`, `route.request.headers`, `route.request.post_data`.
+- Dummy trigger prompt: the internal template capture request, not the user's actual prompt.
+
+#### 3. Contracts
+
+- Template capture must collect request metadata as soon as the `GenerateContent` request is issued.
+- Template capture must not wait for the dummy upstream model response body to complete.
+- The dummy `GenerateContent` request should be aborted after template metadata is captured so cold-template latency is not tied to model generation latency.
+- Temporary Playwright routes/listeners must be removed even if capture fails.
+- After aborting the dummy request, the hook page should still return to an idle state before the captured template is cached.
+
+#### 4. Validation & Error Matrix
+
+- No request body or too-short body -> continue the route and keep waiting for a valid GenerateContent request.
+- Template not captured before timeout -> raise a template capture timeout.
+- Route/listener cleanup skipped -> bug; future captures may intercept unrelated traffic.
+- Response-body based template capture -> performance bug; it reintroduces dummy-generation latency.
+
+#### 5. Good/Base/Bad Cases
+
+- Good: A temporary route captures `request.url`, `request.headers`, and `request.post_data`, aborts that request, removes the route, waits for idle, then caches the template.
+- Base: Cached templates are returned without installing a new route.
+- Bad: A response listener calls `response.text()` before accepting the template.
+
+#### 6. Tests Required
+
+- Unit test proving template capture uses request/route metadata and aborts the dummy request.
+- Unit test or assertion proving temporary route/listener cleanup happens.
+- Real WSL browser/API smoke test for gateway capture changes.
+
+#### 7. Wrong vs Correct
+
+##### Wrong
+
+```python
+def on_response(response):
+	text = response.text()
+	captured["body"] = response.request.post_data
+```
+
+##### Correct
+
+```python
+def on_route(route):
+	request = route.request
+	captured["url"] = request.url
+	captured["headers"] = dict(request.headers)
+	captured["body"] = request.post_data
+	route.abort()
+```
+
 #### 2. Signatures
 
 - Python API: `parse_account_tier_from_text(text: str | None, email: str | None = None) -> AccountTier`
@@ -271,6 +334,72 @@ ctx = self._browser.new_context(storage_state=auth_file)
 ```python
 self._ensure_browser_process_sync()
 ctx = self._browser.new_context(storage_state=auth_file)
+```
+
+---
+
+### Scenario: AI Studio Captured Request Model and Snapshot Cache Scope
+
+#### 1. Scope / Trigger
+
+- Trigger: Backend code captures, rewrites, replays, or caches AI Studio `GenerateContent` request templates.
+- Applies to browser capture, pure HTTP capture, request rewriting, snapshot caching, and image/text generation paths that reuse captured request bodies.
+
+#### 2. Signatures
+
+- Cache API: `SnapshotCache.get(prompt: str, model: str | None = None) -> tuple | None`
+- Cache API: `SnapshotCache.put(prompt: str, snapshot: str, url: str, headers: dict, body: str, model: str | None = None) -> None`
+- Capture API: `RequestCaptureService.capture(prompt: str, model: str, ...) -> CapturedRequest | None`
+- Replay API: `RequestReplayService.replay(captured, body: str, timeout: int | None = None) -> tuple[int, bytes]`
+- Environment key: `AISTUDIO_TIMEOUT_REPLAY` controls non-streaming replay timeout in seconds.
+
+#### 3. Contracts
+
+- Captured templates are transport templates only; their embedded model must not override the model requested by the caller.
+- Rewritten bodies must set wire field index `0` to the caller-requested model, normalized with the `models/` prefix during encoding.
+- Snapshot cache entries for reusable prompt bodies must be scoped by both prompt and model to prevent a text-model/template body from being reused for an image-model request with the same prompt.
+- Callers should omit replay `timeout` unless they intentionally need a per-call override; the default must flow from `settings.timeout_replay` / `AISTUDIO_TIMEOUT_REPLAY`.
+- Image generation must use the same non-streaming replay timeout configuration as other non-streaming generation paths.
+
+#### 4. Validation & Error Matrix
+
+- Template body model differs from requested model -> rewrite to requested model before replay and logging.
+- Same prompt is used with two different models -> cache lookup must return the entry for the matching model only.
+- `timeout` is `None` at replay boundary -> use `settings.timeout_replay`.
+- Large image generation times out with default replay timeout -> users can increase `AISTUDIO_TIMEOUT_REPLAY`; do not add hidden hard-coded image timeout values.
+
+#### 5. Good/Base/Bad Cases
+
+- Good: Capturing with a template body containing `models/gemini-3-flash-preview` and requested model `gemini-3.1-flash-image-preview` produces a captured body/log model of `models/gemini-3.1-flash-image-preview`.
+- Good: `SnapshotCache` stores `("same prompt", "text-model")` and `("same prompt", "image-model")` as separate entries.
+- Base: An explicit replay timeout override is still honored for a specialized caller.
+- Bad: `RequestCaptureService` calls `modify_body(..., model=template.model or model)` and silently sticks to the template model.
+- Bad: Cache key is only `prompt`, causing cross-model body reuse.
+- Bad: Image generation passes `timeout=120` directly and ignores `AISTUDIO_TIMEOUT_REPLAY` changes.
+
+#### 6. Tests Required
+
+- Request rewriter unit test: template model differs from requested model and encoded body index `0` equals the requested model with `models/` prefix.
+- Capture service regression: `CapturedRequest.model` reflects the requested model even when the captured template body contains another model.
+- Snapshot cache regression: same prompt with different models returns separate cached bodies and misses for unrelated models.
+- Real WSL credential test for browser/gateway/image changes that depend on upstream AI Studio behavior; set a non-default `AISTUDIO_TIMEOUT_REPLAY` and verify image generation succeeds without timeout.
+
+#### 7. Wrong vs Correct
+
+##### Wrong
+
+```python
+body = modify_body(template.body, model=template.model or model, prompt=prompt, snapshot=snapshot)
+cached = snapshot_cache.get(prompt)
+status, raw = await replay_service.replay(captured, body=body, timeout=120)
+```
+
+##### Correct
+
+```python
+body = modify_body(template.body, model=model, prompt=prompt, snapshot=snapshot)
+cached = snapshot_cache.get(prompt, model=model)
+status, raw = await replay_service.replay(captured, body=body)
 ```
 
 ---

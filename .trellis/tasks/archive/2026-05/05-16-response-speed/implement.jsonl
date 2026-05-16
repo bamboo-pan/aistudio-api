@@ -1,0 +1,8 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend gateway/service guidelines for this performance task"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Backend quality and testing expectations"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Error propagation expectations for gateway changes"}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Logging expectations for performance-sensitive gateway code"}
+{"file":".trellis/spec/guides/index.md","reason":"Shared thinking guide index"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Search-before-change and reuse guidance"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Gateway/API response path spans several layers"}
+{"file":".trellis/tasks/05-16-response-speed/research/gateway-latency.md","reason":"Recorded latency findings and candidate gateway optimization"}

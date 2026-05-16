@@ -1,0 +1,8 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend quality check index"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Backend quality and test requirements"}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Verify gateway errors remain compatible"}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Verify no noisy or sensitive logging added"}
+{"file":".trellis/spec/guides/index.md","reason":"Shared quality thinking guide index"}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Check reuse/search expectations"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check cross-layer API/gateway data flow"}
+{"file":".trellis/tasks/05-16-response-speed/research/gateway-latency.md","reason":"Verify implementation addresses the recorded latency finding"}

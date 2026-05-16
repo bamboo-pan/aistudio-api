@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend conventions index for final verification"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Quality and test verification guidance"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verify frontend/backend/docs behavior stays consistent"}
