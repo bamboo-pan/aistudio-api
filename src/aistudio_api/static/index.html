@@ -82,21 +82,6 @@
 
         <div class="playground-chat-panel">
           <div id="chat-scroll" class="playground-transcript">
-            <template x-if="msgs.length===0">
-              <div class="playground-empty">
-                <div class="playground-empty-mark">RUN</div>
-                <h2>选择一个起点</h2>
-                <div class="prompt-template-grid">
-                  <template x-for="template in chatTemplates" :key="template.title">
-                    <button type="button" class="prompt-template-card" @click="usePromptTemplate(template)">
-                      <span x-text="template.tag"></span>
-                      <strong x-text="template.title"></strong>
-                      <small x-text="template.prompt"></small>
-                    </button>
-                  </template>
-                </div>
-              </div>
-            </template>
             <template x-for="(m,i) in msgs" :key="i">
               <div class="msg" :class="{'msg-user':m.role==='user','msg-ai':m.role!=='user','msg-error':m.error}">
                 <div class="msg-inner">

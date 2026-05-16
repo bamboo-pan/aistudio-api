@@ -23,8 +23,6 @@ def test_static_frontend_exposes_playground_workbench_tools():
     index_html = (ROOT / "src" / "aistudio_api" / "static" / "index.html").read_text(encoding="utf-8")
     style_css = (ROOT / "src" / "aistudio_api" / "static" / "style.css").read_text(encoding="utf-8")
 
-    assert "chatTemplates" in app_js
-    assert "usePromptTemplate(template)" in app_js
     assert "applyChatPreset(name)" in app_js
     assert "clearChat()" in app_js
     assert "copyMessage(m)" in app_js
@@ -50,17 +48,21 @@ def test_static_frontend_exposes_playground_workbench_tools():
     assert "Chat Settings" not in index_html
     assert "cfg-dropdown" not in index_html
     assert "configOpen" not in app_js
-    assert "prompt-template-card" in index_html
-    assert "@click=\"usePromptTemplate(template)\"" in index_html
     assert "@click=\"applyChatPreset('balanced')\"" in index_html
     assert "@click.stop=\"copyMessage(m)\"" in index_html
     assert "playground-shell" in style_css
     assert "grid-template-columns:minmax(0,1fr) 340px" in style_css
-    assert ".prompt-template-grid" in style_css
     assert ".chat-session-list" in style_css
     assert ".chat-usage-grid" in style_css
     assert ".msg-usage" in style_css
     assert ".runtime-toggle>button.active" in style_css
+    assert "chat" + "Templates" not in app_js
+    assert "usePrompt" + "Template(template)" not in app_js
+    assert "prompt-" + "template-card" not in index_html
+    assert "@click=\"usePrompt" + "Template(template)\"" not in index_html
+    assert ".prompt-" + "template-grid" not in style_css
+    assert "playground-" + "empty-mark" not in index_html
+    assert "选择" + "一个起点" not in index_html
 
 
 def test_static_frontend_exposes_collapsible_sidebar():

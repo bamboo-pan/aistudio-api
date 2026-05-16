@@ -1,0 +1,53 @@
+{
+  "id": "remove-start-cards",
+  "name": "remove-start-cards",
+  "title": "remove unused start cards",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "u2",
+  "assignee": "u2",
+  "createdAt": "2026-05-16",
+  "completedAt": "2026-05-16",
+  "branch": null,
+  "base_branch": "feature/remove-start-cards",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {
+    "prd_status": "confirmed",
+    "workflow": {
+      "version": 1,
+      "current_step": "ready_to_finish",
+      "vcs": {
+        "kind": "git",
+        "commit_required": true
+      },
+      "implement": {
+        "dispatched_at": null,
+        "completed_at": "2026-05-16T06:30:26Z"
+      },
+      "check": {
+        "completed_at": "2026-05-16T06:36:26Z",
+        "fingerprint": "8b791c1a3b99066e7d48f2d9c458442f4119ba7405a6b28c28b5770736311ceb",
+        "head": "63fba09e5a13354312827726195aedf1ca4fed07"
+      },
+      "spec_update": {
+        "reviewed_at": "2026-05-16T06:31:01Z",
+        "result": "noop"
+      },
+      "commit": {
+        "hash": "63fba09e5a13354312827726195aedf1ca4fed07",
+        "recorded_at": "2026-05-16T06:36:49Z"
+      }
+    }
+  }
+}
