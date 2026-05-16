@@ -115,6 +115,8 @@ class StreamingGateway:
 
         async for event_type, payload in self._session.send_streaming_request(
             body=modified_body,
+            url=captured.url,
+            headers=captured.replay_headers,
             timeout_ms=settings.timeout_stream * 1000,
         ):
             if event_type == "status" and payload and not status_code:

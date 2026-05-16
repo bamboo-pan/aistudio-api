@@ -22,12 +22,14 @@ class RequestReplayService:
         if timeout is None:
             timeout = settings.timeout_replay
 
-        headers = {k: v for k, v in captured.headers.items() if k.lower() not in ("host", "content-length")}
+        headers = captured.replay_headers
 
         try:
             if self._session is not None:
                 return await self._session.send_hooked_request(
                     body=body,
+                    url=captured.url,
+                    headers=headers,
                     timeout_ms=timeout * 1000,
                 )
 
