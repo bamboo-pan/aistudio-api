@@ -400,23 +400,33 @@ class BrowserSession:
         self._templates.clear()
         self._close_sync()
 
-    def _ensure_browser_sync(self):
-        if self._ctx is not None and self._hook_page is not None and not self._hook_page.is_closed():
-            return self._ctx
-
-        import time as _t
-        _t0 = _t.time()
-        from camoufox.sync_api import Camoufox
-
-        self._close_sync()
+    def _browser_options_sync(self) -> dict[str, Any]:
         browser_options: dict[str, Any] = {
             "headless": settings.camoufox_headless,
             "main_world_eval": True,
         }
         if settings.proxy_server:
             browser_options["proxy"] = {"server": settings.proxy_server}
-        self._cf = Camoufox(**browser_options)
+        return browser_options
+
+    def _ensure_browser_process_sync(self):
+        if self._browser is not None:
+            return self._browser
+        from camoufox.sync_api import Camoufox
+
+        self._cf = Camoufox(**self._browser_options_sync())
         self._browser = self._cf.__enter__()
+        return self._browser
+
+    def _ensure_browser_sync(self):
+        if self._ctx is not None and self._hook_page is not None and not self._hook_page.is_closed():
+            return self._ctx
+
+        import time as _t
+        _t0 = _t.time()
+
+        self._close_sync()
+        self._ensure_browser_process_sync()
         self._ctx = self._new_context_sync()
         self._hook_page = self._ctx.pages[0] if self._ctx.pages else self._ctx.new_page()
         log.debug(f"[timing] browser launched in {_t.time()-_t0:.1f}s")
@@ -451,7 +461,7 @@ class BrowserSession:
     def _detect_tier_for_auth_file_sync(self, auth_file: str, timeout_ms: int = 30000):
         from aistudio_api.infrastructure.account.tier_detector import detect_tier_sync
 
-        self._ensure_browser_sync()
+        self._ensure_browser_process_sync()
         try:
             ctx = self._browser.new_context(storage_state=auth_file)
         except Exception:
