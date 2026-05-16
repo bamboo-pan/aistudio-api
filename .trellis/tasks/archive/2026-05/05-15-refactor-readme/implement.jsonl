@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend spec index and documentation language convention for code-derived README updates."}
+{"file":".trellis/spec/backend/api-contracts.md","reason":"Current API contracts for file inputs, image sessions, account rotation, and stats that README must describe accurately."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Quality and scenario expectations relevant to documenting image generation and static frontend behavior."}

@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/index.md","reason":"Verify README documentation remains consistent with repository documentation conventions."}
+{"file":".trellis/spec/backend/api-contracts.md","reason":"Check README API/account/image-session/rotation descriptions against current contracts."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Check README quality-sensitive feature descriptions against image/static frontend scenarios."}
