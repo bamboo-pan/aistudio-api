@@ -144,6 +144,7 @@ The frontend fetches same-origin images and submits data URIs; the backend valid
 - Capability gating must continue to use `/v1/models` metadata through `selectedCaps` and `controlAvailable(...)`.
 - `file_input=false` must keep upload controls disabled and must not create a path where generic files can be submitted.
 - Workbench-only helpers such as prompt templates, request summaries, presets, copy actions, and clear-chat actions must stay frontend-local.
+- Assistant Markdown rendering must be frontend-only and must pass model text through a local escape/sanitize helper before any `x-html` binding; raw model HTML must render as text and unsafe link schemes must not become anchors.
 - Static markup may be reorganized, but existing behavior anchors used by tests must be preserved or intentionally replaced with updated tests.
 
 ### 4. Validation & Error Matrix
@@ -152,6 +153,7 @@ The frontend fetches same-origin images and submits data URIs; the backend valid
 - Unsupported file input -> keep upload disabled and preserve the `当前模型不支持文件输入` feedback path.
 - Empty prompt with no files -> send button remains disabled.
 - Runtime preset applied to unsupported controls -> unsupported values are ignored or normalized through `applyModelCapabilities()`.
+- Model output contains raw HTML or unsafe Markdown links -> escaped text is displayed, not trusted HTML or executable links.
 - Narrow viewport -> primary input, send, attachment controls, and side panels must not overlap.
 
 ### 5. Good/Base/Bad Cases
@@ -165,6 +167,7 @@ The frontend fetches same-origin images and submits data URIs; the backend valid
 ### 6. Tests Required
 
 - Static frontend tests assert new Playground helpers and markup anchors exist.
+- Markdown output changes must test the `x-html` rendering hook plus HTML escaping and unsafe-link sanitization helpers.
 - Existing static tests must continue to assert `selectedCaps`, `controlAvailable(...)`, `chatCanSend`, `chatFileAccept`, and file block request wiring.
 - Full unit tests should pass after static UI changes because the frontend is coupled to request contracts through string-level tests.
 - Browser smoke checks should include desktop and mobile viewport inspection for workbench layout changes.

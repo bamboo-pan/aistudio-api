@@ -124,7 +124,7 @@
                         <div class="think-body" x-show="m.showThinking" x-text="m.thinking"></div>
                       </div>
                     </template>
-                    <div class="msg-body" x-show="m.error||m.content" :class="{error:m.error}" x-text="m.error||m.content"></div>
+                    <div class="msg-body" x-show="m.error||m.content" :class="{error:m.error,'markdown-body':!m.error&&m.role!=='user'}" x-html="messageBodyHtml(m)"></div>
                     <div class="msg-images" x-show="m.files&&m.files.length" x-cloak>
                       <template x-for="file in m.files" :key="file.url">
                         <div>
