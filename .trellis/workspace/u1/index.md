@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 8
+- **Total Sessions**: 9
 - **Last Active**: 2026-05-16
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~281 | Active |
+| `journal-1.md` | ~314 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 9 | 2026-05-16 | Fix browser replay captured URL failure | `86e3383` | `fix-replay-captured-url` |
 | 8 | 2026-05-16 | Improve frontend dynamic layout | `5399e74` | `master` |
 | 7 | 2026-05-16 | Fix playground thinking off | `b660acf` | `fix/playground-thinking-off` |
 | 6 | 2026-05-16 | Playground chat session history | `6bdd3a3` | `feature/playground-session-history` |

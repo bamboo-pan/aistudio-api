@@ -279,3 +279,36 @@ Expanded image generation and account management layouts for wide screens, added
 ### Next Steps
 
 - None - task complete
+
+
+## Session 9: Fix browser replay captured URL failure
+
+**Date**: 2026-05-16
+**Task**: Fix browser replay captured URL failure
+**Branch**: `fix-replay-captured-url`
+
+### Summary
+
+Fixed browser replay to use the CapturedRequest URL and sanitized headers instead of session-private template cache state. Added non-streaming and streaming regression tests, documented the gateway replay contract, and verified with unit tests plus WSL real chat requests.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `86e3383` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

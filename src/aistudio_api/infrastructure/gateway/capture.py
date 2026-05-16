@@ -28,6 +28,10 @@ class CapturedRequest:
         self.model = parsed[0] if parsed else ""
         self.snapshot = parsed[4] if len(parsed) > 4 and isinstance(parsed[4], str) else ""
 
+    @property
+    def replay_headers(self) -> dict[str, str]:
+        return {k: v for k, v in self.headers.items() if k.lower() not in ("host", "content-length")}
+
 
 class RequestCaptureService:
     """Single-page hook flow modeled after camoufox-api."""
@@ -51,7 +55,14 @@ class RequestCaptureService:
             cached = self._snapshot_cache.get(prompt, model=model)
             if cached:
                 _snapshot, url, headers, body = cached
-                return CapturedRequest(url=url, headers=headers, body=body)
+                captured = CapturedRequest(url=url, headers=headers, body=body)
+                logger.info(
+                    "Hook 缓存命中: model=%s, snapshot=%s chars, body=%s chars",
+                    captured.model,
+                    len(captured.snapshot),
+                    len(captured.body),
+                )
+                return captured
 
         template = await self._ensure_template(model)
         # 先只走 inlineData 路径，避免 fileData/Drive 上传链路干扰主流程。
