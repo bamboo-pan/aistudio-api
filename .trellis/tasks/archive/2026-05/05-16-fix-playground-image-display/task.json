@@ -3,7 +3,7 @@
   "name": "fix-playground-image-display",
   "title": "fix playground image display",
   "description": "",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "u2",
   "assignee": "u2",
   "createdAt": "2026-05-16",
-  "completedAt": null,
+  "completedAt": "2026-05-16",
   "branch": "fix-playground-image-display",
   "base_branch": "master",
   "worktree_path": null,
@@ -26,27 +26,27 @@
     "prd_status": "override",
     "workflow": {
       "version": 1,
-      "current_step": "awaiting_implement",
+      "current_step": "ready_to_finish",
       "vcs": {
         "kind": "git",
         "commit_required": true
       },
       "implement": {
         "dispatched_at": null,
-        "completed_at": null
+        "completed_at": "2026-05-16T03:49:20Z"
       },
       "check": {
-        "completed_at": null,
-        "fingerprint": null,
-        "head": null
+        "completed_at": "2026-05-16T03:49:20Z",
+        "fingerprint": "70900b156841178a116c30c42be52d8d3d19cdbb310ccb9e00601392685f538c",
+        "head": "9ea75079c5c20851601498a3d3ef50ea7e303f1f"
       },
       "spec_update": {
-        "reviewed_at": null,
-        "result": null
+        "reviewed_at": "2026-05-16T03:49:21Z",
+        "result": "updated"
       },
       "commit": {
-        "hash": null,
-        "recorded_at": null
+        "hash": "9ea75079c5c20851601498a3d3ef50ea7e303f1f",
+        "recorded_at": "2026-05-16T03:49:21Z"
       }
     }
   }
