@@ -112,3 +112,36 @@ Added exhaustion rotation, image resolution stats, tier-aware checks, and a comp
 ### Next Steps
 
 - None - task complete
+
+
+## Session 4: Playground Markdown Rendering
+
+**Date**: 2026-05-16
+**Task**: Playground Markdown Rendering
+**Branch**: `feat/playground-markdown-render`
+
+### Summary
+
+Added safe Markdown rendering for Playground assistant output, including local sanitization, styling, tests, spec update, and local plus WSL verification.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7d1a1f8` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
