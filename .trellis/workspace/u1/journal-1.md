@@ -213,3 +213,36 @@ Added localStorage-backed Playground chat sessions, consolidated chat settings, 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 7: Fix playground thinking off
+
+**Date**: 2026-05-16
+**Task**: Fix playground thinking off
+**Branch**: `fix/playground-thinking-off`
+
+### Summary
+
+Fixed the Playground Thinking off control by sending an explicit thinking=off request value, added regression coverage, documented the request contract, verified all tests and a real WSL API request.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b660acf` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
