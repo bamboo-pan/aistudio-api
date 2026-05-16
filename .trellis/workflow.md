@@ -198,7 +198,7 @@ Research output **must** land in `{TASK_DIR}/research/*.md`, written by the main
 **Flow**: main-session implement → main-session check → trellis-update-spec → commit (Phase 3.4) → `/trellis:finish-work`.
 **Next required action**: load `trellis-before-dev`, read `prd.md`, curated jsonl entries, and any `{TASK_DIR}/research/*.md`, then implement directly in the main session per Phase 2.1. After implementation, load/run `trellis-check` in the main session per Phase 2.2 before reporting completion.
 **No-repeat rule**: before each `[once]` or repeatable quality step, inspect the existing artifacts/results first. If jsonl curation, implementation, check, or spec-update judgment is already complete for the current code state, skip the completed work and continue from the next unfinished step.
-**Main-session role**: perform implementation, verification, the Phase 3.3 spec update gate, and then drive Phase 3.4 commit — state the commit plan in user-facing text, run `git commit`, and do this BEFORE suggesting `/trellis:finish-work`. `/finish-work` refuses to run on a dirty working tree (paths outside `.trellis/workspace/` and `.trellis/tasks/`).
+**Main-session role**: perform implementation, verification, the Phase 3.3 spec update gate, and then drive Phase 3.4 commit — state the commit plan in user-facing text, then run `git commit` without waiting when every included file is recognized current-session task work. Do this BEFORE suggesting `/trellis:finish-work`. `/finish-work` refuses to run on a dirty working tree (paths outside `.trellis/workspace/` and `.trellis/tasks/`).
 **Phase 3.3 spec update gate (required, once)**: after `trellis-check`, explicitly load/run/walk through `trellis-update-spec` and record whether spec updates were made or intentionally left unchanged before Phase 3.4 commit. Spec edits made during implementation/check do NOT replace this explicit main-session judgment.
 [/workflow-state:in_progress]
 
@@ -210,7 +210,7 @@ Research output **must** land in `{TASK_DIR}/research/*.md`, written by the main
 **Flow**: main-session implement → main-session check → trellis-update-spec → commit (Phase 3.4) → `/trellis:finish-work`.
 **Next required action**: load `trellis-before-dev`, read `prd.md`, curated jsonl entries, and any `{TASK_DIR}/research/*.md`, then implement directly in the main session per Phase 2.1. After implementation, load/run `trellis-check` in the main session per Phase 2.2 before reporting completion.
 **No-repeat rule**: before each `[once]` or repeatable quality step, inspect the existing artifacts/results first. If jsonl curation, implementation, check, or spec-update judgment is already complete for the current code state, skip the completed work and continue from the next unfinished step.
-**Main-session role**: perform implementation, verification, the Phase 3.3 spec update gate, and then drive Phase 3.4 commit — state the commit plan in user-facing text, run `git commit`, and do this BEFORE suggesting `/trellis:finish-work`. `/finish-work` refuses to run on a dirty working tree (paths outside `.trellis/workspace/` and `.trellis/tasks/`).
+**Main-session role**: perform implementation, verification, the Phase 3.3 spec update gate, and then drive Phase 3.4 commit — state the commit plan in user-facing text, then run `git commit` without waiting when every included file is recognized current-session task work. Do this BEFORE suggesting `/trellis:finish-work`. `/finish-work` refuses to run on a dirty working tree (paths outside `.trellis/workspace/` and `.trellis/tasks/`).
 **Phase 3.3 spec update gate (required, once)**: after `trellis-check`, explicitly load/run/walk through `trellis-update-spec` and record whether spec updates were made or intentionally left unchanged before Phase 3.4 commit. Spec edits made during implementation/check do NOT replace this explicit main-session judgment.
 [/workflow-state:in_progress-inline]
 
@@ -468,33 +468,33 @@ The AI drives a batched commit of this task's code changes so `/finish-work` can
    - **AI-edited this session** — files you wrote/edited via Edit/Write/Bash tool calls in this session. You know what changed and why.
    - **Unrecognized** — dirty files you did NOT touch this session (could be the user's manual edits, leftover WIP from a previous session, or unrelated work). Do NOT silently include these.
 
-4. **Draft a commit plan**. Group AI-edited files into logical commits (1 commit per coherent change unit, not 1 commit per file). Each entry: `<commit message>` + file list. List unrecognized files separately at the bottom.
+4. **Draft a commit plan**. Group recognized current-session task files into logical commits (1 commit per coherent change unit, not 1 commit per file). Each entry: `<commit message>` + file list. List unrecognized or unrelated dirty files separately; they are not staged.
 
-5. **Present the plan once, ask for one-shot confirmation**. Format:
+5. **Present the plan once, then continue without a confirmation gate** when every included file is recognized current-session task work. Format:
    ```
-   Proposed commits (in order):
+  Proposed commits (executing now):
      1. <message>
         - <file>
         - <file>
      2. <message>
         - <file>
 
-   Unrecognized dirty files (NOT in any commit — confirm include/exclude):
+  Excluded dirty files (NOT staged):
      - <file>
      - <file>
-
-   Reply 'ok' / '行' to execute. Reply with edits, or '我自己来' / 'manual' to abort.
    ```
+  If there are no excluded files, omit that section. Do NOT wait for `ok` / `行` just to execute the commit plan.
 
-6. **On confirmation**: run `git add <files>` + `git commit -m "<msg>"` for each batch in order. Do not amend. Do not push.
+6. **Execute recognized work commits**: run `git add <files>` + `git commit -m "<msg>"` for each batch in order. Stage only the files listed in that batch. Do not amend. Do not push.
 
-7. **On rejection** (user replies "不行" / "我自己来" / "manual" / any pushback on the plan): stop. Do not attempt a second plan. The user will commit by hand; you skip ahead to 3.5 once they confirm.
+7. **If file ownership is ambiguous**: pause only to classify the ambiguous files. Ask one focused include/exclude question, then either commit the confirmed current-task files or leave the ambiguous files unstaged. If the user replies "我自己来" / "manual", stop; the user will commit by hand, and you skip ahead to 3.5 once they confirm.
 
 **Rules**:
 - No `git commit --amend` anywhere — three-stage three-commit flow (work commits → archive commit → journal commit).
 - Never push to remote in this step.
-- If the user wants different message wording but accepts the file grouping, edit the message and re-confirm once — but if they reject the grouping, exit to manual mode.
-- The batched plan is one prompt; do not prompt per commit.
+- The commit-plan display is for transparency, not a required authorization prompt.
+- Do not prompt per commit.
+- Never stage unrecognized files just to make the working tree clean; either leave unrelated work alone or ask when ownership is ambiguous.
 
 #### 3.5 Wrap-up reminder
 
