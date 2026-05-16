@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/index.md","reason":"Spec index for the single-repo backend/static layer."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Contains the Static Playground Workbench UI scenario and testing expectations."}
+{"file":".trellis/spec/guides/index.md","reason":"Shared thinking guide index required before implementation."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Removal touches existing frontend constants/helpers and should avoid leaving duplicate or unused code."}

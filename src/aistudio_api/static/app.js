@@ -8,12 +8,6 @@ function app(){return{
   loginStarting:false,loginPollTimer:null,loginSession:{id:'',status:'',email:'',error:''},
   models:[],model:'',modelError:'',
   msgs:[],draft:'',busy:false,chatFiles:[],chatFileError:'',chatPreset:'balanced',chatSessions:[],activeChatSessionId:'',chatSessionError:'',chatRestoring:false,chatSaveTimer:null,
-  chatTemplates:[
-    {title:'接口冒烟',tag:'Smoke',prompt:'请用三句话介绍当前模型能力，并给出一个适合继续测试的追问。'},
-    {title:'多模态检查',tag:'Files',prompt:'请阅读我上传的文件，提取关键信息、潜在问题和后续建议。'},
-    {title:'代码审查',tag:'Review',prompt:'请从正确性、边界情况、可维护性和测试覆盖四个角度审查下面的代码。'},
-    {title:'结构化输出',tag:'JSON',prompt:'请把下面内容整理成 JSON，字段包含 summary、risks、next_steps。'}
-  ],
   cfg:{thinking:'off',search:'off',stream:'on',temperature:1.0,topP:1.0,maxTokens:8192,safety:'on'},
   imageModel:'',imagePrompt:'',imageSize:'1024x1024',imageCount:1,imageBusy:false,imageError:'',imageResults:[],imageHistory:[],imageHistorySelection:{},imageHistoryDeleting:false,imageHistoryError:'',imageSessions:[],activeImageSessionId:'',imageSessionLoading:false,imageSessionSaving:false,imageSessionDeletingId:'',imageSessionError:'',imageLastRequest:null,imageReferences:[],imageBaseImage:null,imageConversation:[],imageReferenceError:'',imagePreview:null,
   toast:{show:false,msg:'',t:null},
@@ -177,7 +171,6 @@ function app(){return{
   fileSizeLabel(bytes){const n=Number(bytes)||0;if(n>=1024*1024)return`${(n/1024/1024).toFixed(1)} MB`;if(n>=1024)return`${Math.round(n/1024)} KB`;return`${n} B`},
   async attachChatFiles(event){this.chatFileError='';if(!this.selectedCaps.file_input){this.chatFileError='当前模型不支持文件输入';this.showToast(this.chatFileError);event.target.value='';return}const files=Array.from(event.target.files||[]);for(const file of files){const mime=file.type||'application/octet-stream';if(!this.fileAccepted(file)){this.chatFileError=`不支持的文件类型：${mime}`;continue}if(file.size>20*1024*1024){this.chatFileError='单个文件不能超过 20 MB';continue}try{const url=await this.fileToDataUrl(file);this.chatFiles.push({name:file.name||'upload',url,mime,size:file.size,isImage:mime.startsWith('image/')})}catch(error){this.chatFileError='文件读取失败'}}event.target.value='';if(this.chatFileError)this.showToast(this.chatFileError)},
   removeChatFile(index){this.chatFiles.splice(index,1)},
-  usePromptTemplate(template){this.draft=template?.prompt||'';this.resizeTa();this.showToast('已填入提示词')},
   applyChatPreset(name){const presets={precise:{temperature:0.2,topP:0.8,maxTokens:4096,thinking:'low',search:'off',stream:'on'},balanced:{temperature:1,topP:1,maxTokens:8192,thinking:'off',search:'off',stream:'on'},creative:{temperature:1.4,topP:0.95,maxTokens:8192,thinking:'medium',search:'off',stream:'on'}};const preset=presets[name]||presets.balanced;this.chatPreset=name;if(this.controlAvailable('temperature'))this.cfg.temperature=preset.temperature;if(this.controlAvailable('top_p'))this.cfg.topP=preset.topP;if(this.controlAvailable('max_tokens'))this.cfg.maxTokens=preset.maxTokens;if(this.controlAvailable('thinking'))this.cfg.thinking=preset.thinking;if(this.controlAvailable('search'))this.cfg.search=preset.search;if(this.controlAvailable('stream'))this.cfg.stream=preset.stream;this.applyModelCapabilities();this.saveCurrentChatSession();this.showToast('已应用参数预设')},
   clearChat(){if(this.busy)return;this.msgs=[];this.chatFileError='';this.saveCurrentChatSession();this.showToast('会话已清空')},
   async copyMessage(m){const text=(m?.error||m?.content||m?.thinking||'').trim();if(!text){this.showToast('没有可复制内容');return}try{if(navigator.clipboard?.writeText)await navigator.clipboard.writeText(text);else throw new Error('clipboard unavailable')}catch(error){const area=document.createElement('textarea');area.value=text;area.setAttribute('readonly','');area.style.position='fixed';area.style.opacity='0';document.body.appendChild(area);area.select();document.execCommand('copy');area.remove()}this.showToast('已复制消息')},
