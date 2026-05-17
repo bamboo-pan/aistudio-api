@@ -276,3 +276,37 @@ Fixed account routing so Pro text models prefer Pro/Ultra accounts, added regres
 ### Next Steps
 
 - None - task complete
+
+
+## Session 9: Fix account switch image generation stats
+
+**Date**: 2026-05-17
+**Task**: Fix account switch image generation stats
+**Branch**: `fix-account-switch-image-stats`
+
+### Summary
+
+Fixed browser-backed image generation after switching between Pro accounts, aligned account/model statistics, refreshed Web stats, and verified with unit plus WSL real API/Web smokes.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9422c04` | (see git log) |
+| `f99656a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
