@@ -651,7 +651,7 @@ async def _ensure_account_for_model(model: str | None) -> None:
         if rotator.has_available_preferred_account(model):
             await _try_switch_account(model, require_preferred=True)
             return
-        logger.warning("Image model is using a non-premium account because no healthy Pro/Ultra account is available")
+        logger.warning("Premium-preferred model is using a non-premium account because no healthy Pro/Ultra account is available")
 
 
 def health_response() -> dict:

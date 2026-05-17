@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 7
-- **Last Active**: 2026-05-16
+- **Total Sessions**: 8
+- **Last Active**: 2026-05-17
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~245 | Active |
+| `journal-1.md` | ~278 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 8 | 2026-05-17 | Fix Pro model account routing | `2cae93f` | `fix/new-account-permission` |
 | 7 | 2026-05-16 | Fix Camoufox launcher import path | `5af91b9` | `master` |
 | 6 | 2026-05-16 | Refine playground sidebar actions | `345456f` | `feature/playground-sidebar-actions` |
 | 5 | 2026-05-16 | Remove Playground start cards | `a0c3f55`, `63fba09` | `feature/remove-start-cards` |
