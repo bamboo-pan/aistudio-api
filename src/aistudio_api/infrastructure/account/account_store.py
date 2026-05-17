@@ -391,6 +391,10 @@ class AccountStore:
             )
         ]
 
+    def validate_storage_state(self, storage_state: Any) -> str | None:
+        """Validate a Playwright storage state and return any detected email."""
+        return self._validate_storage_state(storage_state)
+
     def delete_account(self, account_id: str) -> bool:
         """删除账号，返回是否成功。"""
         registry = self._load_registry()

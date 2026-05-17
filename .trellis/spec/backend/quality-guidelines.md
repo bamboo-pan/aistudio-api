@@ -191,6 +191,81 @@ def clear_snapshot_cache(self) -> None:
 	self.clear_capture_state()
 ```
 
+## Scenario: Browser Login Persists Only Verified Accounts
+
+### 1. Scope / Trigger
+
+- Trigger: Code changes browser-based Google account login, login status polling, account persistence, or post-login activation.
+- Use this contract whenever a headed login browser captures Playwright storage state and may create a new account record.
+
+### 2. Signatures
+
+- `LoginSession.status: LoginStatus`
+- `LoginSession.account_id: str | None`
+- `LoginSession.email: str | None`
+- `LoginSession.error: str | None`
+- `AccountStore.validate_storage_state(storage_state: Any) -> str | None`
+- `AccountStore.save_account(..., activate: bool = True) -> AccountMeta`
+- `AccountService.activate_account(account_id, browser_session, snapshot_cache, busy_lock=None, keep_snapshot_cache=False) -> AccountMeta | None`
+
+### 3. Contracts
+
+- Browser login must validate captured storage state before saving it. A non-empty, non-expired Google cookie alone is not enough to prove the user finished login.
+- Browser login must also detect authenticated account identity, preferably an email from the current page, `myaccount.google.com`, or validated storage-state local storage.
+- If identity cannot be verified, the login session becomes `failed`, gets a clear error message, and must not create an account directory, registry entry, or active account.
+- Browser-login-created accounts should be saved with `activate=False`; the account becomes active only after `AccountService.activate_account` switches the runtime browser/client auth successfully.
+- Credential import can remain storage-state based and should not inherit the stricter headed-login identity gate unless that behavior is explicitly changed.
+
+### 4. Validation & Error Matrix
+
+- Storage state is malformed or has no valid Google cookie -> login session `failed`, no save.
+- Storage state has Google cookies but no verified account identity -> login session `failed`, no save.
+- Identity is detected and storage state is valid -> save account with `activate=False`, then login-status polling activates it through the runtime client.
+- Activation fails after save -> report login/status failure; do not mark the saved account active.
+- Existing imported/legacy accounts without email -> do not rewrite or delete them in the browser-login path.
+
+### 5. Good/Base/Bad Cases
+
+- Good: Login redirects away from `accounts.google.com`, email is found, storage state validates, account is saved inactive, and status polling activates it.
+- Base: Login redirects but page email is missing; storage state local storage contains an email, so the account can still be saved inactive.
+- Bad: Anonymous Google cookies validate structurally, the worker saves `email=None`, marks the account active, and later gateway calls fail with upstream auth/permission errors.
+
+### 6. Tests Required
+
+- Unit: fake login browser returns Google cookies without identity; assert session is `failed`, `account_id is None`, and the store remains empty.
+- Unit: fake login browser returns a detected email; assert session is `completed`, account email is saved, and the store has no active account until activation.
+- Unit/API: completed login status still activates a saved account exactly once through the runtime client.
+- Real: WSL temp-copy validation uses the real accounts directory without printing credential contents and exercises at least one browser-backed `/v1/chat/completions` request.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+meta = account_store.save_account(
+	name=account_name,
+	email=detected_email,
+	storage_state=storage_state,
+)
+```
+
+#### Correct
+
+```python
+detected_email = await self._verify_login_identity(account_store, page, storage_state, detected_email)
+if detected_email is None:
+	session.status = LoginStatus.FAILED
+	session.error = LOGIN_IDENTITY_ERROR
+	return
+
+meta = account_store.save_account(
+	name=account_name,
+	email=detected_email,
+	storage_state=storage_state,
+	activate=False,
+)
+```
+
 ---
 
 ## Testing Requirements
