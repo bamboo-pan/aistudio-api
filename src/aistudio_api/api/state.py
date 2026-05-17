@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
+from aistudio_api.application.account_client_pool import AccountClientPool
 
 
 @dataclass
@@ -18,6 +19,7 @@ class RuntimeState:
     snapshot_cache: object | None = None  # SnapshotCache 实例
     account_service: object | None = None  # AccountService 实例
     rotator: object | None = None  # AccountRotator 实例
+    account_client_pool: AccountClientPool | None = None
     model_stats: dict[str, dict] = field(
         default_factory=lambda: defaultdict(
             lambda: {

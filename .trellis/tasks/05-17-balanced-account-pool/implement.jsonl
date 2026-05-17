@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend task entry point and pre-development checklist."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Gateway replay, auth switching, premium account selection, and required tests."}
+{"file":".trellis/tasks/05-17-balanced-account-pool/research/current-account-routing.md","reason":"Current routing behavior and request-bound account pool design constraints."}

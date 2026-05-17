@@ -10,10 +10,12 @@ from aistudio_api.api.dependencies import get_account_service
 from aistudio_api.api.routes_accounts import router as accounts_router
 from aistudio_api.api.schemas import ChatRequest, ImageRequest, Message
 from aistudio_api.api.state import runtime_state
+from aistudio_api.application.account_client_pool import AccountClientPool
 from aistudio_api.config import settings
 from aistudio_api.application.account_rotator import AccountRotator, RotationMode
 from aistudio_api.application.account_service import AccountService
 from aistudio_api.application.api_service import handle_chat, handle_image_generation
+from aistudio_api.domain.errors import UsageLimitExceeded
 from aistudio_api.domain.models import Candidate, GeneratedImage, ModelOutput
 from aistudio_api.infrastructure.account.account_store import AccountStore
 from aistudio_api.infrastructure.account.login_service import LoginService
@@ -268,6 +270,49 @@ def test_force_next_can_exclude_active_account_in_exhaustion_mode(tmp_path):
     assert picked.id == standby.id
 
 
+def test_balanced_selection_spreads_concurrent_leases(tmp_path):
+    store = AccountStore(accounts_dir=tmp_path)
+    first = store.save_account("first", None, storage_state(cookie_name="sid1"))
+    second = store.save_account("second", None, storage_state(cookie_name="sid2"), activate=False)
+    rotator = AccountRotator(store)
+
+    async def acquire_two():
+        lease_one = await rotator.acquire_account("gemini-3-flash-preview")
+        lease_two = await rotator.acquire_account("gemini-3-flash-preview")
+        try:
+            return lease_one.account.id, lease_two.account.id, rotator.get_all_stats()
+        finally:
+            await lease_two.release()
+            await lease_one.release()
+
+    first_id, second_id, stats = asyncio.run(acquire_two())
+
+    assert {first_id, second_id} == {first.id, second.id}
+    assert stats[first.id]["in_flight"] == 1
+    assert stats[second.id]["in_flight"] == 1
+
+
+def test_balanced_selection_keeps_affinity_when_not_overloaded(tmp_path):
+    store = AccountStore(accounts_dir=tmp_path)
+    first = store.save_account("first", None, storage_state(cookie_name="sid1"))
+    store.save_account("second", None, storage_state(cookie_name="sid2"), activate=False)
+    rotator = AccountRotator(store)
+
+    async def acquire_same_affinity_twice():
+        lease_one = await rotator.acquire_account("gemini-3-flash-preview", affinity_key="conversation-a")
+        await lease_one.release()
+        lease_two = await rotator.acquire_account("gemini-3-flash-preview", affinity_key="conversation-a")
+        try:
+            return lease_one.account.id, lease_two.account.id
+        finally:
+            await lease_two.release()
+
+    first_pick, second_pick = asyncio.run(acquire_same_affinity_twice())
+
+    assert first_pick == first.id
+    assert second_pick == first.id
+
+
 def test_account_stats_track_image_usage_by_resolution(tmp_path):
     store = AccountStore(accounts_dir=tmp_path)
     account = store.save_account("main", None, storage_state())
@@ -301,6 +346,37 @@ class FakeChatClient:
         self.calls.append(kwargs)
         return ModelOutput(
             candidates=[Candidate(text="ok")],
+            usage={"total_tokens": 1},
+        )
+
+
+class FakePooledChatClient:
+    clients = []
+    fail_for_accounts: set[str] = set()
+
+    def __init__(self, **kwargs):
+        self.auth_path = ""
+        self.calls = []
+        self.closed = False
+        FakePooledChatClient.clients.append(self)
+
+    async def switch_auth(self, auth_path):
+        self.auth_path = auth_path
+
+    async def close(self):
+        self.closed = True
+
+    @property
+    def account_id(self):
+        return self.auth_path.replace("\\", "/").split("/")[-2]
+
+    async def generate_content(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.account_id in FakePooledChatClient.fail_for_accounts:
+            FakePooledChatClient.fail_for_accounts.remove(self.account_id)
+            raise UsageLimitExceeded("quota exhausted")
+        return ModelOutput(
+            candidates=[Candidate(text=f"ok:{self.account_id}")],
             usage={"total_tokens": 1},
         )
 
@@ -340,6 +416,7 @@ def run_with_account_runtime(coro, *, account_service, rotator, browser_session,
     old_rotator = runtime_state.rotator
     old_client = runtime_state.client
     old_snapshot_cache = runtime_state.snapshot_cache
+    old_account_client_pool = runtime_state.account_client_pool
     old_generated_images_dir = settings.generated_images_dir
     old_generated_images_route = settings.generated_images_route
     runtime_state.busy_lock = asyncio.Semaphore(3)
@@ -358,8 +435,127 @@ def run_with_account_runtime(coro, *, account_service, rotator, browser_session,
         runtime_state.rotator = old_rotator
         runtime_state.client = old_client
         runtime_state.snapshot_cache = old_snapshot_cache
+        runtime_state.account_client_pool = old_account_client_pool
         settings.generated_images_dir = old_generated_images_dir
         settings.generated_images_route = old_generated_images_route
+
+
+def run_with_account_pool(coro, *, account_service, rotator, account_client_pool):
+    old_busy_lock = runtime_state.busy_lock
+    old_account_service = runtime_state.account_service
+    old_rotator = runtime_state.rotator
+    old_client = runtime_state.client
+    old_account_client_pool = runtime_state.account_client_pool
+    runtime_state.busy_lock = asyncio.Semaphore(3)
+    runtime_state.account_service = account_service
+    runtime_state.rotator = rotator
+    runtime_state.client = FakeChatClient()
+    runtime_state.account_client_pool = account_client_pool
+    try:
+        return asyncio.run(coro)
+    finally:
+        runtime_state.busy_lock = old_busy_lock
+        runtime_state.account_service = old_account_service
+        runtime_state.rotator = old_rotator
+        runtime_state.client = old_client
+        runtime_state.account_client_pool = old_account_client_pool
+
+
+def test_chat_uses_pooled_account_client_without_switching_active_account(tmp_path):
+    FakePooledChatClient.clients = []
+    FakePooledChatClient.fail_for_accounts = set()
+    store = AccountStore(accounts_dir=tmp_path)
+    first = store.save_account("first", None, storage_state(cookie_name="sid1"))
+    second = store.save_account("second", None, storage_state(cookie_name="sid2"), activate=False)
+    account_service = AccountService(store, LoginService())
+    rotator = AccountRotator(store)
+    pool = AccountClientPool(store, client_factory=FakePooledChatClient)
+
+    async def call_twice():
+        response_one = await handle_chat(
+            ChatRequest(model="gemini-3-flash-preview", messages=[Message(role="user", content="one")]),
+            runtime_state.client,
+        )
+        response_two = await handle_chat(
+            ChatRequest(model="gemini-3-flash-preview", messages=[Message(role="user", content="two")]),
+            runtime_state.client,
+        )
+        return response_one, response_two
+
+    response_one, response_two = run_with_account_pool(
+        call_twice(),
+        account_service=account_service,
+        rotator=rotator,
+        account_client_pool=pool,
+    )
+
+    assert store.get_active_account().id == first.id
+    assert response_one["choices"][0]["message"]["content"] == f"ok:{first.id}"
+    assert response_two["choices"][0]["message"]["content"] == f"ok:{second.id}"
+    assert {client.account_id for client in FakePooledChatClient.clients} == {first.id, second.id}
+
+
+def test_chat_user_affinity_balances_different_users(tmp_path):
+    FakePooledChatClient.clients = []
+    FakePooledChatClient.fail_for_accounts = set()
+    store = AccountStore(accounts_dir=tmp_path)
+    first = store.save_account("first", None, storage_state(cookie_name="sid1"))
+    second = store.save_account("second", None, storage_state(cookie_name="sid2"), activate=False)
+    account_service = AccountService(store, LoginService())
+    rotator = AccountRotator(store)
+    pool = AccountClientPool(store, client_factory=FakePooledChatClient)
+
+    async def call_two_users():
+        response_one = await handle_chat(
+            ChatRequest(model="gemini-3-flash-preview", user="user-a", messages=[Message(role="user", content="same")]),
+            runtime_state.client,
+        )
+        response_two = await handle_chat(
+            ChatRequest(model="gemini-3-flash-preview", user="user-b", messages=[Message(role="user", content="same")]),
+            runtime_state.client,
+        )
+        return response_one, response_two
+
+    response_one, response_two = run_with_account_pool(
+        call_two_users(),
+        account_service=account_service,
+        rotator=rotator,
+        account_client_pool=pool,
+    )
+
+    assert response_one["choices"][0]["message"]["content"] == f"ok:{first.id}"
+    assert response_two["choices"][0]["message"]["content"] == f"ok:{second.id}"
+
+
+def test_chat_pool_retry_excludes_rate_limited_account(tmp_path):
+    FakePooledChatClient.clients = []
+    store = AccountStore(accounts_dir=tmp_path)
+    first = store.save_account("first", None, storage_state(cookie_name="sid1"))
+    second = store.save_account("second", None, storage_state(cookie_name="sid2"), activate=False)
+    FakePooledChatClient.fail_for_accounts = {first.id}
+    account_service = AccountService(store, LoginService())
+    rotator = AccountRotator(store)
+    pool = AccountClientPool(store, client_factory=FakePooledChatClient)
+
+    async def call_chat_once():
+        return await handle_chat(
+            ChatRequest(model="gemini-3-flash-preview", messages=[Message(role="user", content="hello")]),
+            runtime_state.client,
+        )
+
+    response = run_with_account_pool(
+        call_chat_once(),
+        account_service=account_service,
+        rotator=rotator,
+        account_client_pool=pool,
+    )
+
+    stats = rotator.get_all_stats()
+    assert response["choices"][0]["message"]["content"] == f"ok:{second.id}"
+    assert stats[first.id]["rate_limited"] == 1
+    assert stats[second.id]["requests"] == 1
+    assert stats[first.id]["in_flight"] == 0
+    assert stats[second.id]["in_flight"] == 0
 
 
 def test_image_generation_switches_from_free_active_account_to_available_premium(tmp_path):

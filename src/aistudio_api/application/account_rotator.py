@@ -29,7 +29,7 @@ def _model_name_prefers_premium(model: str | None) -> bool:
 
 class RotationMode(str, Enum):
     """轮询模式。"""
-    ROUND_ROBIN = "round_robin"          # 顺序轮询
+    ROUND_ROBIN = "round_robin"          # 均衡模式（兼容旧配置值）
     LEAST_RECENTLY_USED = "lru"         # 最久未用
     LEAST_RATE_LIMITED = "least_rl"     # 最少限流
     EXHAUSTION = "exhaustion"           # 用到额度耗尽再切换
@@ -46,6 +46,7 @@ class AccountStats:
     last_used: float = 0.0           # timestamp
     last_rate_limited: float = 0.0   # timestamp
     cooldown_until: float = 0.0      # timestamp, 429 后冷却期
+    in_flight: int = 0
     image_sizes: dict[str, int] = field(default_factory=dict)
 
     def is_available(self) -> bool:
@@ -70,12 +71,32 @@ class AccountStats:
         self.errors += 1
         self.last_used = time.time()
 
+    def record_start(self) -> None:
+        self.in_flight += 1
+
+    def record_finish(self) -> None:
+        self.in_flight = max(0, self.in_flight - 1)
+
+
+@dataclass
+class AccountLease:
+    """Request-scoped account lease used for in-flight balancing."""
+    account: AccountMeta
+    _rotator: AccountRotator = field(repr=False)
+    _released: bool = field(default=False, init=False, repr=False)
+
+    async def release(self) -> None:
+        if self._released:
+            return
+        self._released = True
+        await self._rotator.release_account(self.account.id)
+
 
 class AccountRotator:
     """多账号轮询管理器。
 
-    支持三种模式：
-    - round_robin: 顺序轮询，429 时跳过冷却中的账号
+    支持四种模式：
+    - round_robin: 均衡分配请求，429 时跳过冷却中的账号
     - lru: 最久未用优先，适合均匀分配负载
     - least_rl: 最少限流优先，适合最大化吞吐
     - exhaustion: 持续使用当前账号，直到限流/隔离/不可用再切换
@@ -94,6 +115,8 @@ class AccountRotator:
         self._error_isolation_threshold = error_isolation_threshold
         self._stats: dict[str, AccountStats] = {}
         self._current_index: int = 0
+        self._affinity: dict[str, str] = {}
+        self._affinity_limit = 1024
         self._lock = asyncio.Lock()
         self.last_selection_reason: str | None = None
 
@@ -136,6 +159,7 @@ class AccountRotator:
                 "success": stats.success,
                 "rate_limited": stats.rate_limited,
                 "errors": stats.errors,
+                "in_flight": stats.in_flight,
                 "last_used": datetime.fromtimestamp(stats.last_used, tz=timezone.utc).isoformat() if stats.last_used else None,
                 "last_rate_limited": datetime.fromtimestamp(stats.last_rate_limited, tz=timezone.utc).isoformat() if stats.last_rate_limited else None,
                 "is_available": stats.is_available() and not account.is_isolated,
@@ -191,7 +215,7 @@ class AccountRotator:
         return available
 
     def _pick_round_robin(self, available: list[tuple[AccountMeta, AccountStats]]) -> tuple[AccountMeta, AccountStats] | None:
-        """Round-robin 选择，基于全量账号索引，避免 available 变化导致跳过或重复。"""
+        """Round-robin tie-breaker，基于全量账号索引，避免 available 变化导致跳过或重复。"""
         if not available:
             return None
         available_ids = {a.id for a, _ in available}
@@ -205,6 +229,38 @@ class AccountRotator:
                 self._current_index = (idx + 1) % total
                 return next((a, s) for a, s in available if a.id == all_accounts[idx].id)
         return available[0]
+
+    def _pick_balanced(
+        self,
+        available: list[tuple[AccountMeta, AccountStats]],
+        *,
+        affinity_key: str | None = None,
+    ) -> tuple[AccountMeta, AccountStats] | None:
+        """Pick the least-busy account while keeping light session affinity."""
+        if not available:
+            return None
+
+        if affinity_key:
+            account_id = self._affinity.get(affinity_key)
+            affinity_pick = next(((account, stats) for account, stats in available if account.id == account_id), None)
+            if affinity_pick is not None:
+                min_in_flight = min(stats.in_flight for _, stats in available)
+                if affinity_pick[1].in_flight <= min_in_flight + 1:
+                    if self.last_selection_reason == "text model can use any healthy account":
+                        self.last_selection_reason = "balanced mode kept the affinity account"
+                    return affinity_pick
+
+        min_score = min((stats.in_flight, stats.requests, stats.rate_limited) for _, stats in available)
+        candidates = [(account, stats) for account, stats in available if (stats.in_flight, stats.requests, stats.rate_limited) == min_score]
+        pick = self._pick_round_robin(candidates)
+        if pick is not None and affinity_key:
+            self._affinity[affinity_key] = pick[0].id
+            if len(self._affinity) > self._affinity_limit:
+                oldest_key = next(iter(self._affinity))
+                self._affinity.pop(oldest_key, None)
+        if self.last_selection_reason == "text model can use any healthy account":
+            self.last_selection_reason = "balanced mode selected the least-busy account"
+        return pick
 
     def _pick_lru(self, available: list[tuple[AccountMeta, AccountStats]]) -> tuple[AccountMeta, AccountStats] | None:
         """最久未用优先。"""
@@ -230,6 +286,22 @@ class AccountRotator:
                 return active_pick
         self.last_selection_reason = "exhaustion mode selected the next available account"
         return self._pick_round_robin(available)
+
+    def _pick_for_mode(
+        self,
+        available: list[tuple[AccountMeta, AccountStats]],
+        *,
+        affinity_key: str | None = None,
+    ) -> tuple[AccountMeta, AccountStats] | None:
+        if self._mode == RotationMode.ROUND_ROBIN:
+            return self._pick_balanced(available, affinity_key=affinity_key)
+        if self._mode == RotationMode.LEAST_RECENTLY_USED:
+            return self._pick_lru(available)
+        if self._mode == RotationMode.LEAST_RATE_LIMITED:
+            return self._pick_least_rl(available)
+        if self._mode == RotationMode.EXHAUSTION:
+            return self._pick_exhaustion(available)
+        return available[0] if available else None
 
     async def get_next_account(
         self,
@@ -265,16 +337,7 @@ class AccountRotator:
                 return account
 
             # 根据模式选择
-            if self._mode == RotationMode.ROUND_ROBIN:
-                pick = self._pick_round_robin(available)
-            elif self._mode == RotationMode.LEAST_RECENTLY_USED:
-                pick = self._pick_lru(available)
-            elif self._mode == RotationMode.LEAST_RATE_LIMITED:
-                pick = self._pick_least_rl(available)
-            elif self._mode == RotationMode.EXHAUSTION:
-                pick = self._pick_exhaustion(available)
-            else:
-                pick = available[0]
+            pick = self._pick_for_mode(available)
 
             if pick is None:
                 return None
@@ -312,17 +375,54 @@ class AccountRotator:
                 await asyncio.sleep(wait_time)
                 return account, stats
 
-            if self._mode == RotationMode.ROUND_ROBIN:
-                pick = self._pick_round_robin(available)
-            elif self._mode == RotationMode.LEAST_RECENTLY_USED:
-                pick = self._pick_lru(available)
-            elif self._mode == RotationMode.LEAST_RATE_LIMITED:
-                pick = self._pick_least_rl(available)
-            elif self._mode == RotationMode.EXHAUSTION:
-                pick = self._pick_exhaustion(available)
-            else:
-                pick = available[0]
-            return pick
+            return self._pick_for_mode(available)
+
+    async def acquire_account(
+        self,
+        model: str | None = None,
+        *,
+        require_preferred: bool = False,
+        exclude_account_id: str | None = None,
+        affinity_key: str | None = None,
+    ) -> AccountLease | None:
+        """Acquire a request-scoped account lease for balanced execution."""
+        async with self._lock:
+            available = self._get_available_accounts()
+            available = self._filter_for_model(available, model, require_preferred=require_preferred)
+            if exclude_account_id:
+                available = [(account, stats) for account, stats in available if account.id != exclude_account_id]
+            if not available:
+                if require_preferred and self.model_prefers_premium(model):
+                    return None
+                all_accounts = [account for account in self._store.list_accounts() if not account.is_isolated and account.id != exclude_account_id]
+                if not all_accounts:
+                    self.last_selection_reason = "no healthy accounts are available"
+                    return None
+                account, stats = min(
+                    [(account, self._stats.get(account.id, AccountStats(account_id=account.id))) for account in all_accounts],
+                    key=lambda item: item[1].cooldown_until,
+                )
+                wait_time = max(0, stats.cooldown_until - time.time())
+                logger.warning("All healthy accounts are cooling down; waiting %.1fs before leasing", wait_time)
+                await asyncio.sleep(wait_time)
+                if account.id not in self._stats:
+                    self._stats[account.id] = stats
+                stats.record_start()
+                return AccountLease(account=account, _rotator=self)
+
+            pick = self._pick_for_mode(available, affinity_key=affinity_key)
+            if pick is None:
+                return None
+            account, stats = pick
+            stats.record_start()
+            logger.info("Account leased for model=%s tier=%s mode=%s reason=%s in_flight=%d", model or "<any>", account.tier, self._mode.value, self.last_selection_reason, stats.in_flight)
+            return AccountLease(account=account, _rotator=self)
+
+    async def release_account(self, account_id: str) -> None:
+        async with self._lock:
+            if account_id not in self._stats:
+                self._stats[account_id] = AccountStats(account_id=account_id)
+            self._stats[account_id].record_finish()
 
     def record_success(self, account_id: str, *, image_size: str | None = None, image_count: int = 1) -> None:
         """记录成功请求。"""
@@ -369,6 +469,9 @@ class AccountRotator:
     def remove_account(self, account_id: str) -> None:
         """删除账号时清理统计。"""
         self._stats.pop(account_id, None)
+
+    def has_accounts(self) -> bool:
+        return bool(self._store.list_accounts())
 
 
 # 全局轮询器实例

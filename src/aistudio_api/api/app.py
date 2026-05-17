@@ -36,6 +36,7 @@ async def lifespan(app: FastAPI):
     from aistudio_api.infrastructure.account.login_service import LoginService
     from aistudio_api.application.account_service import AccountService
     from aistudio_api.application.account_rotator import init_rotator, RotationMode
+    from aistudio_api.application.account_client_pool import AccountClientPool
 
     client = AIStudioClient(
         port=runtime_state.camoufox_port,
@@ -72,6 +73,11 @@ async def lifespan(app: FastAPI):
         cooldown_seconds=cooldown,
     )
     runtime_state.rotator = rotator
+    runtime_state.account_client_pool = AccountClientPool(
+        account_store,
+        port=runtime_state.camoufox_port,
+        use_pure_http=settings.use_pure_http,
+    )
 
     logger.info(
         "Client initialized (camoufox port=%s, rotation=%s, accounts=%d)",
@@ -94,10 +100,14 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down")
     if warmup_task and not warmup_task.done():
         warmup_task.cancel()
+    if runtime_state.account_client_pool is not None:
+        await runtime_state.account_client_pool.close()
+    await client.close()
     runtime_state.client = None
     runtime_state.busy_lock = None
     runtime_state.account_service = None
     runtime_state.rotator = None
+    runtime_state.account_client_pool = None
 
 
 app = FastAPI(title="AI Studio API", lifespan=lifespan)

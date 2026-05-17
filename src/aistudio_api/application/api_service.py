@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import base64
 import asyncio
+import hashlib
 import json
 import logging
 import tempfile
 import time
 import uuid
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import HTTPException, Request
@@ -47,10 +49,27 @@ from aistudio_api.api.responses import (
 )
 from aistudio_api.api.schemas import ChatRequest, GeminiGenerateContentRequest, ImagePromptOptimizationRequest, ImageRequest
 from aistudio_api.api.state import runtime_state
+from aistudio_api.infrastructure.account.account_store import AccountMeta
+from aistudio_api.application.account_rotator import AccountLease
 
 logger = logging.getLogger("aistudio.server")
 
 MAX_IMAGE_EDIT_INPUTS = 10
+
+
+@dataclass
+class RequestAccountContext:
+    client: AIStudioClient
+    account: AccountMeta | None = None
+    lease: AccountLease | None = None
+
+    @property
+    def account_id(self) -> str | None:
+        return self.account.id if self.account is not None else None
+
+    async def release(self) -> None:
+        if self.lease is not None:
+            await self.lease.release()
 
 
 IMAGE_STYLE_TEMPLATES: dict[str, dict[str, str]] = {
@@ -606,25 +625,22 @@ def _validate_image_request(req: ImageRequest):
     return plan_image_generation(req.model, req.size), response_format
 
 
-def _record_active_account(
+def _record_account_result(
+    account_id: str | None,
     event: str,
     *,
     image_size: str | None = None,
     image_count: int = 1,
 ) -> None:
     rotator = runtime_state.rotator
-    account_service = runtime_state.account_service
-    if rotator is None or account_service is None:
-        return
-    account = account_service.get_active_account()
-    if account is None:
+    if rotator is None or not account_id:
         return
     if event == "success":
-        rotator.record_success(account.id, image_size=image_size, image_count=image_count)
+        rotator.record_success(account_id, image_size=image_size, image_count=image_count)
     elif event == "rate_limited":
-        rotator.record_rate_limited(account.id)
+        rotator.record_rate_limited(account_id)
     elif event == "errors":
-        rotator.record_error(account.id)
+        rotator.record_error(account_id)
 
 
 def _record_request_result(
@@ -632,15 +648,25 @@ def _record_request_result(
     event: str,
     usage: dict | None = None,
     *,
+    account_id: str | None = None,
     image_size: str | None = None,
     image_count: int = 1,
 ) -> None:
     runtime_state.record(model, event, usage, image_size=image_size, image_count=image_count)
-    _record_active_account(
+    _record_account_result(
+        account_id,
         event,
         image_size=image_size,
         image_count=image_count,
     )
+
+
+def _account_id_for_stats(account_context: RequestAccountContext | None = None) -> str | None:
+    if account_context is not None:
+        return account_context.account_id
+    account_service = runtime_state.account_service
+    active_account = account_service.get_active_account() if account_service is not None else None
+    return active_account.id if active_account is not None else None
 
 
 def _clear_client_capture_state(client: AIStudioClient) -> None:
@@ -655,6 +681,65 @@ def _clear_client_capture_state(client: AIStudioClient) -> None:
 
 def _is_empty_image_response(exc: RequestError) -> bool:
     return exc.status == 0 and "no image data" in exc.message.lower()
+
+
+def _hash_affinity(*parts: Any) -> str | None:
+    text = json.dumps(parts, ensure_ascii=False, sort_keys=True, default=str)
+    if not text or text == "null":
+        return None
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _chat_affinity_key(req: ChatRequest) -> str | None:
+    if req.user:
+        return _hash_affinity("chat-user", req.model, req.user)
+    messages = [message.model_dump(mode="json") for message in req.messages]
+    first_user = next((message for message in messages if message.get("role") == "user"), messages[0] if messages else None)
+    return _hash_affinity("chat", req.model, first_user)
+
+
+def _image_affinity_key(req: ImageRequest) -> str | None:
+    return _hash_affinity("image", req.model, req.user or req.prompt[:256])
+
+
+def _gemini_affinity_key(model_path: str, req: GeminiGenerateContentRequest) -> str | None:
+    contents = [content.model_dump(mode="json") for content in req.contents]
+    first_user = next((content for content in contents if content.get("role") in (None, "user")), contents[0] if contents else None)
+    return _hash_affinity("gemini", model_path, first_user)
+
+
+async def _request_account_context(
+    fallback_client: AIStudioClient,
+    model: str | None,
+    *,
+    require_preferred: bool = False,
+    exclude_account_id: str | None = None,
+    affinity_key: str | None = None,
+) -> RequestAccountContext:
+    rotator = runtime_state.rotator
+    pool = getattr(runtime_state, "account_client_pool", None)
+    if rotator is None:
+        return RequestAccountContext(client=fallback_client)
+    if pool is None:
+        await _ensure_account_for_model(model)
+        account_service = runtime_state.account_service
+        active_account = account_service.get_active_account() if account_service is not None else None
+        return RequestAccountContext(client=fallback_client, account=active_account)
+    lease = await rotator.acquire_account(
+        model,
+        require_preferred=require_preferred,
+        exclude_account_id=exclude_account_id,
+        affinity_key=affinity_key,
+    )
+    if lease is None:
+        if getattr(rotator, "has_accounts", lambda: False)():
+            raise HTTPException(503, detail={"message": "No available account", "type": "service_unavailable"})
+        return RequestAccountContext(client=fallback_client)
+    account_client = await pool.get_client(lease.account.id)
+    if account_client is None:
+        await lease.release()
+        return RequestAccountContext(client=fallback_client)
+    return RequestAccountContext(client=account_client, account=lease.account, lease=lease)
 
 
 async def _try_switch_account(
@@ -1198,11 +1283,14 @@ async def handle_chat(req: ChatRequest, client: AIStudioClient, request: Request
 
     max_retries = 3  # 最多重试次数
     last_error = None
+    affinity_key = _chat_affinity_key(req)
+    exclude_account_id = None
 
     for attempt in range(max_retries):
         async with busy_lock:
             model = req.model
             tmp_files: list[str] = []
+            account_context: RequestAccountContext | None = None
 
             try:
                 normalized = normalize_chat_request(req.messages, req.model)
@@ -1222,8 +1310,13 @@ async def handle_chat(req: ChatRequest, client: AIStudioClient, request: Request
                     stream=req.stream,
                     uses_structured_output=response_format_overrides is not None,
                 )
-                if attempt == 0:
-                    await _ensure_account_for_model(model)
+                account_context = await _request_account_context(
+                    client,
+                    model,
+                    exclude_account_id=exclude_account_id,
+                    affinity_key=affinity_key,
+                )
+                request_client = account_context.client
 
                 logger.info(
                     "Chat: model=%s, contents=%s, capture_prompt=%s..., images=%s, stream=%s, attempt=%d",
@@ -1256,7 +1349,7 @@ async def handle_chat(req: ChatRequest, client: AIStudioClient, request: Request
                     if req.stream_options is not None:
                         include_usage = req.stream_options.include_usage
                     return _build_streaming_response(
-                        client=client,
+                        client=request_client,
                         capture_prompt=normalized["capture_prompt"],
                         model=model,
                         capture_images=normalized["capture_images"] if normalized["capture_images"] else None,
@@ -1274,9 +1367,10 @@ async def handle_chat(req: ChatRequest, client: AIStudioClient, request: Request
                         enable_thinking=enable_thinking,
                         sanitize_plain_text=response_format_overrides is None,
                         request=request,
+                        account_context=account_context,
                     )
 
-                output = await client.generate_content(
+                output = await request_client.generate_content(
                     model=model,
                     capture_prompt=normalized["capture_prompt"],
                     capture_images=normalized["capture_images"] if normalized["capture_images"] else None,
@@ -1297,7 +1391,7 @@ async def handle_chat(req: ChatRequest, client: AIStudioClient, request: Request
                     sanitize_plain_text=response_format_overrides is None,
                 )
 
-                _record_request_result(model, "success", output.usage)
+                _record_request_result(model, "success", output.usage, account_id=account_context.account_id)
                 return chat_completion_response(
                     model=model,
                     content=output.text,
@@ -1306,10 +1400,15 @@ async def handle_chat(req: ChatRequest, client: AIStudioClient, request: Request
                     function_calls=output.function_calls,
                 )
             except UsageLimitExceeded as exc:
-                _record_request_result(model, "rate_limited")
+                failed_account_id = account_context.account_id if account_context is not None else None
+                _record_request_result(model, "rate_limited", account_id=failed_account_id)
                 last_error = exc
+                exclude_account_id = failed_account_id
 
                 # 尝试切换账号
+                if getattr(runtime_state, "account_client_pool", None) is not None and attempt + 1 < max_retries:
+                    logger.info("429 限流，已排除当前账号，重试 %d/%d", attempt + 1, max_retries)
+                    continue
                 if await _try_switch_account(model):
                     logger.info("429 限流，已切换账号，重试 %d/%d", attempt + 1, max_retries)
                     continue
@@ -1321,24 +1420,26 @@ async def handle_chat(req: ChatRequest, client: AIStudioClient, request: Request
             except AuthError as exc:
                 if attempt == 0:
                     logger.warning("Chat auth error; clearing capture state and retrying once: %s", exc)
-                    _clear_client_capture_state(client)
+                    _clear_client_capture_state(account_context.client if account_context is not None else client)
                     last_error = exc
                     continue
-                _record_request_result(model, "errors")
+                _record_request_result(model, "errors", account_id=account_context.account_id if account_context is not None else None)
                 raise _upstream_exception(exc) from exc
             except RequestError as exc:
-                _record_request_result(model, "errors")
+                _record_request_result(model, "errors", account_id=account_context.account_id if account_context is not None else None)
                 raise _upstream_exception(exc) from exc
             except AistudioError as exc:
-                _record_request_result(model, "errors")
+                _record_request_result(model, "errors", account_id=account_context.account_id if account_context is not None else None)
                 raise _upstream_exception(exc) from exc
             except Exception as exc:
-                _record_request_result(model, "errors")
+                _record_request_result(model, "errors", account_id=account_context.account_id if account_context is not None else None)
                 logger.error("Chat error: %s", exc, exc_info=True)
                 raise HTTPException(500, detail={"message": str(exc), "type": "server_error"}) from exc
             finally:
                 if not req.stream:
                     cleanup_files(tmp_files)
+                    if account_context is not None:
+                        await account_context.release()
 
     # 所有重试都失败
     raise HTTPException(429, detail={"message": str(last_error), "type": "rate_limit_exceeded"}) from last_error
@@ -1359,14 +1460,22 @@ async def handle_image_generation(req: ImageRequest, client: AIStudioClient):
 
     max_retries = 3
     last_error = None
+    affinity_key = _image_affinity_key(req)
+    exclude_account_id = None
     image_store = GeneratedImageStore()
     try:
         for attempt in range(max_retries):
             async with busy_lock:
                 items: list[dict[str, Any]] = []
+                account_context: RequestAccountContext | None = None
                 try:
-                    if attempt == 0:
-                        await _ensure_account_for_model(image_plan.model)
+                    account_context = await _request_account_context(
+                        client,
+                        image_plan.model,
+                        exclude_account_id=exclude_account_id,
+                        affinity_key=affinity_key,
+                    )
+                    request_client = account_context.client
                     logger.info(
                         "Image: model=%s, size=%s, n=%d, prompt=%s..., images=%d, attempt=%d",
                         image_plan.model,
@@ -1388,7 +1497,7 @@ async def handle_image_generation(req: ImageRequest, client: AIStudioClient):
                             image_kwargs["images"] = image_paths
                         if req.timeout is not None:
                             image_kwargs["timeout"] = req.timeout
-                        output = await client.generate_image(**image_kwargs)
+                        output = await request_client.generate_image(**image_kwargs)
                         if not output.images:
                             raise RequestError(0, "AI Studio returned no image data")
                         _merge_usage(usage_total, output.usage)
@@ -1412,16 +1521,22 @@ async def handle_image_generation(req: ImageRequest, client: AIStudioClient):
                         image_plan.model,
                         "success",
                         usage_total,
+                        account_id=account_context.account_id,
                         image_size=image_plan.size,
                         image_count=len(items),
                     )
                     return {"created": created, "data": _format_image_items(items, response_format)}
                 except UsageLimitExceeded as exc:
                     _cleanup_persisted_image_items(image_store, items)
-                    _record_request_result(image_plan.model, "rate_limited")
+                    failed_account_id = account_context.account_id if account_context is not None else None
+                    _record_request_result(image_plan.model, "rate_limited", account_id=failed_account_id)
                     last_error = exc
+                    exclude_account_id = failed_account_id
 
                     # 尝试切换账号
+                    if getattr(runtime_state, "account_client_pool", None) is not None and attempt + 1 < max_retries:
+                        logger.info("Image 429 限流，已排除当前账号，重试 %d/%d", attempt + 1, max_retries)
+                        continue
                     if await _try_switch_account(image_plan.model):
                         logger.info("Image 429 限流，已切换账号，重试 %d/%d", attempt + 1, max_retries)
                         continue
@@ -1432,29 +1547,32 @@ async def handle_image_generation(req: ImageRequest, client: AIStudioClient):
                     _cleanup_persisted_image_items(image_store, items)
                     if attempt == 0:
                         logger.warning("Image auth error; clearing capture state and retrying once: %s", exc)
-                        _clear_client_capture_state(client)
+                        _clear_client_capture_state(account_context.client if account_context is not None else client)
                         last_error = exc
                         continue
-                    _record_request_result(image_plan.model, "errors")
+                    _record_request_result(image_plan.model, "errors", account_id=account_context.account_id if account_context is not None else None)
                     raise _upstream_exception(exc) from exc
                 except RequestError as exc:
                     _cleanup_persisted_image_items(image_store, items)
                     if attempt == 0 and _is_empty_image_response(exc):
                         logger.warning("Image response contained no image data; clearing capture state and retrying once")
-                        _clear_client_capture_state(client)
+                        _clear_client_capture_state(account_context.client if account_context is not None else client)
                         last_error = exc
                         continue
-                    _record_request_result(image_plan.model, "errors")
+                    _record_request_result(image_plan.model, "errors", account_id=account_context.account_id if account_context is not None else None)
                     raise _upstream_exception(exc) from exc
                 except AistudioError as exc:
                     _cleanup_persisted_image_items(image_store, items)
-                    _record_request_result(image_plan.model, "errors")
+                    _record_request_result(image_plan.model, "errors", account_id=account_context.account_id if account_context is not None else None)
                     raise _upstream_exception(exc) from exc
                 except Exception as exc:
                     _cleanup_persisted_image_items(image_store, items)
-                    _record_request_result(image_plan.model, "errors")
+                    _record_request_result(image_plan.model, "errors", account_id=account_context.account_id if account_context is not None else None)
                     logger.error("Image error: %s", exc, exc_info=True)
                     raise HTTPException(500, detail={"message": str(exc), "type": "server_error"}) from exc
+                finally:
+                    if account_context is not None:
+                        await account_context.release()
 
         # 所有重试都失败
         raise HTTPException(429, detail={"message": str(last_error), "type": "rate_limit_exceeded"}) from last_error
@@ -1495,6 +1613,7 @@ def _build_streaming_response(
     enable_thinking: bool = True,
     sanitize_plain_text: bool = True,
     request: Request | None = None,
+    account_context: RequestAccountContext | None = None,
 ) -> StreamingResponse:
     async def stream_response():
         busy_lock = runtime_state.busy_lock
@@ -1579,7 +1698,7 @@ def _build_streaming_response(
                 if not saw_content:
                     raise RequestError(502, "AI Studio returned no response content")
 
-                _record_request_result(model, "success", final_usage)
+                _record_request_result(model, "success", final_usage, account_id=_account_id_for_stats(account_context))
                 yield sse_chunk(chat_id, model, "", finish="tool_calls" if saw_tool_calls else "stop", include_usage=include_usage)
                 if include_usage:
                     yield sse_usage_chunk(chat_id, model, final_usage)
@@ -1588,7 +1707,7 @@ def _build_streaming_response(
                 logger.info("OpenAI stream cancelled by client")
                 raise
             except Exception as exc:
-                _record_request_result(model, "errors")
+                _record_request_result(model, "errors", account_id=_account_id_for_stats(account_context))
                 message, error_type, code = _openai_stream_error_detail(exc)
                 if error_type == "unsupported_feature":
                     logger.warning("OpenAI stream unsupported: %s", message)
@@ -1598,6 +1717,8 @@ def _build_streaming_response(
                 yield "data: [DONE]\n\n"
             finally:
                 cleanup_files(cleanup_paths)
+                if account_context is not None:
+                    await account_context.release()
 
     return StreamingResponse(
         stream_response(),
@@ -1624,14 +1745,22 @@ async def handle_gemini_generate_content(
 
     max_retries = 3
     last_error = None
+    affinity_key = _gemini_affinity_key(model_path, req)
+    exclude_account_id = None
 
     for attempt in range(max_retries):
         async with busy_lock:
             normalized = None
+            account_context: RequestAccountContext | None = None
             try:
                 normalized = normalize_gemini_request(req, model_path, stream=stream)
-                if attempt == 0:
-                    await _ensure_account_for_model(normalized["model"])
+                account_context = await _request_account_context(
+                    client,
+                    normalized["model"],
+                    exclude_account_id=exclude_account_id,
+                    affinity_key=affinity_key,
+                )
+                request_client = account_context.client
                 logger.info(
                     "Gemini: model=%s, contents=%s, stream=%s, attempt=%d",
                     normalized["model"],
@@ -1641,9 +1770,9 @@ async def handle_gemini_generate_content(
                 )
 
                 if stream:
-                    return _build_gemini_streaming_response(client=client, normalized=normalized, request=request)
+                    return _build_gemini_streaming_response(client=request_client, normalized=normalized, request=request, account_context=account_context)
 
-                output = await client.generate_content(
+                output = await request_client.generate_content(
                     model=normalized["model"],
                     capture_prompt=normalized["capture_prompt"],
                     capture_images=normalized["capture_images"],
@@ -1658,7 +1787,7 @@ async def handle_gemini_generate_content(
                     sanitize_plain_text=False,
                 )
 
-                _record_request_result(normalized["model"], "success", output.usage)
+                _record_request_result(normalized["model"], "success", output.usage, account_id=account_context.account_id)
                 return {
                     "candidates": [
                         {
@@ -1679,10 +1808,15 @@ async def handle_gemini_generate_content(
             except ValueError as exc:
                 raise HTTPException(400, detail={"message": str(exc), "type": "bad_request"}) from exc
             except UsageLimitExceeded as exc:
-                _record_request_result(normalized["model"] if normalized else model_path, "rate_limited")
+                failed_account_id = account_context.account_id if account_context is not None else None
+                _record_request_result(normalized["model"] if normalized else model_path, "rate_limited", account_id=failed_account_id)
                 last_error = exc
+                exclude_account_id = failed_account_id
 
                 # 尝试切换账号
+                if getattr(runtime_state, "account_client_pool", None) is not None and attempt + 1 < max_retries:
+                    logger.info("Gemini 429 限流，已排除当前账号，重试 %d/%d", attempt + 1, max_retries)
+                    continue
                 if await _try_switch_account(normalized["model"] if normalized else model_path):
                     logger.info("Gemini 429 限流，已切换账号，重试 %d/%d", attempt + 1, max_retries)
                     continue
@@ -1693,29 +1827,37 @@ async def handle_gemini_generate_content(
                 error_model = normalized["model"] if normalized else model_path
                 if attempt == 0:
                     logger.warning("Gemini auth error; clearing capture state and retrying once: %s", exc)
-                    _clear_client_capture_state(client)
+                    _clear_client_capture_state(account_context.client if account_context is not None else client)
                     last_error = exc
                     continue
-                _record_request_result(error_model, "errors")
+                _record_request_result(error_model, "errors", account_id=account_context.account_id if account_context is not None else None)
                 raise _upstream_exception(exc) from exc
             except RequestError as exc:
-                _record_request_result(normalized["model"] if normalized else model_path, "errors")
+                _record_request_result(normalized["model"] if normalized else model_path, "errors", account_id=account_context.account_id if account_context is not None else None)
                 raise _upstream_exception(exc) from exc
             except AistudioError as exc:
-                _record_request_result(normalized["model"] if normalized else model_path, "errors")
+                _record_request_result(normalized["model"] if normalized else model_path, "errors", account_id=account_context.account_id if account_context is not None else None)
                 raise _upstream_exception(exc) from exc
             except Exception as exc:
-                _record_request_result(normalized["model"] if normalized else model_path, "errors")
+                _record_request_result(normalized["model"] if normalized else model_path, "errors", account_id=account_context.account_id if account_context is not None else None)
                 logger.error("Gemini error: %s", exc, exc_info=True)
                 raise HTTPException(500, detail={"message": str(exc), "type": "server_error"}) from exc
             finally:
                 if normalized is not None and not stream:
                     cleanup_files(normalized["cleanup_paths"])
+                    if account_context is not None:
+                        await account_context.release()
 
     raise HTTPException(429, detail={"message": str(last_error), "type": "rate_limit_exceeded"}) from last_error
 
 
-def _build_gemini_streaming_response(*, client: AIStudioClient, normalized: dict, request: Request | None = None) -> StreamingResponse:
+def _build_gemini_streaming_response(
+    *,
+    client: AIStudioClient,
+    normalized: dict,
+    request: Request | None = None,
+    account_context: RequestAccountContext | None = None,
+) -> StreamingResponse:
     async def stream_response():
         busy_lock = runtime_state.busy_lock
         if busy_lock is None:
@@ -1825,7 +1967,7 @@ def _build_gemini_streaming_response(*, client: AIStudioClient, normalized: dict
                 if not saw_content:
                     raise RequestError(502, "AI Studio returned no response content")
 
-                _record_request_result(normalized["model"], "success", final_usage)
+                _record_request_result(normalized["model"], "success", final_usage, account_id=_account_id_for_stats(account_context))
                 finish_payload: dict[str, Any] = {
                     "candidates": [{"finishReason": "FUNCTION_CALL" if saw_tool_calls else "STOP"}]
                 }
@@ -1837,7 +1979,7 @@ def _build_gemini_streaming_response(*, client: AIStudioClient, normalized: dict
                 logger.info("Gemini stream cancelled by client")
                 raise
             except Exception as exc:
-                _record_request_result(normalized["model"], "errors")
+                _record_request_result(normalized["model"], "errors", account_id=_account_id_for_stats(account_context))
                 error_payload = _gemini_stream_error_payload(exc)
                 if error_payload.get("error", {}).get("status") == "UNIMPLEMENTED":
                     logger.warning("Gemini stream unsupported: %s", error_payload["error"].get("message"))
@@ -1847,6 +1989,8 @@ def _build_gemini_streaming_response(*, client: AIStudioClient, normalized: dict
                 yield "data: [DONE]\n\n"
             finally:
                 cleanup_files(normalized["cleanup_paths"])
+                if account_context is not None:
+                    await account_context.release()
 
     return StreamingResponse(
         stream_response(),
