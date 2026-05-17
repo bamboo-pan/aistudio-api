@@ -32,21 +32,22 @@ PURE_HTTP_GENERATE_CONTENT_UNSUPPORTED = (
 
 
 class AIStudioClient:
-    def __init__(self, port: int = DEFAULT_CAMOUFOX_PORT, use_pure_http: bool = False):
+    def __init__(self, port: int = DEFAULT_CAMOUFOX_PORT, use_pure_http: bool = False, snapshot_cache: SnapshotCache | None = None):
         self.port = port
         self._use_pure_http = use_pure_http
+        self._snapshot_cache = snapshot_cache or _snapshot_cache
         self._captured: Optional[CapturedRequest] = None
         
         if use_pure_http:
             # Pure HTTP mode: no browser needed for capture
             from aistudio_api.infrastructure.gateway.pure_capture import PureHttpCaptureService
-            self._capture_service = PureHttpCaptureService(_snapshot_cache)
+            self._capture_service = PureHttpCaptureService(self._snapshot_cache)
             self._session = None
             self._replay_service = RequestReplayService(session=None)
         else:
             # Browser mode: uses browser for capture and replay
             self._session = BrowserSession(port=port)
-            self._capture_service = RequestCaptureService(self._session, _snapshot_cache)
+            self._capture_service = RequestCaptureService(self._session, self._snapshot_cache)
             self._replay_service = RequestReplayService(session=self._session)
         
         self._streaming_gateway = StreamingGateway(session=self._session)
@@ -60,6 +61,10 @@ class AIStudioClient:
         if self._session is not None:
             await self._session.ensure_context()
             logger.info("浏览器预热完成")
+
+    async def close(self) -> None:
+        if self._session is not None:
+            await self._session.close()
 
     async def switch_auth(self, auth_file: str | None) -> None:
         """切换账号的 auth 文件。"""
@@ -77,7 +82,7 @@ class AIStudioClient:
         clear_templates = getattr(self._capture_service, "clear_templates", None)
         if callable(clear_templates):
             clear_templates()
-        _snapshot_cache.clear()
+        self._snapshot_cache.clear()
 
     def _dump_raw_exchange(
         self,

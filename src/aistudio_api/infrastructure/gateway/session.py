@@ -262,6 +262,9 @@ class BrowserSession:
     async def switch_auth(self, auth_file: str | None) -> None:
         await self._run_sync(self._switch_auth_sync, auth_file)
 
+    async def close(self) -> None:
+        await self._run_sync(self._close_sync)
+
     async def detect_tier_for_auth_file(self, auth_file: str, timeout_ms: int = 30000):
         return await self._run_sync(self._detect_tier_for_auth_file_sync, auth_file, timeout_ms)
 

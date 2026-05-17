@@ -259,8 +259,8 @@ def model_prefers_premium(self, model: str | None) -> bool:
 
 ### 1. Scope / Trigger
 
-- Trigger: Code changes OpenAI, Gemini, image generation, streaming, prompt optimization, account rotation, or runtime stats recording.
-- Use this contract whenever an upstream request is served by the currently active stored Google account.
+- Trigger: Code changes OpenAI, Gemini, image generation, streaming, prompt optimization, account rotation, account-client pooling, or runtime stats recording.
+- Use this contract whenever an upstream request is served by a stored Google account selected for that request. In pooled/balanced mode, the selected account may differ from the registry's current active account.
 
 ### 2. Signatures
 
@@ -268,11 +268,14 @@ def model_prefers_premium(self, model: str | None) -> bool:
 - `AccountRotator.record_success(account_id: str, *, image_size: str | None = None, image_count: int = 1) -> None`
 - `AccountRotator.record_rate_limited(account_id: str) -> None`
 - `AccountRotator.record_error(account_id: str) -> None`
-- `_record_request_result(model, event, usage=None, *, image_size=None, image_count=1) -> None`
+- `_record_request_result(model, event, usage=None, *, account_id=None, image_size=None, image_count=1) -> None`
+- `RequestAccountContext.account_id -> str | None`
 
 ### 3. Contracts
 
-- Model-level runtime stats and active-account stats must be recorded through the same request-result boundary when an active account exists.
+- Model-level runtime stats and selected-account stats must be recorded through the same request-result boundary when a request-bound account exists.
+- In account-client-pool mode, success, error, and rate-limit events must use `RequestAccountContext.account_id`; they must not read the current active account at record time.
+- Legacy/no-pool paths may fall back to the current active account for stats only after account selection/activation has completed.
 - Success, error, and rate-limited events must update both model totals and account totals exactly once for each counted upstream request.
 - Image generation success must pass `image_size` and the number of returned image items into both model and account stats.
 - Transient retry attempts that clear stale capture state, such as first-attempt auth errors or empty image responses, must not be counted as permanent account errors unless the retry also fails.
@@ -280,23 +283,26 @@ def model_prefers_premium(self, model: str | None) -> bool:
 
 ### 4. Validation & Error Matrix
 
-- Active account exists + request succeeds -> model `success` increments and the same account `success` increments.
-- Active account exists + upstream 429 with no successful retry -> model `rate_limited` increments and the same account `rate_limited` increments.
-- Active account exists + final upstream error -> model `errors` increments and the same account `errors` increments.
+- Request-bound account exists + request succeeds -> model `success` increments and the selected account `success` increments.
+- Request-bound account exists + upstream 429 with no successful retry -> model `rate_limited` increments and the selected account `rate_limited` increments.
+- Request-bound account exists + final upstream error -> model `errors` increments and the selected account `errors` increments.
 - First auth/empty-image attempt clears capture state and retry succeeds -> only one success is counted, no account error is recorded.
-- No active account exists -> model stats may be recorded, account stats are skipped.
+- No selected or active account exists -> model stats may be recorded, account stats are skipped.
 
 ### 5. Good/Base/Bad Cases
 
 - Good: Web image generation on account A then account B leaves `/stats.totals.requests == 2` and the sum of `/rotation.accounts[*].requests == 2`.
 - Base: OpenAI or Gemini streaming success records the final usage and updates the active account once after the stream completes.
+- Good: Balanced mode request on account A records success on account A even if another request or manual action changes the active account before response accounting.
 - Bad: Streaming builders call only `runtime_state.record`, so model totals increase while account totals remain stale.
+- Bad: Request accounting reads `account_service.get_active_account()` after an upstream request handled by a pooled client, so stats can land on the wrong account.
 - Bad: A first-attempt stale capture `401` is counted as an account error even though a fresh-capture retry succeeds.
 
 ### 6. Tests Required
 
 - Unit: non-streaming image success updates active-account requests, success, and image usage with the same image count as model stats.
-- Unit: OpenAI and Gemini streaming success update active-account stats after completion.
+- Unit: account-pool chat success records the selected account and does not switch the active account.
+- Unit: OpenAI and Gemini streaming success update selected-account stats after completion.
 - Unit: auth-error and empty-image retries clear capture state and do not count transient errors when the retry succeeds.
 - Frontend/static: image generation and prompt optimization call a shared stats refresh that loads both `/stats` and `/rotation`.
 - Real: WSL API and Web smokes activate two stored Pro accounts, generate images on both, and assert model totals equal account totals without printing secrets.
@@ -312,7 +318,86 @@ runtime_state.record(model, "success", output.usage)
 #### Correct
 
 ```python
+_record_request_result(model, "success", output.usage, account_id=account_context.account_id)
+```
+
+## Scenario: Balanced Account Pool Request Binding
+
+### 1. Scope / Trigger
+
+- Trigger: Code changes `round_robin` behavior, account rotation, account-client pooling, chat/image/Gemini request handling, streaming response builders, or 429 retry routing.
+- Use this contract whenever a normal upstream request should be distributed across stored accounts without making the caller aware of backend account selection.
+
+### 2. Signatures
+
+- `RotationMode.ROUND_ROBIN == "round_robin"` remains the public config/API value and means balanced mode.
+- `AccountRotator.acquire_account(model=None, *, require_preferred=False, exclude_account_id=None, affinity_key=None) -> AccountLease | None`.
+- `AccountLease.account: AccountMeta` and `await AccountLease.release()`.
+- `AccountStats.in_flight: int` is exposed through `/rotation.accounts[account_id].in_flight`.
+- `AccountClientPool.get_client(account_id: str) -> AIStudioClient | None`.
+- `ChatRequest.user: str | None` may be used as an OpenAI-compatible affinity hint.
+
+### 3. Contracts
+
+- Balanced `round_robin` must select per request using current in-flight count, historical request count, rate-limit count, and a round-robin tie breaker.
+- A selected account lease must be held until the non-streaming request returns, or until the streaming generator finishes/cancels.
+- Request handlers must use the pooled `AIStudioClient` associated with the selected account; they must not call global `activate_account()` for normal balanced routing.
+- Each pooled client must have its own `SnapshotCache` and browser/capture/session state. Global active-account switching remains only for legacy/no-pool and manual activation flows.
+- Lightweight affinity may keep a logical user/session on the same account when that account is not more than one in-flight request above the least-busy account.
+- For OpenAI-compatible chat, `ChatRequest.user` is the preferred affinity key. Without it, derive a bounded in-memory affinity key from normalized first user content.
+- On 429, update the failed selected account, then retry with `exclude_account_id` so the next attempt uses another eligible account when available.
+- If stored accounts exist but no eligible account can be leased, do not silently use the global fallback client; return a service-unavailable style error or wait for the shortest cooldown when appropriate.
+- Manual activation, login completion, credential import, account deletion, and force-next must invalidate affected pooled clients so stale auth/capture state is not reused.
+
+### 4. Validation & Error Matrix
+
+- Two concurrent leases + two healthy accounts -> selected account IDs differ and both `in_flight` values increment while leased.
+- Same affinity key + account not overloaded -> selected account remains stable.
+- Different `ChatRequest.user` values + two healthy accounts -> requests can distribute across accounts even with identical message content.
+- Selected account 429 -> that account gets `rate_limited`, retry excludes it, and success can be recorded on another account.
+- Pooled account auth changes -> next request creates a fresh pooled client for that account.
+- All healthy accounts cooling down -> wait for shortest cooldown rather than sending through an unrelated global client.
+- No stored accounts configured -> fallback client behavior remains available for legacy single-auth operation.
+
+### 5. Good/Base/Bad Cases
+
+- Good: Two real Pro accounts handle two OpenAI-compatible chat requests with different `user` values, and `/rotation` shows each account has one success and zero in-flight requests after completion.
+- Base: Exhaustion mode still keeps the active account until it becomes unavailable.
+- Base: Premium-preferred model selection still filters eligible accounts to Pro/Ultra before balanced picking.
+- Bad: Normal balanced routing calls `AccountService.activate_account()` before each request, racing global auth/capture state across concurrent users.
+- Bad: A pooled request succeeds on account A but records stats on account B because the active account changed before accounting.
+
+### 6. Tests Required
+
+- Unit: balanced concurrent leases distribute across two accounts and release `in_flight` counts.
+- Unit: affinity keeps the same account when not overloaded.
+- Unit: different OpenAI `user` values distribute across pooled clients.
+- Unit: pooled chat uses account-bound clients without switching the active account.
+- Unit: 429 retry excludes the failed account and records stats on both the failed and successful accounts.
+- Integration/real: WSL browser-backed `/v1/chat/completions` with two real accounts returns successful responses for two distinct user affinity keys and `/rotation` shows balanced account success counts.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+await _ensure_account_for_model(model)
+output = await client.generate_content(...)
 _record_request_result(model, "success", output.usage)
+```
+
+#### Correct
+
+```python
+account_context = await _request_account_context(
+	client,
+	model,
+	affinity_key=affinity_key,
+	exclude_account_id=exclude_account_id,
+)
+output = await account_context.client.generate_content(...)
+_record_request_result(model, "success", output.usage, account_id=account_context.account_id)
+await account_context.release()
 ```
 
 ## Scenario: Streaming Chat Success Requires Visible Output

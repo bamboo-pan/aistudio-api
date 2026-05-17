@@ -148,6 +148,9 @@ async def login_status(
                 session.error = "登录已保存，但切换浏览器认证状态失败"
             else:
                 session.auth_activated = True
+                account_client_pool = getattr(runtime_state, "account_client_pool", None)
+                if account_client_pool is not None:
+                    await account_client_pool.invalidate(session.account_id)
         else:
             session.auth_activated = True
     return LoginStatusResponse(
@@ -221,6 +224,7 @@ async def import_credentials(
     name: str | None = None,
     activate: bool = True,
     account_service=Depends(get_account_service),
+    runtime_state=Depends(get_runtime_state),
 ):
     """导入凭证备份包或单账号 Playwright storage state。"""
     try:
@@ -235,6 +239,11 @@ async def import_credentials(
         imported = account_service.import_credentials(payload, name=name, activate=activate)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=_error_detail(str(exc))) from exc
+
+    account_client_pool = getattr(runtime_state, "account_client_pool", None)
+    if account_client_pool is not None:
+        for account in imported:
+            await account_client_pool.invalidate(account.id)
 
     return CredentialImportResponse(
         imported=[_to_account_response(account) for account in imported],
@@ -262,6 +271,9 @@ async def activate_account(
     )
     if account is None:
         raise HTTPException(status_code=404, detail=_error_detail("账号不存在或切换失败", "not_found"))
+    account_client_pool = getattr(runtime_state, "account_client_pool", None)
+    if account_client_pool is not None:
+        await account_client_pool.invalidate(account.id)
     return _to_account_response(account)
 
 
@@ -291,11 +303,15 @@ async def test_account(
 async def delete_account(
     account_id: str,
     account_service=Depends(get_account_service),
+    runtime_state=Depends(get_runtime_state),
 ):
     """删除账号。"""
     success = account_service.delete_account(account_id)
     if not success:
         raise HTTPException(status_code=404, detail=_error_detail("账号不存在", "not_found"))
+    account_client_pool = getattr(runtime_state, "account_client_pool", None)
+    if account_client_pool is not None:
+        await account_client_pool.invalidate(account_id)
     return {"ok": True}
 
 

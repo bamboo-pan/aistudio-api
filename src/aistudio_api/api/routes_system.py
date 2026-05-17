@@ -24,7 +24,7 @@ async def stats():
 # ========== 轮询管理 API ==========
 
 class RotationModeRequest(BaseModel):
-    mode: str  # round_robin, lru, least_rl, exhaustion
+    mode: str  # round_robin(balanced), lru, least_rl, exhaustion
     cooldown_seconds: int | None = None
 
 
@@ -64,7 +64,7 @@ async def set_rotation_mode(
             "cooldown_seconds": rotator.cooldown_seconds,
         }
     except ValueError:
-        raise HTTPException(400, detail=f"无效的轮询模式: {req.mode}，可选: round_robin, lru, least_rl, exhaustion")
+        raise HTTPException(400, detail=f"无效的轮询模式: {req.mode}，可选: round_robin(均衡模式), lru, least_rl, exhaustion")
 
 
 @router.get("/rotation/accounts")
@@ -108,6 +108,10 @@ async def force_next_account(runtime_state=Depends(get_runtime_state)):
 
     if result is None:
         raise HTTPException(500, detail="切换失败")
+
+    account_client_pool = getattr(runtime_state, "account_client_pool", None)
+    if account_client_pool is not None:
+        await account_client_pool.invalidate(result.id)
 
     return {
         "ok": True,

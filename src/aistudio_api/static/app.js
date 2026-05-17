@@ -163,8 +163,8 @@ function app(){return{
 
   accountLabel(a){return a?.email||a?.name||a?.id||'未知账号'},
   tierLabel(t){return t==='ultra'?'Ultra':t==='pro'?'Pro':'Free'},
-  rotationLabel(m){return m==='round_robin'?'顺序轮询':m==='lru'?'LRU':m==='least_rl'?'最少限流':m==='exhaustion'?'耗尽模式':m||'未知'},
-  rotationHint(m){return m==='exhaustion'?'当前账号持续使用到限流或不可用':m==='lru'?'优先选择最久未使用账号':m==='least_rl'?'优先选择限流次数最少账号':'按账号池顺序分配请求'},
+  rotationLabel(m){return m==='round_robin'?'均衡模式':m==='lru'?'LRU':m==='least_rl'?'最少限流':m==='exhaustion'?'耗尽模式':m||'未知'},
+  rotationHint(m){return m==='exhaustion'?'当前账号持续使用到限流或不可用':m==='lru'?'优先选择最久未使用账号':m==='least_rl'?'优先选择限流次数最少账号':'按账号池负载与亲和关系均衡分配请求'},
   imageSizeEntries(a){return Object.entries(a?.image_sizes||{}).sort((x,y)=>y[1]-x[1])},
   healthLabel(s){return {healthy:'健康',rate_limited:'冷却中',isolated:'已隔离',expired:'登录过期',missing_auth:'缺少凭证',error:'异常',unknown:'未知'}[s||'unknown']||s},
   healthClass(s){if(s==='healthy')return'badge-green';if(['rate_limited','isolated','expired','missing_auth','error'].includes(s))return'badge-red';return'badge-gray'},

@@ -16,7 +16,7 @@ A local API proxy for Google AI Studio. It exposes browser-backed AI Studio acce
 - **Structured output**: `response_format` / `json_schema` support with model-capability validation
 - **Image generation and editing**: OpenAI-compatible image generation, reference images, server-side image persistence, and image-session history
 - **Account management**: browser login, credential import/export, account health checks, and Free/Pro/Ultra tier labels
-- **Account rotation**: `round_robin`, `lru`, `least_rl`, and `exhaustion` modes with account/model stats
+- **Account rotation**: `round_robin` balanced mode, `lru`, `least_rl`, and `exhaustion` modes with account/model stats
 - **Experimental pure HTTP mode**: limited plain-text requests without the browser; not full compatibility mode
 
 ## Quick Start
@@ -291,7 +291,7 @@ Rotation modes:
 
 | Mode | Behavior |
 |------|----------|
-| `round_robin` | Cycle through the account pool |
+| `round_robin` | Balanced mode; distribute requests by account-pool load, request counts, and lightweight session affinity |
 | `lru` | Prefer the least recently used account |
 | `least_rl` | Prefer the account with the fewest rate-limit events |
 | `exhaustion` | Keep using the current healthy account until it becomes rate-limited, isolated, expired, missing auth, or unsuitable for the selected model |
@@ -346,7 +346,7 @@ Use environment variables or a `.env` file:
 | `AISTUDIO_GENERATED_IMAGES_DIR` | `./data/generated-images` | Directory for persisted generated images |
 | `AISTUDIO_IMAGE_SESSIONS_DIR` | `./data/image-sessions` | Image-session history directory |
 | `AISTUDIO_GENERATED_IMAGES_ROUTE` | `/generated-images` | Static serving and deletion route prefix for generated images |
-| `AISTUDIO_ACCOUNT_ROTATION_MODE` | `round_robin` | Default account rotation mode |
+| `AISTUDIO_ACCOUNT_ROTATION_MODE` | `round_robin` | Default account rotation mode; `round_robin` means balanced mode |
 | `AISTUDIO_ACCOUNT_COOLDOWN_SECONDS` | `60` | Cooldown after rate limit |
 | `AISTUDIO_ACCOUNT_MAX_RETRIES` | `3` | Account-related max retry setting |
 | `AISTUDIO_MAX_CONCURRENCY` | `3` | Server-side concurrency semaphore size |

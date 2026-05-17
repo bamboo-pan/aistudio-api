@@ -53,6 +53,7 @@ class ChatRequest(BaseModel):
     safety_off: Optional[bool] = None
     response_format: Optional[dict[str, Any] | str] = None
     stream_options: StreamOptions | None = None
+    user: Optional[str] = None
 
 
 class ImageUrl(BaseModel):
