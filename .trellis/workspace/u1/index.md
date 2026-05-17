@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 9
-- **Last Active**: 2026-05-16
+- **Total Sessions**: 10
+- **Last Active**: 2026-05-17
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~314 | Active |
+| `journal-1.md` | ~347 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 10 | 2026-05-17 | Fix web auth retry | `79512e6` | `fix/web-auth-retry` |
 | 9 | 2026-05-16 | Fix browser replay captured URL failure | `86e3383` | `fix-replay-captured-url` |
 | 8 | 2026-05-16 | Improve frontend dynamic layout | `5399e74` | `master` |
 | 7 | 2026-05-16 | Fix playground thinking off | `b660acf` | `fix/playground-thinking-off` |
