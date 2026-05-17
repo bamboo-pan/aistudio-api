@@ -8,7 +8,7 @@ from aistudio_api.api.app import app
 from aistudio_api.api.dependencies import get_client
 from aistudio_api.api.state import runtime_state
 from aistudio_api.application.api_service import _build_gemini_streaming_response, _build_streaming_response
-from aistudio_api.domain.errors import RequestError
+from aistudio_api.domain.errors import AuthError, RequestError
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent, AistudioPart
 
 
@@ -38,6 +38,22 @@ class CloseAwareStreamClient:
             await asyncio.Event().wait()
         finally:
             self.closed = True
+
+
+class AuthRetryStreamClient:
+    def __init__(self):
+        self.calls = []
+        self.clear_calls = 0
+
+    def clear_snapshot_cache(self):
+        self.clear_calls += 1
+
+    async def stream_generate_content(self, **kwargs):
+        self.calls.append(kwargs)
+        if len(self.calls) == 1:
+            raise AuthError("stale auth")
+        yield ("body", "hello")
+        yield ("usage", {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
 
 
 class DisconnectingRequest:
@@ -220,6 +236,33 @@ def test_openai_stream_disconnect_during_downstream_closes_upstream_and_cleans_t
     assert not tmp_file.exists()
 
 
+def test_openai_stream_auth_error_retries_with_fresh_capture_state():
+    client = AuthRetryStreamClient()
+    old_busy_lock = runtime_state.busy_lock
+    runtime_state.busy_lock = asyncio.Semaphore(3)
+
+    try:
+        response = _build_streaming_response(
+            client=client,
+            capture_prompt="hello",
+            model="gemini-3-flash-preview",
+            capture_images=None,
+            contents=[AistudioContent(role="user", parts=[AistudioPart(text="hello")])],
+            system_instruction=None,
+            cleanup_paths=[],
+        )
+        chunks = asyncio.run(collect_body_iterator(response))
+    finally:
+        runtime_state.busy_lock = old_busy_lock
+
+    body = "".join(chunks)
+    assert "hello" in body
+    assert client.clear_calls == 1
+    assert len(client.calls) == 2
+    assert client.calls[0]["force_refresh_capture"] is False
+    assert client.calls[1]["force_refresh_capture"] is True
+
+
 def test_gemini_streaming_emits_function_call_parts_and_finish_reason():
     client = FakeStreamClient(
         events=[
@@ -268,6 +311,28 @@ def test_gemini_stream_disconnect_during_downstream_closes_upstream_and_cleans_t
     assert client.closed is True
     assert request.calls == 2
     assert not tmp_file.exists()
+
+
+def test_gemini_stream_auth_error_retries_with_fresh_capture_state():
+    client = AuthRetryStreamClient()
+    old_busy_lock = runtime_state.busy_lock
+    runtime_state.busy_lock = asyncio.Semaphore(3)
+
+    try:
+        response = _build_gemini_streaming_response(
+            client=client,
+            normalized=gemini_normalized(),
+        )
+        chunks = asyncio.run(collect_body_iterator(response))
+    finally:
+        runtime_state.busy_lock = old_busy_lock
+
+    body = "".join(chunks)
+    assert "hello" in body
+    assert client.clear_calls == 1
+    assert len(client.calls) == 2
+    assert client.calls[0]["force_refresh_capture"] is False
+    assert client.calls[1]["force_refresh_capture"] is True
 
 
 def test_to_openai_tool_calls_stringifies_dict_arguments():

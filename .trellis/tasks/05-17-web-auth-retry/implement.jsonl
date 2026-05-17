@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend spec index and required guideline entry points for API/account/gateway changes."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Captured request replay contract and backend testing expectations relevant to browser gateway changes."}

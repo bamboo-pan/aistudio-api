@@ -100,7 +100,7 @@ async def force_next_account(runtime_state=Depends(get_runtime_state)):
 
     result = await account_service.activate_account(
         next_account.id,
-        client._session,
+        client,
         runtime_state.snapshot_cache,
         busy_lock,
         keep_snapshot_cache=False,
