@@ -243,3 +243,36 @@ Fixed direct file execution of the Camoufox launcher in src-layout checkouts, ad
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: Fix Pro model account routing
+
+**Date**: 2026-05-17
+**Task**: Fix Pro model account routing
+**Branch**: `fix/new-account-permission`
+
+### Summary
+
+Fixed account routing so Pro text models prefer Pro/Ultra accounts, added regression tests, documented the model selection contract, and verified with WSL real-account smoke.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2cae93f` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
