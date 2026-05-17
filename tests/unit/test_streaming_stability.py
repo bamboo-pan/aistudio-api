@@ -160,6 +160,32 @@ def test_openai_stream_error_chunk_has_sdk_compatible_shape_and_done_marker():
     assert body.rstrip().endswith("data: [DONE]")
 
 
+def test_openai_stream_empty_upstream_emits_error_chunk_and_done_marker():
+    client = FakeStreamClient(events=[("usage", {"prompt_tokens": 1, "completion_tokens": 0, "total_tokens": 1})])
+
+    response = request_with_client(
+        client,
+        "POST",
+        "/v1/chat/completions",
+        json={
+            "model": "gemini-3.1-flash-lite",
+            "stream": True,
+            "messages": [{"role": "user", "content": "1+1"}],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.text
+    events = stream_events(response)
+    assert events[-1]["error"] == {
+        "message": "AI Studio returned no response content",
+        "type": "upstream_error",
+        "param": None,
+        "code": "upstream_error",
+    }
+    assert body.rstrip().endswith("data: [DONE]")
+
+
 def test_openai_stream_close_cancels_upstream_and_cleans_temp_files(tmp_path):
     tmp_file = tmp_path / "uploaded.png"
     tmp_file.write_bytes(b"image")
@@ -333,6 +359,26 @@ def test_gemini_streaming_emits_function_call_parts_and_finish_reason():
     assert function_call == {"name": "lookup", "args": {"query": "weather"}}
     assert finish["finishReason"] == "FUNCTION_CALL"
     assert events[-1]["usageMetadata"]["totalTokenCount"] == 3
+    assert response.text.rstrip().endswith("data: [DONE]")
+
+
+def test_gemini_stream_empty_upstream_emits_error_chunk_and_done_marker():
+    client = FakeStreamClient(events=[("usage", {"prompt_tokens": 1, "completion_tokens": 0, "total_tokens": 1})])
+
+    response = request_with_client(
+        client,
+        "POST",
+        "/v1beta/models/gemini-3.1-flash-lite:streamGenerateContent",
+        json={"contents": [{"role": "user", "parts": [{"text": "1+1"}]}]},
+    )
+
+    assert response.status_code == 200
+    events = stream_events(response)
+    assert events[-1]["error"] == {
+        "code": 502,
+        "message": "AI Studio returned no response content",
+        "status": "BAD_GATEWAY",
+    }
     assert response.text.rstrip().endswith("data: [DONE]")
 
 

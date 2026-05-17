@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend spec index for API/gateway task."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Contains gateway replay, auth cache, streaming stats, and real-test contracts relevant to chat regression."}
+{"file":".trellis/spec/guides/index.md","reason":"Shared thinking guide index required before development."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Chat streaming spans API, service, gateway, parser, and browser replay boundaries."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Required search-first guidance before adding helpers or changing shared parsing behavior."}
