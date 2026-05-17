@@ -2,7 +2,6 @@ import asyncio
 import json
 import logging
 from datetime import datetime, timezone
-from types import SimpleNamespace
 
 import httpx
 from fastapi import FastAPI
@@ -269,6 +268,19 @@ class FakeBrowserSession:
         self.auth_paths.append(auth_path)
 
 
+class FakeAuthClient:
+    def __init__(self, browser_session):
+        self._session = browser_session
+        self.clear_calls = 0
+
+    async def switch_auth(self, auth_path):
+        await self._session.switch_auth(auth_path)
+        self.clear_capture_state()
+
+    def clear_capture_state(self):
+        self.clear_calls += 1
+
+
 class FakeSnapshotCache:
     def __init__(self):
         self.clear_calls = 0
@@ -288,7 +300,7 @@ def run_with_account_runtime(coro, *, account_service, rotator, browser_session,
     runtime_state.busy_lock = asyncio.Semaphore(3)
     runtime_state.account_service = account_service
     runtime_state.rotator = rotator
-    runtime_state.client = SimpleNamespace(_session=browser_session)
+    runtime_state.client = FakeAuthClient(browser_session)
     runtime_state.snapshot_cache = snapshot_cache
     if generated_images_dir is not None:
         settings.generated_images_dir = str(generated_images_dir)

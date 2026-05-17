@@ -35,14 +35,14 @@ def test_completed_login_status_activates_saved_account_auth_once():
         async def activate_account(self, account_id, browser_session, snapshot_cache, busy_lock):
             self.calls += 1
             assert account_id == "acc_1"
-            assert browser_session == "browser-session"
+            assert browser_session == "client"
             assert snapshot_cache == "snapshot-cache"
             assert busy_lock == "busy-lock"
             return account
 
     service = FakeAccountService()
     runtime_state = SimpleNamespace(
-        client=SimpleNamespace(_session="browser-session"),
+        client="client",
         snapshot_cache="snapshot-cache",
         busy_lock="busy-lock",
     )

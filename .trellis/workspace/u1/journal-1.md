@@ -312,3 +312,36 @@ Fixed browser replay to use the CapturedRequest URL and sanitized headers instea
 ### Next Steps
 
 - None - task complete
+
+
+## Session 10: Fix web auth retry
+
+**Date**: 2026-05-17
+**Task**: Fix web auth retry
+**Branch**: `fix/web-auth-retry`
+
+### Summary
+
+Cleared browser capture templates whenever auth context or streaming auth retry refreshes capture state, updated account activation callers to use the client boundary, added regression tests, updated backend spec, and verified with Windows unit tests plus a WSL real streaming request using real credentials.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `79512e6` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

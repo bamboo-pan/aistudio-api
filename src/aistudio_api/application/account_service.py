@@ -55,7 +55,7 @@ class AccountService:
 
         Args:
             account_id: 目标账号 ID
-            browser_session: BrowserSession 实例
+            browser_session: 负责切换 auth 的 BrowserSession/AIStudioClient 实例
             snapshot_cache: SnapshotCache 实例
             busy_lock: asyncio.Lock，确保切换时无请求在飞行中。None 则跳过锁
             keep_snapshot_cache: 是否保留 snapshot 缓存（默认 False，避免切号后复用旧 snapshot）
@@ -75,7 +75,7 @@ class AccountService:
                 logger.error("账号 %s 的 auth.json 不存在", account_id)
                 return None
 
-            # 切换 BrowserSession 的 auth
+            # 切换浏览器/客户端 auth；AIStudioClient 会同步清理 capture 模板。
             await browser_session.switch_auth(str(auth_path))
 
             # 切号后默认清理 snapshot，避免旧页面态和新账号 cookies 混用。

@@ -109,6 +109,88 @@ const body = { model: this.imageModel, prompt, size: this.imageSize }
 if (timeout) body.timeout = timeout
 ```
 
+## Scenario: Browser Auth Changes Invalidate Capture State
+
+### 1. Scope / Trigger
+
+- Trigger: Code changes account activation, login completion, account rotation, browser auth switching, BotGuard snapshot retry, or request capture template caching.
+- Use this contract whenever a browser-backed request may run after the active Google account or auth storage state changes.
+
+### 2. Signatures
+
+- `RequestCaptureService.clear_templates() -> None`
+- `AIStudioClient.switch_auth(auth_file: str | None) -> None`
+- `AIStudioClient.clear_capture_state() -> None`
+- `AIStudioClient.clear_snapshot_cache() -> None`
+- `AccountService.activate_account(account_id, browser_session, snapshot_cache, busy_lock=None, keep_snapshot_cache=False)` where `browser_session` should be the `AIStudioClient` when available, not only `AIStudioClient._session`.
+
+### 3. Contracts
+
+- Account activation must invalidate every cache that depends on the previous browser auth context: `BrowserSession` context/templates, `RequestCaptureService` per-model templates, and `SnapshotCache` prompt/model entries.
+- `AIStudioClient.switch_auth` is the preferred auth-switch boundary because it can update the browser session and clear client-level capture state together.
+- `AIStudioClient.clear_snapshot_cache` must clear capture templates as well as snapshots; a fresh snapshot with a stale captured template can still replay stale headers/body context.
+- Streaming auth-error retry must call the client cache-clear boundary and then retry with `force_refresh_capture=True`.
+- Replay must still use the `CapturedRequest` URL and sanitized headers after refresh; cache invalidation must not regress the captured request replay contract above.
+
+### 4. Validation & Error Matrix
+
+- Account switch succeeds -> next request for an already-used model re-captures its hook template before replay.
+- Auth error during first streaming attempt -> clear capture state, force fresh capture, retry once.
+- Retry still returns upstream `401`/`403` -> propagate the upstream auth/permission error; do not loop indefinitely.
+- Missing account auth file -> activation returns no account and must not update the active account registry.
+- Pure HTTP client has no browser templates -> clear snapshots and tolerate missing `clear_templates`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: Web UI activates a different account; the next `gemini-3.1-flash-lite` request logs a fresh `Hook 模板已就绪` before replay.
+- Base: Snapshot-only retry for the same auth context clears snapshots and templates, then captures fresh request state once.
+- Bad: Account switching passes only `client._session` into `AccountService`, clearing browser templates but leaving `RequestCaptureService._templates` from the previous account.
+- Bad: Streaming retry clears only `SnapshotCache`; the new snapshot is inserted into a stale template captured with old auth headers.
+
+### 6. Tests Required
+
+- Unit: `RequestCaptureService.clear_templates` causes the next same-model capture to call `capture_template` again.
+- Unit: `AIStudioClient.switch_auth` clears service-level capture templates.
+- Unit: account activation routes pass the runtime client into `AccountService.activate_account`.
+- Unit: OpenAI and Gemini streaming auth-error retry clears capture state once and retries with `force_refresh_capture=True`.
+- Integration/real: browser-backed `/v1/chat/completions` with the affected model returns SSE chunks and `[DONE]` using real account credentials.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+result = await account_service.activate_account(
+	next_account.id,
+	client._session,
+	runtime_state.snapshot_cache,
+)
+```
+
+#### Correct
+
+```python
+result = await account_service.activate_account(
+	next_account.id,
+	client,
+	runtime_state.snapshot_cache,
+)
+```
+
+#### Wrong
+
+```python
+def clear_snapshot_cache(self) -> None:
+	_snapshot_cache.clear()
+```
+
+#### Correct
+
+```python
+def clear_snapshot_cache(self) -> None:
+	self.clear_capture_state()
+```
+
 ---
 
 ## Testing Requirements

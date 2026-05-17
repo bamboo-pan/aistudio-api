@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend spec index for final compliance check."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Verify captured request replay contract remains intact after capture invalidation changes."}

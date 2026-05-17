@@ -65,9 +65,18 @@ class AIStudioClient:
         """切换账号的 auth 文件。"""
         if self._session is not None:
             await self._session.switch_auth(auth_file)
+        self.clear_capture_state()
 
     def clear_snapshot_cache(self) -> None:
-        """清除 snapshot 缓存。"""
+        """清除 snapshot 缓存及其依赖的 capture 模板。"""
+        self.clear_capture_state()
+
+    def clear_capture_state(self) -> None:
+        """清除依赖当前浏览器认证态的 capture 缓存。"""
+        self._captured = None
+        clear_templates = getattr(self._capture_service, "clear_templates", None)
+        if callable(clear_templates):
+            clear_templates()
         _snapshot_cache.clear()
 
     def _dump_raw_exchange(

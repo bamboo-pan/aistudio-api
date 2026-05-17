@@ -626,7 +626,7 @@ async def _try_switch_account(model: str | None = None, *, require_preferred: bo
     # 切换账号时清掉 snapshot，避免复用旧页面态。
     result = await account_service.activate_account(
         next_account.id,
-        client._session,
+        client,
         runtime_state.snapshot_cache,
         None,  # skip lock — caller already holds it
         keep_snapshot_cache=False,
