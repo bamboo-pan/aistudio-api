@@ -144,13 +144,25 @@ class AccountService:
                 "isolated_until": account.isolated_until,
             }
 
-        account = self._store.update_account(account_id, tier=tier_result.tier.value)
+        account = self._store.get_account(account_id)
+        if account is None:
+            return result
+
+        detected_tier = tier_result.tier.value
+        tier_to_store = detected_tier
+        if detected_tier == "free" and account.is_premium:
+            tier_to_store = account.tier
+            health_reason = f"storage state is readable; tier detection returned free, keeping stored {account.tier} tier"
+        else:
+            health_reason = f"storage state is readable; detected {detected_tier} tier"
+
+        account = self._store.update_account(account_id, tier=tier_to_store)
         if account is None:
             return result
         account = self._store.set_account_health(
             account_id,
             "healthy",
-            f"storage state is readable; detected {tier_result.tier.value} tier",
+            health_reason,
         ) or account
         return {
             "ok": True,

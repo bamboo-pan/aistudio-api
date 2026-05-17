@@ -25,7 +25,7 @@ import orjson
 from camoufox.server import LAUNCH_SCRIPT, get_nodejs, to_camel_case_dict
 from camoufox.utils import launch_options
 
-from aistudio_api.config import settings
+from aistudio_api.config import camoufox_proxy_identity_options, settings
 
 
 def _prune_none(value: Any) -> Any:
@@ -40,6 +40,7 @@ def launch_camoufox_server(*, port: int, headless: bool):
     options: dict[str, Any] = {"port": port, "headless": headless, "main_world_eval": True}
     if settings.proxy_server:
         options["proxy"] = {"server": settings.proxy_server}
+        options.update(camoufox_proxy_identity_options())
     cfg = launch_options(**options)
     cfg = _prune_none(cfg)
     nodejs = get_nodejs()

@@ -50,6 +50,63 @@ ACCOUNT_MENU_CLICK_JS = r"""(email) => {
     return true;
 }"""
 
+AI_STUDIO_ONBOARDING_JS = r"""() => {
+    const body = document.body ? (document.body.innerText || '') : '';
+    const lowerBody = body.toLowerCase();
+    const needsConsent = lowerBody.includes('i consent to the google apis terms') ||
+        lowerBody.includes('gemini api additional terms of service');
+    if (!needsConsent) return {needed: false, checked: false, submitted: false, remaining: false};
+
+    const textOf = (el) => String(el.innerText || el.textContent || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+    const visible = (el) => {
+        const rect = el.getBoundingClientRect();
+        const style = window.getComputedStyle(el);
+        return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+    };
+    const requiredConsentText = (text) => {
+        const lower = text.toLowerCase();
+        if (lower.includes('opt in') || lower.includes('news') || lower.includes('offers') || lower.includes('promotions')) return false;
+        return lower.includes('i consent') || lower.includes('terms of service') || lower.includes('gemini api additional terms');
+    };
+
+    let checked = false;
+    for (const el of Array.from(document.querySelectorAll('input[type="checkbox"], mat-checkbox, .mat-mdc-checkbox, .mdc-checkbox, [role="checkbox"], label'))) {
+        const root = el.closest('mat-checkbox') || el.closest('label') || el;
+        const input = el.matches && el.matches('input[type="checkbox"]') ? el : root.querySelector && root.querySelector('input[type="checkbox"]');
+        const text = `${textOf(root)} ${input ? textOf(input) : ''}`;
+        if (!requiredConsentText(text)) continue;
+        if (!visible(el)) continue;
+        const alreadyChecked = (input && input.checked) || el.getAttribute('aria-checked') === 'true';
+        if (!alreadyChecked) {
+            const target = input || (root.querySelector && (root.querySelector('.mdc-checkbox') || root.querySelector('[role="checkbox"]'))) || root;
+            try { target.scrollIntoView({block: 'center', inline: 'center'}); } catch(e) {}
+            target.click();
+            if (input && !input.checked) {
+                input.checked = true;
+                input.dispatchEvent(new Event('input', {bubbles: true}));
+                input.dispatchEvent(new Event('change', {bubbles: true}));
+            }
+            checked = true;
+        }
+        break;
+    }
+
+    let submitted = false;
+    for (const button of Array.from(document.querySelectorAll('button, [role="button"]'))) {
+        const label = textOf(button).toLowerCase();
+        if (!label || !visible(button)) continue;
+        if (button.disabled || button.getAttribute('aria-disabled') === 'true') continue;
+        if (/continue|accept|agree|get started|start using|done|next/.test(label)) {
+            button.click();
+            submitted = true;
+            break;
+        }
+    }
+
+    const remaining = (document.body ? (document.body.innerText || '') : '').toLowerCase().includes('i consent to the google apis terms');
+    return {needed: true, checked, submitted, remaining};
+}"""
+
 
 class AccountTier(str, Enum):
     FREE = "free"
@@ -143,6 +200,32 @@ def _tier_result_from_page_data(data: dict) -> TierResult:
     )
 
 
+async def _complete_onboarding(page) -> bool:
+    completed = False
+    for _ in range(4):
+        result = await page.evaluate(AI_STUDIO_ONBOARDING_JS)
+        if not isinstance(result, dict) or not result.get("needed"):
+            return completed
+        completed = completed or bool(result.get("checked") or result.get("submitted"))
+        await page.wait_for_timeout(1200)
+        if not result.get("remaining") and result.get("submitted"):
+            return True
+    return completed
+
+
+def _complete_onboarding_sync(page) -> bool:
+    completed = False
+    for _ in range(4):
+        result = page.evaluate(AI_STUDIO_ONBOARDING_JS)
+        if not isinstance(result, dict) or not result.get("needed"):
+            return completed
+        completed = completed or bool(result.get("checked") or result.get("submitted"))
+        page.wait_for_timeout(1200)
+        if not result.get("remaining") and result.get("submitted"):
+            return True
+    return completed
+
+
 @dataclass
 class TierResult:
     tier: AccountTier
@@ -183,6 +266,8 @@ async def detect_tier(
             timeout=timeout_ms,
         )
         await page.wait_for_timeout(2500)
+        if await _complete_onboarding(page):
+            await page.wait_for_timeout(2500)
 
         result = _tier_result_from_page_data(await page.evaluate(TIER_DETECT_JS))
         if result.tier == AccountTier.FREE and result.email:
@@ -210,6 +295,8 @@ def detect_tier_sync(browser_context, timeout_ms: int = 30000) -> TierResult:
             timeout=timeout_ms,
         )
         page.wait_for_timeout(2500)
+        if _complete_onboarding_sync(page):
+            page.wait_for_timeout(2500)
         result = _tier_result_from_page_data(page.evaluate(TIER_DETECT_JS))
         if result.tier == AccountTier.FREE and result.email:
             opened = page.evaluate(ACCOUNT_MENU_CLICK_JS, result.email)

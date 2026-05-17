@@ -1,6 +1,6 @@
 import pytest
 
-from aistudio_api.infrastructure.account.tier_detector import AccountTier, parse_account_tier_from_text
+from aistudio_api.infrastructure.account.tier_detector import AccountTier, _complete_onboarding_sync, parse_account_tier_from_text
 
 
 @pytest.mark.parametrize(
@@ -49,3 +49,26 @@ def test_parse_account_tier_prefers_ultra_when_both_badges_are_visible():
     text = "user@example.com\nPRO\nGoogle AI Ultra\nManage membership"
 
     assert parse_account_tier_from_text(text, email="user@example.com") == AccountTier.ULTRA
+
+
+class FakeOnboardingPage:
+    def __init__(self, results):
+        self.results = list(results)
+        self.wait_calls = []
+
+    def evaluate(self, script: str):
+        assert "google apis terms" in script.lower()
+        return self.results.pop(0) if self.results else {"needed": False}
+
+    def wait_for_timeout(self, timeout_ms: int):
+        self.wait_calls.append(timeout_ms)
+
+
+def test_tier_detection_onboarding_completion_handles_required_terms():
+    page = FakeOnboardingPage([
+        {"needed": True, "checked": True, "submitted": False, "remaining": True},
+        {"needed": True, "checked": False, "submitted": True, "remaining": False},
+    ])
+
+    assert _complete_onboarding_sync(page) is True
+    assert page.wait_calls == [1200, 1200]
