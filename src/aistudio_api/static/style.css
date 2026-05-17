@@ -361,6 +361,7 @@ select.sel:focus,.sel:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(
 .image-form-panel{grid-column:1;grid-row:1 / span 2;position:relative;overflow:visible}
 .image-panel-head{padding:16px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;background:#fff}
 .image-panel-head h1,.image-panel-head h2{font-size:17px;font-weight:720;line-height:1.25}
+.image-panel-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap;min-width:0}
 .panel-meta{font-size:13px;color:var(--muted);white-space:nowrap}
 .studio-step{position:relative;padding:18px;border-bottom:1px solid var(--border)}
 .studio-step:last-child{border-bottom:none}
@@ -448,6 +449,10 @@ select.sel:focus,.sel:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(
 @keyframes image-spin{to{transform:rotate(360deg)}}
 .image-compact-empty{padding:24px 18px;line-height:1.55}
 .image-session-panel,.image-sessions-panel{grid-column:2}
+.image-session-panel .image-panel-head{align-items:flex-start}
+.image-new-session-btn{min-height:34px;padding:7px 13px;font-weight:760;box-shadow:0 6px 14px rgba(16,163,127,.2);white-space:nowrap}
+.image-new-session-btn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.image-new-session-btn:disabled{box-shadow:none}
 .image-session-log{padding:14px 18px;display:flex;flex-direction:column;gap:12px;max-height:340px;overflow-y:auto}
 .image-session-error{margin:12px 18px 0}
 .image-session-history{padding:12px 18px;display:flex;flex-direction:column;gap:10px;max-height:340px;overflow-y:auto}
