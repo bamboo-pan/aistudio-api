@@ -315,6 +315,103 @@ runtime_state.record(model, "success", output.usage)
 _record_request_result(model, "success", output.usage)
 ```
 
+## Scenario: Streaming Chat Success Requires Visible Output
+
+### 1. Scope / Trigger
+
+- Trigger: Code changes OpenAI-compatible streaming, Gemini streaming, stream parser/classifier, browser replay, frontend SSE consumption, or runtime stats for chat streams.
+- Use this contract whenever converting AI Studio streaming replay events into downstream OpenAI/Gemini SSE responses.
+
+### 2. Signatures
+
+- `AIStudioClient.stream_generate_content(...) -> AsyncIterator[tuple[str, object | None]]`
+- Stream event types: `"body"`, `"thinking"`, `"tool_calls"`, `"usage"`, `"done"`.
+- `_build_streaming_response(...) -> StreamingResponse` for `/v1/chat/completions`.
+- `_build_gemini_streaming_response(...) -> StreamingResponse` for `:streamGenerateContent`.
+- `sse_error(message, error_type="upstream_error", code="upstream_error")` for OpenAI-compatible stream errors.
+- Frontend stream consumer must handle top-level `{"error": ...}` SSE payloads in addition to `choices` and usage chunks.
+
+### 3. Contracts
+
+- A streaming response is successful only after at least one visible output event is emitted: `body`, `thinking`, or `tool_calls`.
+- `usage` and `done` events alone are not visible assistant output and must not be recorded as success.
+- If upstream finishes with HTTP 200 but no visible output, the backend must emit an SSE error chunk and `data: [DONE]`, and record the request as an error.
+- OpenAI-compatible streams must preserve SDK-compatible error chunks with `error.message`, `error.type`, `error.param`, and `error.code`.
+- Gemini-compatible streams must emit a Gemini-style `error` payload with code/status/message.
+- The static frontend must surface top-level stream error chunks in the assistant message; it must not silently ignore them because the HTTP status is 200.
+
+### 4. Validation & Error Matrix
+
+- `body` event with non-empty text -> emit content delta, record success after stream completion.
+- `thinking` event with non-empty text -> emit thinking delta, record success after stream completion.
+- `tool_calls` event with at least one call -> emit tool-call delta, finish as tool calls, record success after stream completion.
+- `usage` only + stream end -> emit upstream error chunk, send `[DONE]`, record errors.
+- Upstream raises `AuthError`, `RequestError`, `UsageLimitExceeded`, or another `AistudioError` -> emit compatible stream error and `[DONE]`, record errors unless a first-attempt retry succeeds.
+- Frontend receives `data: {"error": ...}` -> set the current assistant message error from `error.message`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: AI Studio returns `pong`; OpenAI stream emits a content delta, stop chunk, usage chunk, and `[DONE]`.
+- Base: AI Studio returns a tool call only; OpenAI stream emits `delta.tool_calls` and finishes with `tool_calls`.
+- Base: AI Studio returns reasoning text before visible body; stream emits thinking chunks and still counts as visible output.
+- Bad: Parser classifies every upstream chunk as `unknown`; backend emits only an empty stop chunk and records success.
+- Bad: Backend emits an SSE error chunk, but the Web UI ignores it because it only reads `choices[0].delta`.
+
+### 6. Tests Required
+
+- Unit: OpenAI stream with a fake upstream `body` event emits content and records success.
+- Unit: OpenAI stream with only `usage` emits a top-level error chunk and `[DONE]`.
+- Unit: Gemini stream with only `usage` emits a Gemini error payload and `[DONE]`.
+- Static/frontend: stream parser code checks `d.error` before usage/choice handling and writes it into the assistant message.
+- Real: WSL browser-backed `/v1/chat/completions` stream for a text-only prompt returns at least one content delta and `[DONE]` with real account credentials.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+async for event_type, text in upstream:
+    if event_type == "usage":
+        final_usage = text
+
+_record_request_result(model, "success", final_usage)
+yield sse_chunk(chat_id, model, "", finish="stop")
+yield "data: [DONE]\n\n"
+```
+
+#### Correct
+
+```python
+saw_content = False
+async for event_type, text in upstream:
+    if event_type == "body" and text:
+        saw_content = True
+        yield sse_chunk(chat_id, model, text)
+    elif event_type == "thinking" and text:
+        saw_content = True
+        yield sse_chunk(chat_id, model, "", thinking=text)
+    elif event_type == "tool_calls" and text:
+        saw_content = True
+        yield sse_chunk(chat_id, model, "", tool_calls=to_openai_tool_calls(text))
+    elif event_type == "usage":
+        final_usage = text if isinstance(text, dict) else None
+
+if not saw_content:
+    raise RequestError(502, "AI Studio returned no response content")
+
+_record_request_result(model, "success", final_usage)
+```
+
+#### Correct Frontend Error Handling
+
+```javascript
+const d = JSON.parse(line.slice(6))
+if (d.error) {
+  this.msgs[idx].error = d.error.message || JSON.stringify(d.error)
+  continue
+}
+```
+
 ## Scenario: Image Model Capture with Proxied AI Studio Sessions
 
 ### 1. Scope / Trigger

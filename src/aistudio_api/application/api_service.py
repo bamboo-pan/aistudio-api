@@ -1508,6 +1508,7 @@ def _build_streaming_response(
                 chat_id = new_chat_id()
                 final_usage = None
                 saw_tool_calls = False
+                saw_content = False
                 for stream_attempt in range(2):
                     if await _request_disconnected(request):
                         logger.info("OpenAI stream disconnected before downstream call")
@@ -1541,11 +1542,14 @@ def _build_streaming_response(
                                     logger.info("OpenAI stream disconnected during downstream replay")
                                     return
                                 if event_type == "body" and text:
+                                    saw_content = True
                                     yield sse_chunk(chat_id, model, text, include_usage=include_usage)
                                 elif event_type == "thinking" and text:
+                                    saw_content = True
                                     yield sse_chunk(chat_id, model, "", thinking=text, include_usage=include_usage)
                                 elif event_type == "tool_calls" and text:
                                     saw_tool_calls = True
+                                    saw_content = True
                                     yield sse_chunk(
                                         chat_id,
                                         model,
@@ -1571,6 +1575,9 @@ def _build_streaming_response(
                             client.clear_snapshot_cache()
                             continue
                         raise
+
+                if not saw_content:
+                    raise RequestError(502, "AI Studio returned no response content")
 
                 _record_request_result(model, "success", final_usage)
                 yield sse_chunk(chat_id, model, "", finish="tool_calls" if saw_tool_calls else "stop", include_usage=include_usage)
@@ -1720,6 +1727,7 @@ def _build_gemini_streaming_response(*, client: AIStudioClient, normalized: dict
             try:
                 final_usage = None
                 saw_tool_calls = False
+                saw_content = False
                 for stream_attempt in range(2):
                     if await _request_disconnected(request):
                         logger.info("Gemini stream disconnected before downstream call")
@@ -1747,6 +1755,7 @@ def _build_gemini_streaming_response(*, client: AIStudioClient, normalized: dict
                                     logger.info("Gemini stream disconnected during downstream replay")
                                     return
                                 if event_type == "body" and text:
+                                    saw_content = True
                                     yield "data: " + json.dumps(
                                         {
                                             "candidates": [
@@ -1759,6 +1768,7 @@ def _build_gemini_streaming_response(*, client: AIStudioClient, normalized: dict
                                         ensure_ascii=False,
                                     ) + "\n\n"
                                 elif event_type == "thinking" and text:
+                                    saw_content = True
                                     yield "data: " + json.dumps(
                                         {
                                             "candidates": [
@@ -1775,6 +1785,7 @@ def _build_gemini_streaming_response(*, client: AIStudioClient, normalized: dict
                                     ) + "\n\n"
                                 elif event_type == "tool_calls" and text:
                                     saw_tool_calls = True
+                                    saw_content = True
                                     yield "data: " + json.dumps(
                                         {
                                             "candidates": [
@@ -1810,6 +1821,9 @@ def _build_gemini_streaming_response(*, client: AIStudioClient, normalized: dict
                             client.clear_snapshot_cache()
                             continue
                         raise
+
+                if not saw_content:
+                    raise RequestError(502, "AI Studio returned no response content")
 
                 _record_request_result(normalized["model"], "success", final_usage)
                 finish_payload: dict[str, Any] = {

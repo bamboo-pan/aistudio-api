@@ -49,6 +49,7 @@ def test_static_frontend_exposes_playground_workbench_tools():
     assert "messageUsageRows(message)" in app_js
     assert "cached_tokens" in app_js
     assert "if(d.usage&&(!d.choices||!d.choices.length))" in app_js
+    assert "if(d.error){this.msgs[idx].error=d.error.message||JSON.stringify(d.error);continue}" in app_js
     assert "chatRequestSummary" not in app_js
     assert "chatCapabilityItems" in app_js
     assert "模型调试工作台" in index_html
