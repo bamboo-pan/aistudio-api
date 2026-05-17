@@ -97,7 +97,7 @@ class RequestCaptureService:
         captured = await self._session.capture_template(model)
         template = CapturedRequest(**captured)
         self._templates[model] = template
-        logger.info("Hook 模板已就绪: model=%s", model)
+        logger.info("Hook 模板已就绪: requested=%s, captured=%s", model, template.model)
         return template
 
     def _build_capture_content(self, prompt: str, images: list[str] | None) -> AistudioContent:

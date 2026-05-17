@@ -16,9 +16,13 @@ from aistudio_api.api.routes_openai import router as openai_router
 from aistudio_api.api.routes_generated_images import register_generated_image_routes
 from aistudio_api.api.schemas import ChatRequest, ImagePromptOptimizationRequest, ImageRequest
 from aistudio_api.api.state import runtime_state
+from aistudio_api.application.account_rotator import AccountRotator
+from aistudio_api.application.account_service import AccountService
 from aistudio_api.application.api_service import handle_chat, handle_image_generation, handle_image_prompt_optimization
-from aistudio_api.domain.errors import RequestError
+from aistudio_api.domain.errors import AuthError, RequestError
 from aistudio_api.domain.models import Candidate, GeneratedImage, ModelOutput
+from aistudio_api.infrastructure.account.account_store import AccountStore
+from aistudio_api.infrastructure.account.login_service import LoginService
 
 
 SQUARE_PROMPT_SUFFIX = "Use a square 1:1 composition."
@@ -88,6 +92,48 @@ class FakeSecondImageErrorClient(FakeImageClient):
         return await super().generate_image(**kwargs)
 
 
+class FakeAuthThenSuccessImageClient(FakeImageClient):
+    def __init__(self):
+        super().__init__()
+        self.clear_calls = 0
+
+    def clear_capture_state(self):
+        self.clear_calls += 1
+
+    async def generate_image(self, *, prompt, model, generation_config_overrides=None, images=None, timeout=_UNSET):
+        if not self.calls:
+            call = {"prompt": prompt, "model": model, "generation_config_overrides": generation_config_overrides, "images": images}
+            if timeout is not _UNSET:
+                call["timeout"] = timeout
+            self.calls.append(call)
+            raise AuthError("stale capture auth")
+        kwargs = {"prompt": prompt, "model": model, "generation_config_overrides": generation_config_overrides, "images": images}
+        if timeout is not _UNSET:
+            kwargs["timeout"] = timeout
+        return await super().generate_image(**kwargs)
+
+
+class FakeEmptyThenSuccessImageClient(FakeImageClient):
+    def __init__(self):
+        super().__init__()
+        self.clear_calls = 0
+
+    def clear_capture_state(self):
+        self.clear_calls += 1
+
+    async def generate_image(self, *, prompt, model, generation_config_overrides=None, images=None, timeout=_UNSET):
+        if not self.calls:
+            call = {"prompt": prompt, "model": model, "generation_config_overrides": generation_config_overrides, "images": images}
+            if timeout is not _UNSET:
+                call["timeout"] = timeout
+            self.calls.append(call)
+            return ModelOutput(candidates=[Candidate(text="empty image response")])
+        kwargs = {"prompt": prompt, "model": model, "generation_config_overrides": generation_config_overrides, "images": images}
+        if timeout is not _UNSET:
+            kwargs["timeout"] = timeout
+        return await super().generate_image(**kwargs)
+
+
 class FakeChatClient:
     def __init__(self):
         self.calls = []
@@ -122,7 +168,7 @@ class FakePromptOptimizerClient:
         )
 
 
-def run_with_runtime(coro, *, generated_images_dir=None):
+def run_with_runtime(coro, *, generated_images_dir=None, account_service=None, rotator=None):
     old_busy_lock = runtime_state.busy_lock
     old_account_service = runtime_state.account_service
     old_rotator = runtime_state.rotator
@@ -133,8 +179,8 @@ def run_with_runtime(coro, *, generated_images_dir=None):
         temp_dir = tempfile.TemporaryDirectory()
         generated_images_dir = temp_dir.name
     runtime_state.busy_lock = asyncio.Semaphore(3)
-    runtime_state.account_service = None
-    runtime_state.rotator = None
+    runtime_state.account_service = account_service
+    runtime_state.rotator = rotator
     settings.generated_images_dir = str(generated_images_dir)
     settings.generated_images_route = "/generated-images"
     try:
@@ -147,6 +193,17 @@ def run_with_runtime(coro, *, generated_images_dir=None):
         settings.generated_images_route = old_generated_images_route
         if temp_dir is not None:
             temp_dir.cleanup()
+
+
+def storage_state(cookie_name="sid", cookie_value="1"):
+    return {"cookies": [{"name": cookie_name, "value": cookie_value, "domain": ".google.com", "path": "/"}]}
+
+
+def account_runtime(tmp_path):
+    store = AccountStore(accounts_dir=tmp_path)
+    account = store.save_account("main", None, storage_state(), tier="pro")
+    service = AccountService(store, LoginService())
+    return account, service, AccountRotator(store)
 
 
 def request_app(app: FastAPI, method: str, url: str, **kwargs) -> httpx.Response:
@@ -468,6 +525,38 @@ def test_image_generation_translates_low_level_request_error():
 
     assert error.value.status_code == 502
     assert error.value.detail["type"] == "upstream_error"
+
+
+def test_image_generation_retries_auth_error_with_fresh_capture_without_counting_transient_error(tmp_path):
+    account, service, rotator = account_runtime(tmp_path / "accounts")
+    client = FakeAuthThenSuccessImageClient()
+    req = ImageRequest(prompt="draw", model="gemini-3.1-flash-image-preview")
+
+    response = run_with_runtime(handle_image_generation(req, client), account_service=service, rotator=rotator)
+
+    account_stats = rotator.get_all_stats()[account.id]
+    assert response["data"][0]["b64_json"]
+    assert client.clear_calls == 1
+    assert len(client.calls) == 2
+    assert account_stats["requests"] == 1
+    assert account_stats["success"] == 1
+    assert account_stats["errors"] == 0
+
+
+def test_image_generation_retries_empty_image_response_with_fresh_capture(tmp_path):
+    account, service, rotator = account_runtime(tmp_path / "accounts")
+    client = FakeEmptyThenSuccessImageClient()
+    req = ImageRequest(prompt="draw", model="gemini-3.1-flash-image-preview")
+
+    response = run_with_runtime(handle_image_generation(req, client), account_service=service, rotator=rotator)
+
+    account_stats = rotator.get_all_stats()[account.id]
+    assert response["data"][0]["b64_json"]
+    assert client.clear_calls == 1
+    assert len(client.calls) == 2
+    assert account_stats["requests"] == 1
+    assert account_stats["success"] == 1
+    assert account_stats["errors"] == 0
 
 
 def test_image_generation_cleans_up_persisted_files_when_later_generation_fails(tmp_path):

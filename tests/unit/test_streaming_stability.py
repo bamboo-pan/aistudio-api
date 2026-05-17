@@ -7,8 +7,12 @@ import pytest
 from aistudio_api.api.app import app
 from aistudio_api.api.dependencies import get_client
 from aistudio_api.api.state import runtime_state
+from aistudio_api.application.account_rotator import AccountRotator
+from aistudio_api.application.account_service import AccountService
 from aistudio_api.application.api_service import _build_gemini_streaming_response, _build_streaming_response
 from aistudio_api.domain.errors import AuthError, RequestError
+from aistudio_api.infrastructure.account.account_store import AccountStore
+from aistudio_api.infrastructure.account.login_service import LoginService
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent, AistudioPart
 
 
@@ -117,6 +121,17 @@ def gemini_normalized(cleanup_paths: list[str] | None = None) -> dict:
         "generation_config_overrides": None,
         "cleanup_paths": cleanup_paths or [],
     }
+
+
+def storage_state(cookie_name="sid", cookie_value="1"):
+    return {"cookies": [{"name": cookie_name, "value": cookie_value, "domain": ".google.com", "path": "/"}]}
+
+
+def account_runtime(tmp_path):
+    store = AccountStore(accounts_dir=tmp_path)
+    account = store.save_account("main", None, storage_state(), tier="pro")
+    service = AccountService(store, LoginService())
+    return account, service, AccountRotator(store)
 
 
 def test_openai_stream_error_chunk_has_sdk_compatible_shape_and_done_marker():
@@ -261,6 +276,39 @@ def test_openai_stream_auth_error_retries_with_fresh_capture_state():
     assert len(client.calls) == 2
     assert client.calls[0]["force_refresh_capture"] is False
     assert client.calls[1]["force_refresh_capture"] is True
+
+
+def test_openai_stream_success_updates_active_account_stats(tmp_path):
+    account, service, rotator = account_runtime(tmp_path / "accounts")
+    client = FakeStreamClient(events=[("body", "hello"), ("usage", {"total_tokens": 2})])
+    old_busy_lock = runtime_state.busy_lock
+    old_account_service = runtime_state.account_service
+    old_rotator = runtime_state.rotator
+    runtime_state.busy_lock = asyncio.Semaphore(3)
+    runtime_state.account_service = service
+    runtime_state.rotator = rotator
+
+    try:
+        response = _build_streaming_response(
+            client=client,
+            capture_prompt="hello",
+            model="gemini-3-flash-preview",
+            capture_images=None,
+            contents=[AistudioContent(role="user", parts=[AistudioPart(text="hello")])],
+            system_instruction=None,
+            cleanup_paths=[],
+        )
+        chunks = asyncio.run(collect_body_iterator(response))
+    finally:
+        runtime_state.busy_lock = old_busy_lock
+        runtime_state.account_service = old_account_service
+        runtime_state.rotator = old_rotator
+
+    account_stats = rotator.get_all_stats()[account.id]
+    assert "hello" in "".join(chunks)
+    assert account_stats["requests"] == 1
+    assert account_stats["success"] == 1
+    assert account_stats["errors"] == 0
 
 
 def test_gemini_streaming_emits_function_call_parts_and_finish_reason():

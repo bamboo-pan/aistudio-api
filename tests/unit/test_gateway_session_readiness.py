@@ -2,9 +2,10 @@ import json
 
 import pytest
 
+from aistudio_api.config import settings
 from aistudio_api.infrastructure.account import tier_detector
 from aistudio_api.infrastructure.account.tier_detector import AccountTier, TierResult
-from aistudio_api.infrastructure.gateway.session import AI_STUDIO_URL, BrowserSession
+from aistudio_api.infrastructure.gateway.session import AI_STUDIO_URL, AI_STUDIO_URL_FALLBACK, BrowserSession
 
 
 class FakeRequest:
@@ -32,6 +33,12 @@ class FakeTextArea:
         self.page = page
 
     def fill(self, value: str):
+        if self.page.redirect_on_next_fill:
+            self.page.redirect_on_next_fill = False
+            self.page.url = "https://ai.google.dev/gemini-api/docs/available-regions"
+            self.page.has_default_makersuite = False
+            self.page.has_textarea = False
+            raise RuntimeError("Element is not attached to the DOM")
         self.page.filled_texts.append(value)
 
 
@@ -57,6 +64,7 @@ class FakePage:
         install_results: list[str] | None = None,
         goto_redirect_url: str | None = None,
         goto_error: Exception | None = None,
+        redirect_on_next_fill: bool = False,
     ):
         self.url = url
         self.has_default_makersuite = has_default_makersuite
@@ -67,6 +75,7 @@ class FakePage:
         self.install_results = list(install_results or [])
         self.goto_redirect_url = goto_redirect_url
         self.goto_error = goto_error
+        self.redirect_on_next_fill = redirect_on_next_fill
         self.goto_urls: list[str] = []
         self.wait_calls: list[int] = []
         self.filled_texts: list[str] = []
@@ -238,6 +247,27 @@ def test_goto_waits_until_chat_runtime_and_input_are_ready():
     assert page.has_textarea is True
 
 
+def test_goto_recovers_from_ai_developers_docs_redirect():
+    page = FakePage(title="Available regions", body="Google AI for Developers")
+
+    def goto(url: str, **kwargs):
+        page.goto_urls.append(url)
+        if len(page.goto_urls) == 1:
+            page.url = "https://ai.google.dev/gemini-api/docs/available-regions"
+            return
+        page.url = url
+        page.has_default_makersuite = True
+        page.has_textarea = True
+
+    page.goto = goto
+    session = BrowserSession(port=0)
+
+    session._goto_aistudio_sync(page)
+
+    assert page.goto_urls[:2] == [AI_STUDIO_URL, AI_STUDIO_URL_FALLBACK]
+    assert page.url == AI_STUDIO_URL_FALLBACK
+
+
 def test_goto_failure_reports_readiness_diagnostics():
     page = FakePage(title="Account page", body="Login completed but chat shell is missing")
     session = BrowserSession(port=0)
@@ -247,7 +277,7 @@ def test_goto_failure_reports_readiness_diagnostics():
 
     message = str(exc_info.value)
     assert "AI Studio chat runtime not ready" in message
-    assert "url=https://aistudio.google.com/app/prompts/new_chat" in message
+    assert "url=https://aistudio.google.com/" in message
     assert "title=Account page" in message
     assert "default_MakerSuite=False" in message
     assert "textarea=False" in message
@@ -309,6 +339,20 @@ def test_new_context_missing_auth_file_fails_before_unauthenticated_context(tmp_
     assert "Browser auth state file is missing" in str(exc_info.value)
 
 
+def test_browser_options_set_proxy_identity_when_proxy_is_configured(monkeypatch):
+    monkeypatch.setattr(settings, "proxy_server", "http://127.0.0.1:7890")
+    session = BrowserSession(port=0)
+
+    options = session._browser_options_sync()
+
+    assert options["proxy"] == {"server": "http://127.0.0.1:7890"}
+    assert options["locale"] == settings.camoufox_locale
+    assert options["config"]["timezone"] == settings.camoufox_timezone
+    assert options["config"]["geolocation:latitude"] == settings.camoufox_geolocation_latitude
+    assert options["config"]["geolocation:longitude"] == settings.camoufox_geolocation_longitude
+    assert options["i_know_what_im_doing"] is True
+
+
 def test_install_hook_failure_reports_page_diagnostics():
     page = FakePage(
         url=AI_STUDIO_URL,
@@ -348,6 +392,144 @@ def test_detect_tier_for_auth_file_does_not_require_active_auth(monkeypatch):
     assert session.browser.contexts[0].closed is True
 
 
+class FakeOnboardingPage:
+    def __init__(self, results):
+        self.results = list(results)
+        self.wait_calls = []
+
+    def evaluate(self, script: str, *args):
+        assert "google apis terms" in script.lower()
+        return self.results.pop(0) if self.results else {"needed": False}
+
+    def wait_for_timeout(self, timeout_ms: int):
+        self.wait_calls.append(timeout_ms)
+
+
+class FakeImageOnboardingPage:
+    def __init__(self, *, initial_consent: bool = False):
+        self.wait_calls = []
+        self.evaluate_calls = []
+        self.initial_consent = initial_consent
+        self.consent_calls = 0
+        self.trigger_calls = 0
+
+    def evaluate(self, script: str, *args):
+        self.evaluate_calls.append(script)
+        if "image_entry_not_found" in script:
+            self.trigger_calls += 1
+            if self.initial_consent and self.trigger_calls == 1:
+                return {"triggered": False, "reason": "already_visible"}
+            return {"triggered": True, "label": "image Image Generation"}
+        if "model_card_not_found" in script:
+            return {"selected": True, "label": "Nano Banana Pro"}
+        if "google apis terms" in script.lower():
+            self.consent_calls += 1
+            if self.initial_consent and self.consent_calls == 1:
+                return {"needed": True, "checked": True, "submitted": False, "remaining": True}
+            if self.initial_consent and self.consent_calls == 2:
+                return {"needed": True, "checked": False, "submitted": True, "remaining": False}
+            return {"needed": False, "checked": False, "submitted": False, "remaining": False}
+        return None
+
+    def wait_for_timeout(self, timeout_ms: int):
+        self.wait_calls.append(timeout_ms)
+
+
+def test_aistudio_onboarding_completion_clicks_required_consent_until_submitted():
+    page = FakeOnboardingPage([
+        {"needed": True, "checked": True, "submitted": False, "remaining": True},
+        {"needed": True, "checked": False, "submitted": True, "remaining": False},
+    ])
+    session = BrowserSession(port=0)
+
+    assert session._complete_aistudio_onboarding_sync(page) is True
+
+    assert page.wait_calls == [1200, 1200]
+
+
+def test_aistudio_onboarding_completion_noops_when_not_needed():
+    page = FakeOnboardingPage([{"needed": False, "checked": False, "submitted": False, "remaining": False}])
+    session = BrowserSession(port=0)
+
+    assert session._complete_aistudio_onboarding_sync(page) is False
+
+    assert page.wait_calls == []
+
+
+def test_image_model_capture_prepares_image_onboarding(monkeypatch):
+    page = FakeImageOnboardingPage()
+    session = BrowserSession(port=0)
+
+    assert session._prepare_model_onboarding_sync(page, "gemini-3-pro-image-preview") is True
+
+    assert page.wait_calls == [1200, 1200]
+    assert any("model_card_not_found" in script for script in page.evaluate_calls)
+
+
+def test_image_model_capture_reopens_image_entry_after_initial_terms():
+    page = FakeImageOnboardingPage(initial_consent=True)
+    session = BrowserSession(port=0)
+
+    assert session._prepare_model_onboarding_sync(page, "gemini-3-pro-image-preview") is True
+
+    assert page.trigger_calls == 1
+    assert page.consent_calls >= 2
+    assert any("model_card_not_found" in script for script in page.evaluate_calls)
+
+
+def test_text_model_capture_skips_image_onboarding():
+    page = FakeImageOnboardingPage()
+    session = BrowserSession(port=0)
+
+    assert session._prepare_model_onboarding_sync(page, "gemini-3-flash-preview") is False
+    assert page.evaluate_calls == []
+
+
+class TemplateCaptureImageSessionForTest(TemplateCaptureSessionForTest):
+    def __init__(self, page):
+        super().__init__(page)
+        self.ensure_hook_calls = 0
+        self.botguard_calls = 0
+        self.prepare_calls = []
+        self.install_calls = 0
+        self.goto_calls = 0
+
+    def _ensure_hook_page_sync(self):
+        self.ensure_hook_calls += 1
+        return self._hook_page
+
+    def _ensure_botguard_service_sync(self):
+        self.botguard_calls += 1
+        return self._hook_page
+
+    def _prepare_model_onboarding_sync(self, page, model: str) -> bool:
+        self.prepare_calls.append((page, model, self.botguard_calls))
+        return "image" in model
+
+    def _install_hooks_sync(self, page) -> None:
+        self.install_calls += 1
+
+    def _goto_aistudio_sync(self, page) -> None:
+        self.goto_calls += 1
+        page.url = AI_STUDIO_URL
+        page.has_default_makersuite = True
+        page.has_textarea = True
+
+
+def test_capture_template_prepares_image_model_before_botguard_snapshot_ready():
+    page = FakePage(url=AI_STUDIO_URL, has_default_makersuite=True, has_textarea=True)
+    session = TemplateCaptureImageSessionForTest(page)
+
+    captured = session._capture_template_sync("gemini-3-pro-image-preview")
+
+    assert captured["url"].endswith("GenerateContent")
+    assert session.ensure_hook_calls == 1
+    assert session.botguard_calls == 1
+    assert session.prepare_calls == [(page, "gemini-3-pro-image-preview", 0)]
+    assert session.install_calls == 2
+    assert session.goto_calls == 1
+
+
 def test_capture_template_uses_request_route_and_aborts_dummy_generation():
     page = FakePage(url=AI_STUDIO_URL, has_default_makersuite=True, has_textarea=True)
     session = TemplateCaptureSessionForTest(page)
@@ -365,3 +547,21 @@ def test_capture_template_uses_request_route_and_aborts_dummy_generation():
     assert page.routed_requests[0].continued is False
     assert page.unroute_calls == ["**/*GenerateContent*"]
     assert session.wait_until_idle_calls == 1
+
+
+def test_capture_template_recovers_when_page_redirects_to_docs_during_fill():
+    page = FakePage(
+        url=AI_STUDIO_URL,
+        has_default_makersuite=True,
+        has_textarea=True,
+        redirect_on_next_fill=True,
+    )
+    session = TemplateCaptureSessionForTest(page)
+
+    captured = session._capture_template_sync("gemini-3-flash-preview")
+
+    assert captured["url"].endswith("GenerateContent")
+    assert page.filled_texts == ["template"]
+    assert session.goto_calls == 1
+    assert session.install_calls == 1
+    assert page.unroute_calls == ["**/*GenerateContent*", "**/*GenerateContent*"]

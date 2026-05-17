@@ -49,6 +49,11 @@ class Settings:
     camoufox_headless: bool = os.getenv("AISTUDIO_CAMOUFOX_HEADLESS", "1") not in ("0", "false", "False")
     camoufox_python: str | None = os.getenv("AISTUDIO_CAMOUFOX_PYTHON")
     proxy_server: str | None = _proxy_server()
+    camoufox_locale: str = os.getenv("AISTUDIO_CAMOUFOX_LOCALE", "en-US")
+    camoufox_timezone: str = os.getenv("AISTUDIO_CAMOUFOX_TIMEZONE", "America/Los_Angeles")
+    camoufox_geolocation_latitude: float = float(os.getenv("AISTUDIO_CAMOUFOX_GEOLOCATION_LATITUDE", "37.7749"))
+    camoufox_geolocation_longitude: float = float(os.getenv("AISTUDIO_CAMOUFOX_GEOLOCATION_LONGITUDE", "-122.4194"))
+    camoufox_geolocation_accuracy: int = int(os.getenv("AISTUDIO_CAMOUFOX_GEOLOCATION_ACCURACY", "100"))
     timeout_replay: int = int(os.getenv("AISTUDIO_TIMEOUT_REPLAY", "120"))
     timeout_stream: int = int(os.getenv("AISTUDIO_TIMEOUT_STREAM", "120"))
     timeout_capture: int = int(os.getenv("AISTUDIO_TIMEOUT_CAPTURE", "30"))
@@ -71,3 +76,17 @@ class Settings:
 
 
 settings = Settings()
+
+
+def camoufox_proxy_identity_options() -> dict[str, object]:
+    """Return stable browser identity hints for proxied Camoufox sessions."""
+    return {
+        "config": {
+            "geolocation:latitude": settings.camoufox_geolocation_latitude,
+            "geolocation:longitude": settings.camoufox_geolocation_longitude,
+            "geolocation:accuracy": settings.camoufox_geolocation_accuracy,
+            "timezone": settings.camoufox_timezone,
+        },
+        "locale": settings.camoufox_locale,
+        "i_know_what_im_doing": True,
+    }

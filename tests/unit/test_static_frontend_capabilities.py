@@ -175,6 +175,7 @@ def test_static_frontend_exposes_exhaustion_mode_and_resolution_usage():
     assert "if(route==='dashboard'){this.go('accounts');return}" in app_js
     assert "['chat','images','dashboard','accounts']" not in app_js
     assert "image_sizes" in app_js
+    assert "refreshRuntimeStats()" in app_js
     assert "resolution-chip" in index_html
     assert ".rotation-option.active" in style_css
     assert ".resolution-chip" in style_css
@@ -241,6 +242,8 @@ def test_static_frontend_exposes_image_prompt_templates_and_optimizer():
     assert "textModels" in app_js
     assert "promptOptimizerSupportsThinking" in app_js
     assert "optimizeImagePrompt()" in app_js
+    assert "finally{await this.refreshRuntimeStats();this.imagePromptOptimizing=false}" in app_js
+    assert "finally{await this.refreshRuntimeStats();this.imageBusy=false}" in app_js
     assert "applyImagePromptOption(option)" in app_js
     assert "this.imagePromptOptions=[]" in app_js
     assert "/v1/images/prompt-optimizations" in app_js

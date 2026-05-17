@@ -132,6 +132,23 @@ def test_account_tier_check_can_update_free_account_to_pro(tmp_path):
     assert "synthetic-secret" not in body_text
 
 
+def test_account_tier_check_does_not_downgrade_stored_premium_to_free(tmp_path):
+    store = AccountStore(accounts_dir=tmp_path)
+    account = store.save_account("main", None, storage_state(cookie_value="synthetic-secret", email="route@example.com"), tier="pro")
+    service = AccountService(store, LoginService())
+
+    async def fake_detector(auth_path):
+        assert auth_path == tmp_path / account.id / "auth.json"
+        return TierResult(tier=AccountTier.FREE, email="route@example.com", raw_header="Upgrade to Google AI Pro")
+
+    result = asyncio.run(service.test_account_with_tier(account.id, tier_detector=fake_detector))
+
+    assert result["ok"] is True
+    assert result["tier"] == "pro"
+    assert store.get_account(account.id).tier == "pro"
+    assert "keeping stored pro" in result["reason"]
+
+
 def test_account_update_route_accepts_tier_and_rejects_unknown_tier(tmp_path):
     store = AccountStore(accounts_dir=tmp_path)
     account = store.save_account("main", None, storage_state())

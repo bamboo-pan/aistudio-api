@@ -606,14 +606,74 @@ def _validate_image_request(req: ImageRequest):
     return plan_image_generation(req.model, req.size), response_format
 
 
-async def _try_switch_account(model: str | None = None, *, require_preferred: bool = False) -> bool:
+def _record_active_account(
+    event: str,
+    *,
+    image_size: str | None = None,
+    image_count: int = 1,
+) -> None:
+    rotator = runtime_state.rotator
+    account_service = runtime_state.account_service
+    if rotator is None or account_service is None:
+        return
+    account = account_service.get_active_account()
+    if account is None:
+        return
+    if event == "success":
+        rotator.record_success(account.id, image_size=image_size, image_count=image_count)
+    elif event == "rate_limited":
+        rotator.record_rate_limited(account.id)
+    elif event == "errors":
+        rotator.record_error(account.id)
+
+
+def _record_request_result(
+    model: str,
+    event: str,
+    usage: dict | None = None,
+    *,
+    image_size: str | None = None,
+    image_count: int = 1,
+) -> None:
+    runtime_state.record(model, event, usage, image_size=image_size, image_count=image_count)
+    _record_active_account(
+        event,
+        image_size=image_size,
+        image_count=image_count,
+    )
+
+
+def _clear_client_capture_state(client: AIStudioClient) -> None:
+    clear_capture_state = getattr(client, "clear_capture_state", None)
+    if callable(clear_capture_state):
+        clear_capture_state()
+        return
+    clear_snapshot_cache = getattr(client, "clear_snapshot_cache", None)
+    if callable(clear_snapshot_cache):
+        clear_snapshot_cache()
+
+
+def _is_empty_image_response(exc: RequestError) -> bool:
+    return exc.status == 0 and "no image data" in exc.message.lower()
+
+
+async def _try_switch_account(
+    model: str | None = None,
+    *,
+    require_preferred: bool = False,
+    exclude_account_id: str | None = None,
+) -> bool:
     """尝试切换到下一个可用账号。返回是否成功切换。"""
     rotator = runtime_state.rotator
     if rotator is None:
         return False
 
     # 获取下一个账号
-    next_account = await rotator.get_next_account(model, require_preferred=require_preferred)
+    next_account = await rotator.get_next_account(
+        model,
+        require_preferred=require_preferred,
+        exclude_account_id=exclude_account_id,
+    )
     if next_account is None:
         return False
 
@@ -1237,14 +1297,7 @@ async def handle_chat(req: ChatRequest, client: AIStudioClient, request: Request
                     sanitize_plain_text=response_format_overrides is None,
                 )
 
-                # 记录成功
-                rotator = runtime_state.rotator
-                if rotator:
-                    account = runtime_state.account_service.get_active_account() if runtime_state.account_service else None
-                    if account:
-                        rotator.record_success(account.id)
-
-                runtime_state.record(model, "success", output.usage)
+                _record_request_result(model, "success", output.usage)
                 return chat_completion_response(
                     model=model,
                     content=output.text,
@@ -1253,15 +1306,8 @@ async def handle_chat(req: ChatRequest, client: AIStudioClient, request: Request
                     function_calls=output.function_calls,
                 )
             except UsageLimitExceeded as exc:
-                runtime_state.record(model, "rate_limited")
+                _record_request_result(model, "rate_limited")
                 last_error = exc
-
-                # 记录限流
-                rotator = runtime_state.rotator
-                if rotator:
-                    account = runtime_state.account_service.get_active_account() if runtime_state.account_service else None
-                    if account:
-                        rotator.record_rate_limited(account.id)
 
                 # 尝试切换账号
                 if await _try_switch_account(model):
@@ -1272,24 +1318,22 @@ async def handle_chat(req: ChatRequest, client: AIStudioClient, request: Request
                     raise HTTPException(429, detail={"message": str(exc), "type": "rate_limit_exceeded"}) from exc
             except ValueError as exc:
                 raise _bad_request(str(exc)) from exc
-            except (AuthError, RequestError) as exc:
-                runtime_state.record(model, "errors")
-                rotator = runtime_state.rotator
-                if rotator:
-                    account = runtime_state.account_service.get_active_account() if runtime_state.account_service else None
-                    if account:
-                        rotator.record_error(account.id)
+            except AuthError as exc:
+                if attempt == 0:
+                    logger.warning("Chat auth error; clearing capture state and retrying once: %s", exc)
+                    _clear_client_capture_state(client)
+                    last_error = exc
+                    continue
+                _record_request_result(model, "errors")
+                raise _upstream_exception(exc) from exc
+            except RequestError as exc:
+                _record_request_result(model, "errors")
                 raise _upstream_exception(exc) from exc
             except AistudioError as exc:
-                runtime_state.record(model, "errors")
-                rotator = runtime_state.rotator
-                if rotator:
-                    account = runtime_state.account_service.get_active_account() if runtime_state.account_service else None
-                    if account:
-                        rotator.record_error(account.id)
+                _record_request_result(model, "errors")
                 raise _upstream_exception(exc) from exc
             except Exception as exc:
-                runtime_state.record(model, "errors")
+                _record_request_result(model, "errors")
                 logger.error("Chat error: %s", exc, exc_info=True)
                 raise HTTPException(500, detail={"message": str(exc), "type": "server_error"}) from exc
             finally:
@@ -1364,26 +1408,18 @@ async def handle_image_generation(req: ImageRequest, client: AIStudioClient):
                                 }
                             )
 
-                    # 记录成功
-                    rotator = runtime_state.rotator
-                    if rotator:
-                        account = runtime_state.account_service.get_active_account() if runtime_state.account_service else None
-                        if account:
-                            rotator.record_success(account.id, image_size=image_plan.size, image_count=len(items))
-
-                    runtime_state.record(image_plan.model, "success", usage_total, image_size=image_plan.size, image_count=len(items))
+                    _record_request_result(
+                        image_plan.model,
+                        "success",
+                        usage_total,
+                        image_size=image_plan.size,
+                        image_count=len(items),
+                    )
                     return {"created": created, "data": _format_image_items(items, response_format)}
                 except UsageLimitExceeded as exc:
                     _cleanup_persisted_image_items(image_store, items)
-                    runtime_state.record(image_plan.model, "rate_limited")
+                    _record_request_result(image_plan.model, "rate_limited")
                     last_error = exc
-
-                    # 记录限流
-                    rotator = runtime_state.rotator
-                    if rotator:
-                        account = runtime_state.account_service.get_active_account() if runtime_state.account_service else None
-                        if account:
-                            rotator.record_rate_limited(account.id)
 
                     # 尝试切换账号
                     if await _try_switch_account(image_plan.model):
@@ -1392,27 +1428,31 @@ async def handle_image_generation(req: ImageRequest, client: AIStudioClient):
                     else:
                         logger.warning("Image 429 限流，无法切换账号")
                         raise HTTPException(429, detail={"message": str(exc), "type": "rate_limit_exceeded"}) from exc
-                except (AuthError, RequestError) as exc:
+                except AuthError as exc:
                     _cleanup_persisted_image_items(image_store, items)
-                    runtime_state.record(image_plan.model, "errors")
-                    rotator = runtime_state.rotator
-                    if rotator:
-                        account = runtime_state.account_service.get_active_account() if runtime_state.account_service else None
-                        if account:
-                            rotator.record_error(account.id)
+                    if attempt == 0:
+                        logger.warning("Image auth error; clearing capture state and retrying once: %s", exc)
+                        _clear_client_capture_state(client)
+                        last_error = exc
+                        continue
+                    _record_request_result(image_plan.model, "errors")
+                    raise _upstream_exception(exc) from exc
+                except RequestError as exc:
+                    _cleanup_persisted_image_items(image_store, items)
+                    if attempt == 0 and _is_empty_image_response(exc):
+                        logger.warning("Image response contained no image data; clearing capture state and retrying once")
+                        _clear_client_capture_state(client)
+                        last_error = exc
+                        continue
+                    _record_request_result(image_plan.model, "errors")
                     raise _upstream_exception(exc) from exc
                 except AistudioError as exc:
                     _cleanup_persisted_image_items(image_store, items)
-                    runtime_state.record(image_plan.model, "errors")
-                    rotator = runtime_state.rotator
-                    if rotator:
-                        account = runtime_state.account_service.get_active_account() if runtime_state.account_service else None
-                        if account:
-                            rotator.record_error(account.id)
+                    _record_request_result(image_plan.model, "errors")
                     raise _upstream_exception(exc) from exc
                 except Exception as exc:
                     _cleanup_persisted_image_items(image_store, items)
-                    runtime_state.record(image_plan.model, "errors")
+                    _record_request_result(image_plan.model, "errors")
                     logger.error("Image error: %s", exc, exc_info=True)
                     raise HTTPException(500, detail={"message": str(exc), "type": "server_error"}) from exc
 
@@ -1532,7 +1572,7 @@ def _build_streaming_response(
                             continue
                         raise
 
-                runtime_state.record(model, "success", final_usage)
+                _record_request_result(model, "success", final_usage)
                 yield sse_chunk(chat_id, model, "", finish="tool_calls" if saw_tool_calls else "stop", include_usage=include_usage)
                 if include_usage:
                     yield sse_usage_chunk(chat_id, model, final_usage)
@@ -1541,7 +1581,7 @@ def _build_streaming_response(
                 logger.info("OpenAI stream cancelled by client")
                 raise
             except Exception as exc:
-                runtime_state.record(model, "errors")
+                _record_request_result(model, "errors")
                 message, error_type, code = _openai_stream_error_detail(exc)
                 if error_type == "unsupported_feature":
                     logger.warning("OpenAI stream unsupported: %s", message)
@@ -1611,14 +1651,7 @@ async def handle_gemini_generate_content(
                     sanitize_plain_text=False,
                 )
 
-                # 记录成功
-                rotator = runtime_state.rotator
-                if rotator:
-                    account = runtime_state.account_service.get_active_account() if runtime_state.account_service else None
-                    if account:
-                        rotator.record_success(account.id)
-
-                runtime_state.record(normalized["model"], "success", output.usage)
+                _record_request_result(normalized["model"], "success", output.usage)
                 return {
                     "candidates": [
                         {
@@ -1639,15 +1672,8 @@ async def handle_gemini_generate_content(
             except ValueError as exc:
                 raise HTTPException(400, detail={"message": str(exc), "type": "bad_request"}) from exc
             except UsageLimitExceeded as exc:
-                runtime_state.record(model_path, "rate_limited")
+                _record_request_result(normalized["model"] if normalized else model_path, "rate_limited")
                 last_error = exc
-
-                # 记录限流
-                rotator = runtime_state.rotator
-                if rotator:
-                    account = runtime_state.account_service.get_active_account() if runtime_state.account_service else None
-                    if account:
-                        rotator.record_rate_limited(account.id)
 
                 # 尝试切换账号
                 if await _try_switch_account(normalized["model"] if normalized else model_path):
@@ -1656,24 +1682,23 @@ async def handle_gemini_generate_content(
                 else:
                     logger.warning("Gemini 429 限流，无法切换账号")
                     raise HTTPException(429, detail={"message": str(exc), "type": "rate_limit_exceeded"}) from exc
-            except (AuthError, RequestError) as exc:
-                runtime_state.record(model_path, "errors")
-                rotator = runtime_state.rotator
-                if rotator:
-                    account = runtime_state.account_service.get_active_account() if runtime_state.account_service else None
-                    if account:
-                        rotator.record_error(account.id)
+            except AuthError as exc:
+                error_model = normalized["model"] if normalized else model_path
+                if attempt == 0:
+                    logger.warning("Gemini auth error; clearing capture state and retrying once: %s", exc)
+                    _clear_client_capture_state(client)
+                    last_error = exc
+                    continue
+                _record_request_result(error_model, "errors")
+                raise _upstream_exception(exc) from exc
+            except RequestError as exc:
+                _record_request_result(normalized["model"] if normalized else model_path, "errors")
                 raise _upstream_exception(exc) from exc
             except AistudioError as exc:
-                runtime_state.record(model_path, "errors")
-                rotator = runtime_state.rotator
-                if rotator:
-                    account = runtime_state.account_service.get_active_account() if runtime_state.account_service else None
-                    if account:
-                        rotator.record_error(account.id)
+                _record_request_result(normalized["model"] if normalized else model_path, "errors")
                 raise _upstream_exception(exc) from exc
             except Exception as exc:
-                runtime_state.record(model_path, "errors")
+                _record_request_result(normalized["model"] if normalized else model_path, "errors")
                 logger.error("Gemini error: %s", exc, exc_info=True)
                 raise HTTPException(500, detail={"message": str(exc), "type": "server_error"}) from exc
             finally:
@@ -1786,7 +1811,7 @@ def _build_gemini_streaming_response(*, client: AIStudioClient, normalized: dict
                             continue
                         raise
 
-                runtime_state.record(normalized["model"], "success", final_usage)
+                _record_request_result(normalized["model"], "success", final_usage)
                 finish_payload: dict[str, Any] = {
                     "candidates": [{"finishReason": "FUNCTION_CALL" if saw_tool_calls else "STOP"}]
                 }
@@ -1798,7 +1823,7 @@ def _build_gemini_streaming_response(*, client: AIStudioClient, normalized: dict
                 logger.info("Gemini stream cancelled by client")
                 raise
             except Exception as exc:
-                runtime_state.record(normalized["model"], "errors")
+                _record_request_result(normalized["model"], "errors")
                 error_payload = _gemini_stream_error_payload(exc)
                 if error_payload.get("error", {}).get("status") == "UNIMPLEMENTED":
                     logger.warning("Gemini stream unsupported: %s", error_payload["error"].get("message"))

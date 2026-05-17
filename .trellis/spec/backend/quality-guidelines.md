@@ -255,6 +255,135 @@ def model_prefers_premium(self, model: str | None) -> bool:
 	return capabilities.image_output or _model_name_prefers_premium(capabilities.id)
 ```
 
+## Scenario: Account-Backed Runtime Statistics
+
+### 1. Scope / Trigger
+
+- Trigger: Code changes OpenAI, Gemini, image generation, streaming, prompt optimization, account rotation, or runtime stats recording.
+- Use this contract whenever an upstream request is served by the currently active stored Google account.
+
+### 2. Signatures
+
+- `runtime_state.record(model: str, event: str, usage: dict | None = None, *, image_size: str | None = None, image_count: int = 1) -> None`
+- `AccountRotator.record_success(account_id: str, *, image_size: str | None = None, image_count: int = 1) -> None`
+- `AccountRotator.record_rate_limited(account_id: str) -> None`
+- `AccountRotator.record_error(account_id: str) -> None`
+- `_record_request_result(model, event, usage=None, *, image_size=None, image_count=1) -> None`
+
+### 3. Contracts
+
+- Model-level runtime stats and active-account stats must be recorded through the same request-result boundary when an active account exists.
+- Success, error, and rate-limited events must update both model totals and account totals exactly once for each counted upstream request.
+- Image generation success must pass `image_size` and the number of returned image items into both model and account stats.
+- Transient retry attempts that clear stale capture state, such as first-attempt auth errors or empty image responses, must not be counted as permanent account errors unless the retry also fails.
+- Web image generation and prompt optimization must refresh both `/stats` and `/rotation` after completion or failure so UI totals match backend state.
+
+### 4. Validation & Error Matrix
+
+- Active account exists + request succeeds -> model `success` increments and the same account `success` increments.
+- Active account exists + upstream 429 with no successful retry -> model `rate_limited` increments and the same account `rate_limited` increments.
+- Active account exists + final upstream error -> model `errors` increments and the same account `errors` increments.
+- First auth/empty-image attempt clears capture state and retry succeeds -> only one success is counted, no account error is recorded.
+- No active account exists -> model stats may be recorded, account stats are skipped.
+
+### 5. Good/Base/Bad Cases
+
+- Good: Web image generation on account A then account B leaves `/stats.totals.requests == 2` and the sum of `/rotation.accounts[*].requests == 2`.
+- Base: OpenAI or Gemini streaming success records the final usage and updates the active account once after the stream completes.
+- Bad: Streaming builders call only `runtime_state.record`, so model totals increase while account totals remain stale.
+- Bad: A first-attempt stale capture `401` is counted as an account error even though a fresh-capture retry succeeds.
+
+### 6. Tests Required
+
+- Unit: non-streaming image success updates active-account requests, success, and image usage with the same image count as model stats.
+- Unit: OpenAI and Gemini streaming success update active-account stats after completion.
+- Unit: auth-error and empty-image retries clear capture state and do not count transient errors when the retry succeeds.
+- Frontend/static: image generation and prompt optimization call a shared stats refresh that loads both `/stats` and `/rotation`.
+- Real: WSL API and Web smokes activate two stored Pro accounts, generate images on both, and assert model totals equal account totals without printing secrets.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+runtime_state.record(model, "success", output.usage)
+```
+
+#### Correct
+
+```python
+_record_request_result(model, "success", output.usage)
+```
+
+## Scenario: Image Model Capture with Proxied AI Studio Sessions
+
+### 1. Scope / Trigger
+
+- Trigger: Code changes browser session launch, proxy configuration, AI Studio navigation, image model selection, image onboarding, capture template caching, or image generation retry behavior.
+- Use this contract for browser-backed image models such as `gemini-3.1-flash-image-preview` and `gemini-3-pro-image-preview`.
+
+### 2. Signatures
+
+- `settings.proxy_server: str | None`
+- `settings.camoufox_locale: str`
+- `settings.camoufox_timezone: str`
+- `settings.camoufox_geolocation_latitude: float`
+- `settings.camoufox_geolocation_longitude: float`
+- `settings.camoufox_geolocation_accuracy: int`
+- `camoufox_proxy_identity_options() -> dict[str, object]`
+- `BrowserSession._prepare_model_onboarding_sync(page, model: str) -> bool`
+- `BrowserSession._capture_template_request_with_recovery_sync(page, model: str) -> dict[str, Any]`
+- `AIStudioClient.clear_capture_state() -> None`
+
+### 3. Contracts
+
+- Proxied Camoufox sessions must include stable locale, timezone, and geolocation hints from `camoufox_proxy_identity_options()` instead of enabling runtime `geoip=True`.
+- Runtime `geoip=True` is not allowed in project code because it can require `camoufox[geoip]` and download GeoLite data from GitHub during real WSL tests.
+- Image model capture must open the AI Studio image-generation entry, complete required onboarding/terms prompts, and select the UI model card matching the requested image model before template capture.
+- Navigation to `ai.google.dev/gemini-api/docs/available-regions` is a recoverable redirect during capture setup; retry AI Studio chat navigation before failing.
+- If the page leaves the chat runtime during template capture, reopen AI Studio, reinstall hooks, and retry capture once.
+- If image replay returns a 200-shaped response with no parsed image data, clear capture state and retry once before returning a permanent upstream error.
+
+### 4. Validation & Error Matrix
+
+- Proxy configured -> Camoufox launch options include proxy plus `locale`, `config.timezone`, and `config.geolocation:*` values.
+- AI Studio redirects to Google AI Developers available-regions docs -> navigation retries a chat URL and reports diagnostics only after retry failure.
+- Image model requested -> image onboarding and model selection run before BotGuard snapshot/template capture.
+- Template capture fill detaches because the page navigated away -> capture recovery reopens chat runtime and retries once.
+- Empty image output on first attempt -> clear capture state and retry once; retry success returns `200` and records one success.
+- Empty image output after retry -> return upstream error and record one final error.
+
+### 5. Good/Base/Bad Cases
+
+- Good: Account A generates `gemini-3-pro-image-preview`, account B generates the same model, then account A generates `gemini-3.1-flash-image-preview`; all three requests succeed and stats totals stay aligned.
+- Base: A docs redirect during warmup is logged as a warmup failure but the next image capture opens a fresh browser context and succeeds.
+- Bad: Enabling `geoip=True` makes WSL tests fail before the app starts because Camoufox tries to install or download GeoIP assets at runtime.
+- Bad: Reusing a stale image template after an account switch returns `401` or a no-image response even though both stored accounts are valid Pro accounts.
+
+### 6. Tests Required
+
+- Unit: browser options and launcher options include proxy identity hints when `settings.proxy_server` is set.
+- Unit: AI Studio docs redirect is retried and final diagnostics include the last URL/title/body when recovery fails.
+- Unit: image model capture prepares onboarding/model selection before BotGuard snapshot readiness is required.
+- Unit: template capture retries when a fill operation redirects or detaches the chat input.
+- Unit: image generation retries one empty image response after clearing capture state and does not count the transient failure.
+- Real: WSL API smoke uses a temporary copy under `/home/bamboo`, real accounts from `/home/bamboo/aistudio-api/data/accounts`, and verifies A -> B -> A image generation without printing credential contents.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+options = {"proxy": {"server": settings.proxy_server}, "geoip": True}
+```
+
+#### Correct
+
+```python
+options = {"proxy": {"server": settings.proxy_server}}
+options.update(camoufox_proxy_identity_options())
+```
+
 ## Scenario: Browser Login Persists Only Verified Accounts
 
 ### 1. Scope / Trigger

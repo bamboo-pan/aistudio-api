@@ -15,14 +15,16 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from aistudio_api.config import settings
+from aistudio_api.config import camoufox_proxy_identity_options, settings
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent
 
 log = logging.getLogger("aistudio.session")
 
 AI_STUDIO_URL = "https://aistudio.google.com/prompts/new_chat"
 AI_STUDIO_URL_FALLBACK = "https://aistudio.google.com/app/prompts/new_chat"
+AI_STUDIO_HOME_URL = "https://aistudio.google.com/"
 AI_STUDIO_HOST = "aistudio.google.com"
+AI_DEVELOPERS_HOST = "ai.google.dev"
 AI_STUDIO_CHAT_PATH_PREFIXES = ("/prompts/", "/app/prompts/")
 AI_STUDIO_CHAT_READY_TIMEOUT_MS = 90_000
 AI_STUDIO_CHAT_READY_POLL_MS = 1_000
@@ -124,6 +126,120 @@ DIALOG_CLEANUP_JS = """(() => {
     document.querySelectorAll('.cdk-overlay-backdrop').forEach((node) => node.remove());
     document.querySelectorAll('.cdk-overlay-container').forEach((node) => node.remove());
 })()"""
+
+AI_STUDIO_ONBOARDING_JS = r"""(() => {
+    const body = document.body ? (document.body.innerText || '') : '';
+    const lowerBody = body.toLowerCase();
+    const needsConsent = lowerBody.includes('i consent to the google apis terms') ||
+        lowerBody.includes('gemini api additional terms of service');
+    if (!needsConsent) return {needed: false, checked: false, submitted: false, remaining: false};
+
+    const textOf = (el) => String(el.innerText || el.textContent || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+    const visible = (el) => {
+        const rect = el.getBoundingClientRect();
+        const style = window.getComputedStyle(el);
+        return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+    };
+    const requiredConsentText = (text) => {
+        const lower = text.toLowerCase();
+        if (lower.includes('opt in') || lower.includes('news') || lower.includes('offers') || lower.includes('promotions')) return false;
+        return lower.includes('i consent') || lower.includes('terms of service') || lower.includes('gemini api additional terms');
+    };
+
+    let checked = false;
+    for (const el of Array.from(document.querySelectorAll('input[type="checkbox"], mat-checkbox, .mat-mdc-checkbox, .mdc-checkbox, [role="checkbox"], label'))) {
+        const root = el.closest('mat-checkbox') || el.closest('label') || el;
+        const input = el.matches && el.matches('input[type="checkbox"]') ? el : root.querySelector && root.querySelector('input[type="checkbox"]');
+        const text = `${textOf(root)} ${input ? textOf(input) : ''}`;
+        if (!requiredConsentText(text)) continue;
+        if (!visible(el)) continue;
+        const alreadyChecked = (input && input.checked) || el.getAttribute('aria-checked') === 'true';
+        if (!alreadyChecked) {
+            const target = input || (root.querySelector && (root.querySelector('.mdc-checkbox') || root.querySelector('[role="checkbox"]'))) || root;
+            try { target.scrollIntoView({block: 'center', inline: 'center'}); } catch(e) {}
+            target.click();
+            if (input && !input.checked) {
+                input.checked = true;
+                input.dispatchEvent(new Event('input', {bubbles: true}));
+                input.dispatchEvent(new Event('change', {bubbles: true}));
+            }
+            checked = true;
+        }
+        break;
+    }
+
+    let submitted = false;
+    for (const button of Array.from(document.querySelectorAll('button, [role="button"]'))) {
+        if (!visible(button)) continue;
+        if (button.disabled || button.getAttribute('aria-disabled') === 'true') continue;
+        const label = textOf(button).toLowerCase();
+        if (!label) continue;
+        if (/continue|accept|agree|get started|start using|done|next/.test(label)) {
+            button.click();
+            submitted = true;
+            break;
+        }
+    }
+
+    const remaining = (document.body ? (document.body.innerText || '') : '').toLowerCase().includes('i consent to the google apis terms');
+    return {needed: true, checked, submitted, remaining};
+})()"""
+
+AI_STUDIO_TRIGGER_IMAGE_ONBOARDING_JS = r"""(() => {
+    const body = document.body ? (document.body.innerText || '') : '';
+    const lowerBody = body.toLowerCase();
+    if (lowerBody.includes('gemini api additional terms of service') || lowerBody.includes('i consent to the google apis terms')) {
+        return {triggered: false, reason: 'already_visible'};
+    }
+    const textOf = (el) => String(el.innerText || el.textContent || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+    const visible = (el) => {
+        const rect = el.getBoundingClientRect();
+        const style = window.getComputedStyle(el);
+        return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+    };
+    for (const button of Array.from(document.querySelectorAll('button, [role="button"]'))) {
+        if (!visible(button)) continue;
+        const label = textOf(button).toLowerCase();
+        if (label.includes('image generation') || label.includes('nano banana')) {
+            button.click();
+            return {triggered: true, label: textOf(button).slice(0, 120)};
+        }
+    }
+    return {triggered: false, reason: 'image_entry_not_found'};
+})()"""
+
+AI_STUDIO_SELECT_IMAGE_MODEL_JS = r"""(model) => {
+    const targetModel = String(model || '').replace(/^models\//, '').toLowerCase();
+    const labels = targetModel.includes('pro-image')
+        ? ['nano banana pro']
+        : targetModel.includes('flash-image')
+            ? ['nano banana 2', 'nano banana']
+            : [];
+    if (!labels.length) return {selected: false, reason: 'not_image_model'};
+
+    const textOf = (el) => String(el.innerText || el.textContent || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+    const visible = (el) => {
+        const rect = el.getBoundingClientRect();
+        const style = window.getComputedStyle(el);
+        return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+    };
+    const bodyText = textOf(document.body).toLowerCase();
+    if (bodyText.includes(targetModel)) return {selected: false, reason: 'already_selected'};
+
+    const candidates = Array.from(document.querySelectorAll('button, [role="button"]'));
+    for (const labelNeedle of labels) {
+        for (const button of candidates) {
+            if (!visible(button)) continue;
+            const label = textOf(button).toLowerCase();
+            if (!label.includes(labelNeedle)) continue;
+            if (label.includes('content_copy')) continue;
+            if (labelNeedle === 'nano banana' && label.includes('nano banana pro')) continue;
+            button.click();
+            return {selected: true, label: textOf(button).slice(0, 120)};
+        }
+    }
+    return {selected: false, reason: 'model_card_not_found'};
+}"""
 
 
 class BrowserSession:
@@ -408,6 +524,7 @@ class BrowserSession:
         }
         if settings.proxy_server:
             browser_options["proxy"] = {"server": settings.proxy_server}
+            browser_options.update(camoufox_proxy_identity_options())
         return browser_options
 
     def _ensure_browser_process_sync(self):
@@ -484,6 +601,8 @@ class BrowserSession:
         if not self._is_chat_runtime_ready_sync(self._hook_page):
             log.debug("hook page not chat-ready before install: %s", self._format_chat_runtime_diagnostics_sync(self._hook_page))
             self._goto_aistudio_sync(self._hook_page)
+        if self._complete_aistudio_onboarding_sync(self._hook_page):
+            self._wait_for_chat_runtime_sync(self._hook_page)
         self._install_hooks_sync(self._hook_page)
         return self._hook_page
 
@@ -528,8 +647,30 @@ class BrowserSession:
             log.debug(f"[timing] template cached for {model}")
             return self._templates[model]
 
+        if self._is_image_model(model):
+            page = self._ensure_hook_page_sync()
+            self._prepare_model_onboarding_sync(page, model)
+            self._install_hooks_sync(page)
+            captured = self._capture_template_request_with_recovery_sync(page, model)
+            if not page.evaluate("mw:!!window.__bg_service"):
+                self._goto_aistudio_sync(page)
+                self._install_hooks_sync(page)
+                self._ensure_botguard_service_sync()
+            self._templates[model] = captured
+            log.debug(f"[timing] image template captured for {model} in {_t.time()-_t0:.1f}s")
+            return captured
+
         page = self._ensure_botguard_service_sync()
         log.debug(f"[timing] botguard done in {_t.time()-_t0:.1f}s, starting template capture")
+        captured = self._capture_template_request_with_recovery_sync(page, model)
+        self._templates[model] = captured
+        log.debug(f"[timing] template captured for {model} in {_t.time()-_t0:.1f}s")
+        return captured
+
+    def _is_image_model(self, model: str) -> bool:
+        return "image" in (model or "").lower()
+
+    def _capture_template_request_sync(self, page, model: str) -> dict[str, Any]:
         captured: dict[str, Any] = {}
         route_pattern = "**/*GenerateContent*"
 
@@ -567,9 +708,28 @@ class BrowserSession:
             page.unroute(route_pattern, on_route)
 
         self._wait_until_idle_sync(page)
-        self._templates[model] = captured
-        log.debug(f"[timing] template captured for {model} in {_t.time()-_t0:.1f}s")
         return captured
+
+    def _capture_template_request_with_recovery_sync(self, page, model: str) -> dict[str, Any]:
+        last_error: Exception | None = None
+        for attempt in range(2):
+            if not self._is_chat_runtime_ready_sync(page):
+                self._goto_aistudio_sync(page)
+                self._install_hooks_sync(page)
+            try:
+                return self._capture_template_request_sync(page, model)
+            except Exception as exc:
+                last_error = exc
+                diagnostics = self._format_chat_runtime_diagnostics_sync(page)
+                if attempt == 0 and not self._is_chat_runtime_ready_sync(page):
+                    log.info("AI Studio page left chat runtime during template capture; reopening before retry: %s", diagnostics)
+                    self._goto_aistudio_sync(page)
+                    self._install_hooks_sync(page)
+                    continue
+                raise
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError(f"template capture failed for model={model}")
 
     def _generate_snapshot_sync(self, contents: list[AistudioContent]) -> str:
         page = self._ensure_botguard_service_sync()
@@ -838,7 +998,7 @@ mw:((hash) => {
     def _goto_aistudio_sync(self, page) -> None:
         import time as _t
         last_error = None
-        for url in (AI_STUDIO_URL, AI_STUDIO_URL_FALLBACK):
+        for url in (AI_STUDIO_URL, AI_STUDIO_URL_FALLBACK, AI_STUDIO_HOME_URL):
             route_started_at = _t.time()
             goto_error = None
             try:
@@ -859,10 +1019,25 @@ mw:((hash) => {
                     f"Activate an account or complete login again. {diagnostics}"
                 )
 
+            if self._is_ai_developers_url(current_url):
+                log.debug("AI Studio redirected to docs after %s: %s", url, current_url)
+                if url != AI_STUDIO_URL_FALLBACK:
+                    last_error = RuntimeError(f"AI Studio redirected to docs after navigating to {url}: {current_url}")
+                    continue
+                try:
+                    page.goto(AI_STUDIO_URL_FALLBACK, wait_until="domcontentloaded", timeout=60000)
+                    page.wait_for_timeout(2500)
+                    current_url = getattr(page, "url", "")
+                except Exception as exc:
+                    last_error = exc
+                    continue
+
             if goto_error is not None and not self._is_aistudio_url(current_url):
                 continue
 
             if self._wait_for_chat_runtime_sync(page):
+                if self._complete_aistudio_onboarding_sync(page):
+                    self._wait_for_chat_runtime_sync(page)
                 log.debug(f"[timing] UI ready (dms+textarea) after {_t.time()-route_started_at:.1f}s")
                 return
 
@@ -885,6 +1060,13 @@ mw:((hash) => {
         except Exception:
             return False
         return parsed.hostname == "accounts.google.com" and "/signin" in (parsed.path or "")
+
+    def _is_ai_developers_url(self, url: str | None) -> bool:
+        try:
+            parsed = urlparse(url or "")
+        except Exception:
+            return False
+        return parsed.hostname == AI_DEVELOPERS_HOST
 
     def _format_auth_state_diagnostics(self) -> str:
         if not self._auth_file:
@@ -975,6 +1157,74 @@ mw:((hash) => {
         if errors:
             parts.append(f"errors={'; '.join(errors)}")
         return ", ".join(parts)
+
+    def _complete_aistudio_onboarding_sync(self, page) -> bool:
+        completed = False
+        for _ in range(4):
+            try:
+                result = page.evaluate(AI_STUDIO_ONBOARDING_JS)
+            except Exception as exc:
+                log.debug("AI Studio onboarding check failed: %s", exc)
+                return completed
+            if not isinstance(result, dict) or not result.get("needed"):
+                return completed
+            completed = completed or bool(result.get("checked") or result.get("submitted"))
+            if result.get("submitted"):
+                log.info("AI Studio onboarding confirmation submitted")
+            page.wait_for_timeout(1200)
+            if not result.get("remaining") and result.get("submitted"):
+                return True
+        return completed
+
+    def _prepare_model_onboarding_sync(self, page, model: str) -> bool:
+        if "image" not in (model or "").lower():
+            return False
+        prepared = False
+
+        if self._complete_aistudio_onboarding_sync(page):
+            prepared = True
+            page.wait_for_timeout(1200)
+
+        trigger_result: dict[str, Any] | None = None
+        for _ in range(3):
+            try:
+                result = page.evaluate(AI_STUDIO_TRIGGER_IMAGE_ONBOARDING_JS)
+            except Exception as exc:
+                log.debug("AI Studio image onboarding trigger failed: %s", exc)
+                return prepared
+            trigger_result = result if isinstance(result, dict) else None
+            if trigger_result and trigger_result.get("triggered"):
+                prepared = True
+                log.info("AI Studio image onboarding entry opened")
+                page.wait_for_timeout(1200)
+                break
+            if trigger_result and trigger_result.get("reason") == "already_visible":
+                if self._complete_aistudio_onboarding_sync(page):
+                    prepared = True
+                    page.wait_for_timeout(1200)
+                    continue
+            break
+
+        if trigger_result and not trigger_result.get("triggered") and trigger_result.get("reason") not in {"already_visible"}:
+            log.info("AI Studio image onboarding entry not opened: %s", trigger_result.get("reason"))
+
+        if self._complete_aistudio_onboarding_sync(page):
+            prepared = True
+            page.wait_for_timeout(1200)
+        try:
+            selected = page.evaluate(AI_STUDIO_SELECT_IMAGE_MODEL_JS, model)
+        except Exception as exc:
+            log.debug("AI Studio image model selection failed: %s", exc)
+            return prepared
+        if isinstance(selected, dict) and selected.get("selected"):
+            prepared = True
+            log.info("AI Studio image model selected: %s", selected.get("label", "<unknown>"))
+            page.wait_for_timeout(1200)
+            if self._complete_aistudio_onboarding_sync(page):
+                page.wait_for_timeout(1200)
+        elif isinstance(selected, dict) and selected.get("reason") not in {"already_selected", "not_image_model"}:
+            log.info("AI Studio image model not selected: %s", selected.get("reason"))
+        return prepared
 
     def _install_hooks_sync(self, page) -> None:
         try:
