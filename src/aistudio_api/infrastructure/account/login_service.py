@@ -14,6 +14,31 @@ from aistudio_api.infrastructure.browser.camoufox_manager import CamoufoxManager
 
 logger = logging.getLogger("aistudio.login")
 
+LOGIN_IDENTITY_ERROR = "未能确认 Google 账号身份，请确认登录成功后重试"
+EMAIL_DETECTION_SCRIPT = r"""
+    () => {
+        const values = [];
+        const add = (value) => {
+            if (typeof value === 'string' && value.trim()) {
+                values.push(value.trim());
+            }
+        };
+        for (const selector of ['[data-email]', '[data-profile-identifier]', '[aria-label*="@"]', '[title*="@"]', 'a[href^="mailto:"]']) {
+            for (const el of document.querySelectorAll(selector)) {
+                add(el.getAttribute('data-email'));
+                add(el.getAttribute('data-profile-identifier'));
+                add(el.getAttribute('aria-label'));
+                add(el.getAttribute('title'));
+                add(el.getAttribute('href'));
+                add(el.textContent);
+            }
+        }
+        add(document.body ? document.body.innerText : '');
+        const match = values.join('\n').match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[A-Za-z]{2,}/);
+        return match ? match[0] : null;
+    }
+"""
+
 
 class LoginStatus(str, Enum):
     PENDING = "pending"
@@ -64,6 +89,35 @@ class LoginService:
         """获取登录状态。"""
         return self._sessions.get(session_id)
 
+    async def _extract_email_from_page(self, page: Any) -> str | None:
+        try:
+            email = await page.evaluate(EMAIL_DETECTION_SCRIPT)
+        except Exception:
+            return None
+        return email if isinstance(email, str) and "@" in email else None
+
+    async def _extract_email_from_account_page(self, page: Any) -> str | None:
+        try:
+            logger.info("尝试从 Google 账号页面获取邮箱")
+            await page.goto("https://myaccount.google.com", wait_until="domcontentloaded", timeout=15000)
+            await asyncio.sleep(2)
+        except Exception as e:
+            logger.warning("从 Google 账号页面获取邮箱失败: %s", e)
+        return await self._extract_email_from_page(page)
+
+    async def _verify_login_identity(
+        self,
+        account_store: Any,
+        page: Any,
+        storage_state: dict[str, Any],
+        detected_email: str | None,
+    ) -> str | None:
+        storage_email = account_store.validate_storage_state(storage_state)
+        email = detected_email or storage_email
+        if email is None:
+            email = await self._extract_email_from_account_page(page)
+        return email
+
     async def _login_worker(
         self,
         session_id: str,
@@ -102,18 +156,7 @@ class LoginService:
                 # 检测登录完成：跳转到非登录页面
                 if "accounts.google.com" not in url and "google.com" in url:
                     # 尝试提取邮箱
-                    try:
-                        detected_email = await page.evaluate("""
-                            () => {
-                                // 尝试从页面获取邮箱
-                                const el = document.querySelector('[data-email]')
-                                    || document.querySelector('.gb_nb')
-                                    || document.querySelector('[aria-label*="@"]');
-                                return el ? (el.getAttribute('data-email') || el.textContent.trim()) : null;
-                            }
-                        """)
-                    except Exception:
-                        pass
+                    detected_email = await self._extract_email_from_page(page)
                     login_done.set()
 
             page.on("framenavigated", on_navigation)
@@ -139,40 +182,24 @@ class LoginService:
             logger.info("登录完成，保存 cookie")
             storage_state = await context.storage_state()
 
-            # 尝试从 Google 账号页面获取邮箱
-            if detected_email is None:
-                try:
-                    # 导航到 Google 账号页面
-                    logger.info("尝试从 Google 账号页面获取邮箱")
-                    await page.goto("https://myaccount.google.com", wait_until="networkidle")
-                    await asyncio.sleep(2)  # 等待页面加载
+            try:
+                detected_email = await self._verify_login_identity(
+                    account_store,
+                    page,
+                    storage_state,
+                    detected_email,
+                )
+            except ValueError as e:
+                session.status = LoginStatus.FAILED
+                session.error = f"登录状态无效: {e}"
+                logger.warning("登录状态无效，不保存账号: %s", e)
+                return
 
-                    # 从页面提取邮箱（优先匹配 *@gmail.com）
-                    detected_email = await page.evaluate("""
-                        () => {
-                            const text = document.body.innerText;
-                            // 直接匹配 *@gmail.com 邮箱
-                            const gmailRegex = /[a-zA-Z0-9._%+-]+@gmail\\.com/g;
-                            const matches = text.match(gmailRegex);
-                            return matches ? matches[0] : null;
-                        }
-                    """)
-                except Exception as e:
-                    logger.warning("从 Google 账号页面获取邮箱失败: %s", e)
-
-            # 如果还是没提取到邮箱，尝试从 storage state 的 origins 中提取
             if detected_email is None:
-                try:
-                    # 检查 localStorage 中是否有用户信息
-                    for origin in storage_state.get("origins", []):
-                        for item in origin.get("localStorage", []):
-                            if "email" in item.get("name", "").lower():
-                                detected_email = item.get("value")
-                                break
-                        if detected_email:
-                            break
-                except Exception:
-                    pass
+                session.status = LoginStatus.FAILED
+                session.error = LOGIN_IDENTITY_ERROR
+                logger.warning("登录未确认 Google 账号身份，不保存账号")
+                return
 
             # 保存账号
             account_name = name or detected_email or "Google 账号"
@@ -182,6 +209,7 @@ class LoginService:
                 name=account_name,
                 email=detected_email,
                 storage_state=storage_state,
+                activate=False,
             )
 
             session.status = LoginStatus.COMPLETED
