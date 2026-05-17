@@ -8,12 +8,12 @@ from fastapi import FastAPI
 
 from aistudio_api.api.dependencies import get_account_service
 from aistudio_api.api.routes_accounts import router as accounts_router
-from aistudio_api.api.schemas import ImageRequest
+from aistudio_api.api.schemas import ChatRequest, ImageRequest, Message
 from aistudio_api.api.state import runtime_state
 from aistudio_api.config import settings
 from aistudio_api.application.account_rotator import AccountRotator, RotationMode
 from aistudio_api.application.account_service import AccountService
-from aistudio_api.application.api_service import handle_image_generation
+from aistudio_api.application.api_service import handle_chat, handle_image_generation
 from aistudio_api.domain.models import Candidate, GeneratedImage, ModelOutput
 from aistudio_api.infrastructure.account.account_store import AccountStore
 from aistudio_api.infrastructure.account.login_service import LoginService
@@ -156,7 +156,23 @@ def test_rotator_prefers_premium_account_for_image_models(tmp_path):
     picked = asyncio.run(rotator.get_next_account("gemini-3.1-flash-image-preview"))
 
     assert picked.id == pro.id
-    assert rotator.last_selection_reason == "image model selected a Pro/Ultra account"
+    assert rotator.last_selection_reason == "premium-preferred model selected a Pro/Ultra account"
+
+
+def test_rotator_prefers_premium_account_for_pro_text_models(tmp_path):
+    store = AccountStore(accounts_dir=tmp_path)
+    store.save_account("free", None, storage_state(), tier="free")
+    pro = store.save_account("pro", None, storage_state(cookie_name="sid2"), activate=False, tier="pro")
+    rotator = AccountRotator(store)
+
+    picked = asyncio.run(rotator.get_next_account("gemini-3.1-pro-preview"))
+
+    assert rotator.model_prefers_premium("gemini-3.1-pro-preview") is True
+    assert rotator.model_prefers_premium("models/gemini-3.1-pro-preview") is True
+    assert rotator.model_prefers_premium("gemini-pro-latest") is True
+    assert rotator.model_prefers_premium("gemini-3.1-flash-lite") is False
+    assert picked.id == pro.id
+    assert rotator.last_selection_reason == "premium-preferred model selected a Pro/Ultra account"
 
 
 def test_rotator_uses_free_account_for_text_and_logs_image_fallback(tmp_path, caplog):
@@ -260,6 +276,18 @@ class FakeImageClient:
         )
 
 
+class FakeChatClient:
+    def __init__(self):
+        self.calls = []
+
+    async def generate_content(self, **kwargs):
+        self.calls.append(kwargs)
+        return ModelOutput(
+            candidates=[Candidate(text="ok")],
+            usage={"total_tokens": 1},
+        )
+
+
 class FakeBrowserSession:
     def __init__(self):
         self.auth_paths = []
@@ -342,6 +370,38 @@ def test_image_generation_switches_from_free_active_account_to_available_premium
     assert snapshot_cache.clear_calls == 1
     assert len(client.calls) == 1
     assert response["data"][0]["b64_json"]
+
+
+def test_chat_pro_text_model_switches_from_free_active_account_to_available_premium(tmp_path):
+    store = AccountStore(accounts_dir=tmp_path)
+    free = store.save_account("free", None, storage_state(cookie_name="sid1"), tier="free")
+    pro = store.save_account("pro", None, storage_state(cookie_name="sid2"), activate=False, tier="pro")
+    account_service = AccountService(store, LoginService())
+    rotator = AccountRotator(store)
+    browser_session = FakeBrowserSession()
+    snapshot_cache = FakeSnapshotCache()
+    client = FakeChatClient()
+
+    response = run_with_account_runtime(
+        handle_chat(
+            ChatRequest(
+                model="gemini-3.1-pro-preview",
+                messages=[Message(role="user", content="hello")],
+            ),
+            client,
+        ),
+        account_service=account_service,
+        rotator=rotator,
+        browser_session=browser_session,
+        snapshot_cache=snapshot_cache,
+    )
+
+    assert store.get_active_account().id == pro.id
+    assert store.get_active_account().id != free.id
+    assert browser_session.auth_paths == [str(tmp_path / pro.id / "auth.json")]
+    assert snapshot_cache.clear_calls == 1
+    assert client.calls[0]["model"] == "gemini-3.1-pro-preview"
+    assert response["choices"][0]["message"]["content"] == "ok"
 
 
 def test_image_generation_records_resolution_usage(tmp_path):

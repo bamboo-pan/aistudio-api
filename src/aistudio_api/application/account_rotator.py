@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -12,9 +13,18 @@ from enum import Enum
 from typing import Any
 
 from aistudio_api.infrastructure.account.account_store import AccountStore, AccountMeta
-from aistudio_api.domain.model_capabilities import get_model_capabilities
+from aistudio_api.domain.model_capabilities import canonical_model_id, get_model_capabilities
 
 logger = logging.getLogger("aistudio.rotator")
+
+PREMIUM_MODEL_TOKEN_RE = re.compile(r"(?:^|[-_.])pro(?:[-_.]|$)", re.IGNORECASE)
+
+
+def _model_name_prefers_premium(model: str | None) -> bool:
+    if not model:
+        return False
+    model_id = canonical_model_id(model).lower()
+    return bool(PREMIUM_MODEL_TOKEN_RE.search(model_id)) or "image" in model_id
 
 
 class RotationMode(str, Enum):
@@ -149,9 +159,10 @@ class AccountRotator:
         if not model:
             return False
         try:
-            return get_model_capabilities(model, strict=True).image_output
+            capabilities = get_model_capabilities(model, strict=True)
         except ValueError:
-            return "image" in model.lower()
+            return _model_name_prefers_premium(model)
+        return capabilities.image_output or _model_name_prefers_premium(capabilities.id)
 
     def has_available_preferred_account(self, model: str | None) -> bool:
         if not self.model_prefers_premium(model):
@@ -170,13 +181,13 @@ class AccountRotator:
             return available
         premium = [(account, stats) for account, stats in available if account.is_premium]
         if premium:
-            self.last_selection_reason = "image model selected a Pro/Ultra account"
+            self.last_selection_reason = "premium-preferred model selected a Pro/Ultra account"
             return premium
         if require_preferred:
-            self.last_selection_reason = "image model requires Pro/Ultra but none are currently available"
+            self.last_selection_reason = "premium-preferred model requires Pro/Ultra but none are currently available"
             return []
-        self.last_selection_reason = "image model fell back to a non-premium account because no Pro/Ultra account is available"
-        logger.warning("Image model account selection fallback: no healthy Pro/Ultra account is available")
+        self.last_selection_reason = "premium-preferred model fell back to a non-premium account because no Pro/Ultra account is available"
+        logger.warning("Premium-preferred model account selection fallback: no healthy Pro/Ultra account is available")
         return available
 
     def _pick_round_robin(self, available: list[tuple[AccountMeta, AccountStats]]) -> tuple[AccountMeta, AccountStats] | None:

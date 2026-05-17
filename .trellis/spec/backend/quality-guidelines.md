@@ -191,6 +191,70 @@ def clear_snapshot_cache(self) -> None:
 	self.clear_capture_state()
 ```
 
+## Scenario: Premium-Preferred Model Account Selection
+
+### 1. Scope / Trigger
+
+- Trigger: Code changes model capability metadata, account rotation, pre-request account selection, account tier detection, or text/image model routing.
+- Use this contract whenever choosing which stored Google account should serve an AI Studio model request.
+
+### 2. Signatures
+
+- `AccountMeta.tier: str` with allowed values `free`, `pro`, `ultra`.
+- `AccountMeta.is_premium -> bool` returns true for `pro` and `ultra`.
+- `AccountRotator.model_prefers_premium(model: str | None) -> bool`.
+- `AccountRotator.get_next_account(model: str | None = None, *, require_preferred: bool = False, exclude_account_id: str | None = None) -> AccountMeta | None`.
+- `_ensure_account_for_model(model: str | None) -> None` runs before OpenAI/Gemini chat or image requests are sent upstream.
+
+### 3. Contracts
+
+- Premium-preferred models include registered `image_output` models and model IDs containing a standalone `pro` token, including IDs prefixed with `models/`.
+- A standalone `pro` token is bounded by start/end, `-`, `_`, or `.`, so `gemini-3.1-pro-preview` and `gemini-pro-latest` match, while unrelated words containing `pro` should not.
+- When the active account is non-premium and a healthy Pro/Ultra account exists, `_ensure_account_for_model` must switch to a Pro/Ultra account before capture/replay.
+- When no Pro/Ultra account is available, preserve fallback behavior unless `require_preferred=True`: log the fallback and use an otherwise healthy account rather than failing locally.
+- Account selection must use the same auth-switch boundary as manual activation, so browser session state, capture templates, and snapshot cache are invalidated together.
+
+### 4. Validation & Error Matrix
+
+- Registered image model + Pro/Ultra available -> select Pro/Ultra.
+- Registered Pro text model + Pro/Ultra available -> select Pro/Ultra.
+- `models/<pro-model>` prefixed ID -> same selection result as bare model ID.
+- Premium-preferred model + no Pro/Ultra available + `require_preferred=False` -> warn and fall back to available healthy account.
+- Premium-preferred model + no Pro/Ultra available + `require_preferred=True` -> return no account so caller can keep or report the current state.
+- Non-premium text model -> use any healthy account according to the rotator mode.
+
+### 5. Good/Base/Bad Cases
+
+- Good: A newly activated Free account receives a `gemini-3.1-pro-preview` request while a Pro account is healthy; the request switches to the Pro account before capture and succeeds.
+- Base: `gemini-3.1-flash-lite` stays on the active healthy Free account.
+- Base: `gemini-3.1-flash-image-preview` continues to prefer Pro/Ultra accounts via image capability metadata.
+- Bad: Only image models are premium-preferred; `gemini-3.1-pro-preview` stays on a Free account and upstream returns `[7,"The caller does not have permission"]`.
+
+### 6. Tests Required
+
+- Unit: `AccountRotator.model_prefers_premium` returns true for `gemini-3.1-pro-preview`, `models/gemini-3.1-pro-preview`, and `gemini-pro-latest`.
+- Unit: Pro text model selection picks a Pro/Ultra account over a Free account.
+- Unit/integration: OpenAI-compatible chat handling switches from a Free active account to an available Pro/Ultra account before calling the client for a Pro text model.
+- Regression: Existing image model premium-selection tests still pass.
+- Real: WSL browser-backed `/v1/chat/completions` for a premium-preferred model returns a successful upstream result and leaves the active account premium when a Pro/Ultra account is available.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+def model_prefers_premium(self, model: str | None) -> bool:
+	return get_model_capabilities(model, strict=True).image_output
+```
+
+#### Correct
+
+```python
+def model_prefers_premium(self, model: str | None) -> bool:
+	capabilities = get_model_capabilities(model, strict=True)
+	return capabilities.image_output or _model_name_prefers_premium(capabilities.id)
+```
+
 ## Scenario: Browser Login Persists Only Verified Accounts
 
 ### 1. Scope / Trigger
