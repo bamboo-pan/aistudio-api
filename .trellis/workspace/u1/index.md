@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 11
+- **Total Sessions**: 12
 - **Last Active**: 2026-05-17
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~380 | Active |
+| `journal-1.md` | ~413 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 12 | 2026-05-17 | Restore simple chat responses | `917a094` | `fix/simple-chat-regression` |
 | 11 | 2026-05-17 | Improve image session controls | `fdb365a` | `feature/context-session-layout` |
 | 10 | 2026-05-17 | Fix web auth retry | `79512e6` | `fix/web-auth-retry` |
 | 9 | 2026-05-16 | Fix browser replay captured URL failure | `86e3383` | `fix-replay-captured-url` |

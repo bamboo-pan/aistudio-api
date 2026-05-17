@@ -378,3 +378,36 @@ Moved the image editing context panel above saved sessions, relocated and emphas
 ### Next Steps
 
 - None - task complete
+
+
+## Session 12: Restore simple chat responses
+
+**Date**: 2026-05-17
+**Task**: Restore simple chat responses
+**Branch**: `fix/simple-chat-regression`
+
+### Summary
+
+Fixed simple chat streaming regression by treating empty upstream streams as errors, surfacing streamed errors in the web UI, adding regression coverage, updating backend streaming spec, and verifying with focused unit tests plus WSL real stream/non-stream chat.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `917a094` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
