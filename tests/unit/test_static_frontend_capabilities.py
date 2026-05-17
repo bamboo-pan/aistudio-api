@@ -290,6 +290,9 @@ def test_static_frontend_exposes_image_prompt_templates_and_optimizer():
     assert "image-preview-overlay" in index_html
     assert "会话历史" in index_html
     assert "已保存会话" in index_html
+    assert index_html.index("上下文") < index_html.index("会话历史")
+    assert "image-new-session-btn" in index_html
+    assert "image-panel-actions" in style_css
     assert "imageSessions.length" in index_html
     assert "restoreImageSession(session)" in index_html
     assert "deleteImageSession(session)" in index_html

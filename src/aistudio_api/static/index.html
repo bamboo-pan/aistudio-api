@@ -368,7 +368,6 @@
               <div class="image-session-tools image-studio-tools">
                 <input x-ref="imageReferenceInput" type="file" accept="image/*" multiple hidden @change="attachImageReferences($event)">
                 <button class="btn btn-sm" :disabled="imageBusy" @click="$refs.imageReferenceInput.click()">上传参考</button>
-                <button class="btn btn-sm" :disabled="imageBusy||(!imageBaseImage&&!imageReferences.length&&!imageConversation.length)" @click="clearImageEditSession()">新会话</button>
               </div>
               <div class="notice notice-error image-reference-error" x-show="imageReferenceError" x-text="imageReferenceError" x-cloak></div>
               <div class="image-reference-zone image-reference-board" x-show="imageBaseImage||imageReferences.length" x-cloak>
@@ -544,6 +543,37 @@
           </div>
 
           <div class="image-side-column">
+            <section class="image-panel image-session-panel">
+            <div class="image-panel-head">
+              <div>
+                <div class="image-section-label">上下文</div>
+                <h2>编辑会话</h2>
+              </div>
+              <div class="image-panel-actions">
+                <span class="panel-meta" x-text="imageConversation.length?Math.ceil(imageConversation.length/2)+' 轮':''"></span>
+                <button class="btn btn-sm btn-primary image-new-session-btn" :disabled="imageBusy||(!imageBaseImage&&!imageReferences.length&&!imageConversation.length)" @click="clearImageEditSession()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg><span>新会话</span></button>
+              </div>
+            </div>
+            <div class="image-session-log" x-show="imageConversation.length" x-cloak>
+              <template x-for="(turn,index) in imageConversation" :key="index">
+                <div class="image-turn" :class="turn.role==='assistant'?'image-turn-ai':'image-turn-user'">
+                  <div class="image-turn-role" x-text="turn.role==='assistant'?'AI':'你'"></div>
+                  <div class="image-turn-body">
+                    <div class="image-turn-text" x-show="turn.prompt" x-text="turn.prompt"></div>
+                    <div class="image-turn-images" x-show="turn.images&&turn.images.length" x-cloak>
+                      <template x-for="item in turn.images" :key="imageReferenceKey(item)||imageUrl(item)">
+                        <img :src="imageUrl(item)" :alt="item.prompt||'session image'">
+                      </template>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </div>
+            <div class="image-empty image-compact-empty" x-show="!imageConversation.length">
+              首次生成后会记录提示词和输出，便于继续编辑。
+            </div>
+            </section>
+
             <section class="image-panel image-sessions-panel">
             <div class="image-panel-head">
               <div>
@@ -573,34 +603,6 @@
             </div>
             <div class="image-empty image-compact-empty" x-show="!imageSessions.length&&!imageSessionLoading">生成成功后会自动保存到后端会话历史。</div>
             <div class="image-empty image-compact-empty" x-show="imageSessionLoading">正在加载会话历史...</div>
-            </section>
-
-            <section class="image-panel image-session-panel">
-            <div class="image-panel-head">
-              <div>
-                <div class="image-section-label">上下文</div>
-                <h2>编辑会话</h2>
-              </div>
-              <span class="panel-meta" x-text="imageConversation.length?Math.ceil(imageConversation.length/2)+' 轮':''"></span>
-            </div>
-            <div class="image-session-log" x-show="imageConversation.length" x-cloak>
-              <template x-for="(turn,index) in imageConversation" :key="index">
-                <div class="image-turn" :class="turn.role==='assistant'?'image-turn-ai':'image-turn-user'">
-                  <div class="image-turn-role" x-text="turn.role==='assistant'?'AI':'你'"></div>
-                  <div class="image-turn-body">
-                    <div class="image-turn-text" x-show="turn.prompt" x-text="turn.prompt"></div>
-                    <div class="image-turn-images" x-show="turn.images&&turn.images.length" x-cloak>
-                      <template x-for="item in turn.images" :key="imageReferenceKey(item)||imageUrl(item)">
-                        <img :src="imageUrl(item)" :alt="item.prompt||'session image'">
-                      </template>
-                    </div>
-                  </div>
-                </div>
-              </template>
-            </div>
-            <div class="image-empty image-compact-empty" x-show="!imageConversation.length">
-              首次生成后会记录提示词和输出，便于继续编辑。
-            </div>
             </section>
           </div>
         </div>

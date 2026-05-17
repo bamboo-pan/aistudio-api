@@ -345,3 +345,36 @@ Cleared browser capture templates whenever auth context or streaming auth retry 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 11: Improve image session controls
+
+**Date**: 2026-05-17
+**Task**: Improve image session controls
+**Branch**: `feature/context-session-layout`
+
+### Summary
+
+Moved the image editing context panel above saved sessions, relocated and emphasized the new-session action in the context header, added static frontend regression coverage, and verified in Windows plus WSL real-test environment.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fdb365a` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
