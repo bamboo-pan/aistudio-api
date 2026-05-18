@@ -34,6 +34,96 @@ Questions to answer:
 
 (To be filled by the team)
 
+## Scenario: Client-Compatible Chat/Responses/Messages Gateway
+
+### 1. Scope / Trigger
+
+- Trigger: Code changes OpenAI-compatible Chat Completions, OpenAI Responses, Anthropic Messages, Gemini-native conversion, tool normalization, or SSE event translation.
+- Use this contract whenever a client-facing protocol payload is translated into the browser-backed AI Studio chat path.
+
+### 2. Signatures
+
+- `normalize_openai_tools_and_search(tools) -> tuple[list[list[Any]] | None, bool]`
+- `normalize_openai_tools(tools) -> list[list[Any]] | None`
+- `handle_openai_responses(payload: dict[str, Any], client, request: Request | None = None)`
+- `handle_messages(payload: dict[str, Any], client, request: Request | None = None)`
+- `handle_messages_count_tokens(payload: dict[str, Any]) -> dict[str, int]`
+- `POST /v1/responses`
+- `POST /v1/messages`
+- `POST /v1/messages/count_tokens`
+
+### 3. Contracts
+
+- OpenAI-compatible search tools are recognized at the shared normalization boundary, not separately in each route. Supported types include `web_search`, `web_search_preview`, `web_search_preview_*`, `web_search_*`, `browser_search`, `google_search`, and `search`.
+- Search tool requests must append the AI Studio `google_search` tool template while preserving valid function tools in the same request.
+- Unknown non-function tools still fail validation; do not silently drop unsupported tool types.
+- `/v1/chat/completions`, `/v1/responses`, and `/v1/messages` must share the same function-tool and search-tool normalization behavior.
+- `/v1/responses` with `stream: true` must return SSE events including `response.created`, `response.in_progress`, text deltas, text done, output item done, `response.completed`, and final `data: [DONE]`.
+- `/v1/messages` with `stream: true` must return Anthropic-compatible SSE events including `message_start`, content block start/delta/stop, `message_delta`, `message_stop`, and final `data: [DONE]`.
+- `/v1/messages/count_tokens` returns `{"input_tokens": <int>}` using the same message/system/tool coercion assumptions as `/v1/messages`.
+- These compatibility endpoints are practical subsets. Do not claim hosted OpenAI/Anthropic parity for background tasks, remote hosted tools, or provider-specific beta fields unless tests cover them.
+
+### 4. Validation & Error Matrix
+
+- Tool type `function` with a valid function object -> emit an AI Studio function declaration.
+- Recognized search tool type -> set search enabled and append Google Search template.
+- Recognized search tool plus function tools -> include both Google Search and function declarations.
+- Unknown tool type -> `ValueError`/HTTP 400 with a clear unsupported tool message.
+- Responses `stream: true` -> translate existing Chat SSE into Responses SSE; upstream stream errors become `response.failed` before `[DONE]`.
+- Messages `stream: true` -> translate existing Chat SSE into Messages SSE; upstream stream errors become `error` before `[DONE]`.
+- Empty or unsupported message content blocks -> preserve best-effort text while avoiding local crashes.
+
+### 5. Good/Base/Bad Cases
+
+- Good: CherryStudio sends `tools: [{"type":"web_search"}]` to `/v1/chat/completions`; the request uses Google Search and returns an OpenAI-compatible chat response.
+- Good: Codex/Responses-style client sends `stream: true`; it receives Responses event names and a completed response containing accumulated output text.
+- Good: Claude-compatible client sends `stream: true` to `/v1/messages`; it receives Anthropic event names and token usage deltas when available.
+- Base: A request with only function tools behaves as it did before search-tool support.
+- Bad: `/v1/chat/completions` accepts `web_search`, but `/v1/responses` rejects the same tool because it has a separate validator.
+- Bad: Streaming wrappers emit text deltas but never emit done/completed events, leaving clients waiting.
+
+### 6. Tests Required
+
+- Unit: Chat Completions accepts each supported search-tool alias and appends the Google Search template.
+- Unit: function tools and search tools can coexist without dropping either tool family.
+- Unit: unknown tool types still fail with a clear validation error.
+- Unit: Responses non-streaming output includes `web_search_call` when search was requested.
+- Unit: Responses streaming includes `response.created`, text delta/done, `response.completed`, and `[DONE]`.
+- Unit: Messages streaming includes `message_start`, text delta, `message_stop`, and `[DONE]`.
+- Unit: `/v1/messages/count_tokens` returns `input_tokens` for system, messages, and tools payloads.
+- Real: WSL browser-backed smoke must cover Chat search, Responses streaming, Messages streaming, and Messages count_tokens for API/gateway changes.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+if tool.get("type") != "function":
+	raise ValueError("Unsupported tool type")
+```
+
+#### Correct
+
+```python
+function_tools, uses_search = normalize_openai_tools_and_search(tools)
+if uses_search:
+	tool_blocks.append(TOOLS_TEMPLATES["google_search"])
+```
+
+#### Wrong
+
+```python
+if payload.get("stream"):
+	raise ValueError("streaming is not supported")
+```
+
+#### Correct
+
+```python
+if payload.get("stream"):
+	return _build_responses_streaming_response(payload, client, request)
+```
+
 ## Scenario: Gateway Replay Uses Captured Request Contract
 
 ### 1. Scope / Trigger
