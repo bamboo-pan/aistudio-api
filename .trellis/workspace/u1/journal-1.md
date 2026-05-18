@@ -411,3 +411,36 @@ Fixed simple chat streaming regression by treating empty upstream streams as err
 ### Next Steps
 
 - None - task complete
+
+
+## Session 13: Clarify account pool status and load
+
+**Date**: 2026-05-18
+**Task**: Clarify account pool status and load
+**Branch**: `feature/account-pool-status-load`
+
+### Summary
+
+Implemented bounded one-hour affinity bindings, exposed account load and pool status in rotation/admin UI, added lease logging, and verified with unit tests plus WSL real chat smoke.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c82d8c8` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

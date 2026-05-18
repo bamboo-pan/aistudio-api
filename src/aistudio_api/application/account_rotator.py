@@ -18,6 +18,7 @@ from aistudio_api.domain.model_capabilities import canonical_model_id, get_model
 logger = logging.getLogger("aistudio.rotator")
 
 PREMIUM_MODEL_TOKEN_RE = re.compile(r"(?:^|[-_.])pro(?:[-_.]|$)", re.IGNORECASE)
+DEFAULT_AFFINITY_TTL_SECONDS = 60 * 60
 
 
 def _model_name_prefers_premium(model: str | None) -> bool:
@@ -79,6 +80,14 @@ class AccountStats:
 
 
 @dataclass
+class AffinityBinding:
+    """Bounded logical user/session to account mapping."""
+    account_id: str
+    created_at: float
+    expires_at: float
+
+
+@dataclass
 class AccountLease:
     """Request-scoped account lease used for in-flight balancing."""
     account: AccountMeta
@@ -108,6 +117,7 @@ class AccountRotator:
         mode: RotationMode = RotationMode.ROUND_ROBIN,
         cooldown_seconds: int = 60,
         error_isolation_threshold: int = 3,
+        affinity_ttl_seconds: int = DEFAULT_AFFINITY_TTL_SECONDS,
     ) -> None:
         self._store = account_store
         self._mode = mode
@@ -115,8 +125,9 @@ class AccountRotator:
         self._error_isolation_threshold = error_isolation_threshold
         self._stats: dict[str, AccountStats] = {}
         self._current_index: int = 0
-        self._affinity: dict[str, str] = {}
+        self._affinity: dict[str, AffinityBinding] = {}
         self._affinity_limit = 1024
+        self._affinity_ttl_seconds = affinity_ttl_seconds
         self._lock = asyncio.Lock()
         self.last_selection_reason: str | None = None
 
@@ -145,8 +156,12 @@ class AccountRotator:
     def get_all_stats(self) -> dict[str, dict[str, Any]]:
         """获取所有账号的统计信息。"""
         result = {}
+        now = time.time()
+        self._prune_affinity(now)
+        affinity_loads = self._affinity_loads(now)
         for account in self._store.list_accounts():
             stats = self._stats.get(account.id, AccountStats(account_id=account.id))
+            affinity_load = affinity_loads.get(account.id, 0)
             result[account.id] = {
                 "name": account.name,
                 "email": account.email,
@@ -160,6 +175,9 @@ class AccountRotator:
                 "rate_limited": stats.rate_limited,
                 "errors": stats.errors,
                 "in_flight": stats.in_flight,
+                "affinity_load": affinity_load,
+                "bound_users": affinity_load,
+                "affinity_ttl_seconds": self._affinity_ttl_seconds,
                 "last_used": datetime.fromtimestamp(stats.last_used, tz=timezone.utc).isoformat() if stats.last_used else None,
                 "last_rate_limited": datetime.fromtimestamp(stats.last_rate_limited, tz=timezone.utc).isoformat() if stats.last_rate_limited else None,
                 "is_available": stats.is_available() and not account.is_isolated,
@@ -168,6 +186,34 @@ class AccountRotator:
                 "image_total": sum(stats.image_sizes.values()),
             }
         return result
+
+    def _prune_affinity(self, now: float | None = None) -> None:
+        now = time.time() if now is None else now
+        expired = [key for key, binding in self._affinity.items() if binding.expires_at <= now]
+        for key in expired:
+            self._affinity.pop(key, None)
+
+    def _affinity_loads(self, now: float | None = None) -> dict[str, int]:
+        now = time.time() if now is None else now
+        loads: dict[str, int] = defaultdict(int)
+        for binding in self._affinity.values():
+            if binding.expires_at > now:
+                loads[binding.account_id] += 1
+        return dict(loads)
+
+    def _affinity_load(self, account_id: str, now: float | None = None) -> int:
+        return self._affinity_loads(now).get(account_id, 0)
+
+    def _bind_affinity(self, affinity_key: str, account_id: str, now: float | None = None) -> None:
+        now = time.time() if now is None else now
+        self._affinity[affinity_key] = AffinityBinding(
+            account_id=account_id,
+            created_at=now,
+            expires_at=now + self._affinity_ttl_seconds,
+        )
+        if len(self._affinity) > self._affinity_limit:
+            oldest_key = min(self._affinity, key=lambda key: self._affinity[key].created_at)
+            self._affinity.pop(oldest_key, None)
 
     def _get_available_accounts(self) -> list[tuple[AccountMeta, AccountStats]]:
         """获取所有可用的账号（不在冷却期）。"""
@@ -240,9 +286,12 @@ class AccountRotator:
         if not available:
             return None
 
+        now = time.time()
+        self._prune_affinity(now)
+
         if affinity_key:
-            account_id = self._affinity.get(affinity_key)
-            affinity_pick = next(((account, stats) for account, stats in available if account.id == account_id), None)
+            binding = self._affinity.get(affinity_key)
+            affinity_pick = next(((account, stats) for account, stats in available if binding is not None and account.id == binding.account_id), None)
             if affinity_pick is not None:
                 min_in_flight = min(stats.in_flight for _, stats in available)
                 if affinity_pick[1].in_flight <= min_in_flight + 1:
@@ -254,10 +303,7 @@ class AccountRotator:
         candidates = [(account, stats) for account, stats in available if (stats.in_flight, stats.requests, stats.rate_limited) == min_score]
         pick = self._pick_round_robin(candidates)
         if pick is not None and affinity_key:
-            self._affinity[affinity_key] = pick[0].id
-            if len(self._affinity) > self._affinity_limit:
-                oldest_key = next(iter(self._affinity))
-                self._affinity.pop(oldest_key, None)
+            self._bind_affinity(affinity_key, pick[0].id, now)
         if self.last_selection_reason == "text model can use any healthy account":
             self.last_selection_reason = "balanced mode selected the least-busy account"
         return pick
@@ -408,6 +454,18 @@ class AccountRotator:
                 if account.id not in self._stats:
                     self._stats[account.id] = stats
                 stats.record_start()
+                affinity_load = self._affinity_load(account.id)
+                logger.info(
+                    "Account leased after cooldown wait for model=%s account=%s tier=%s mode=%s reason=%s in_flight=%d affinity_load=%d affinity_ttl_seconds=%d",
+                    model or "<any>",
+                    account.id,
+                    account.tier,
+                    self._mode.value,
+                    self.last_selection_reason,
+                    stats.in_flight,
+                    affinity_load,
+                    self._affinity_ttl_seconds,
+                )
                 return AccountLease(account=account, _rotator=self)
 
             pick = self._pick_for_mode(available, affinity_key=affinity_key)
@@ -415,7 +473,18 @@ class AccountRotator:
                 return None
             account, stats = pick
             stats.record_start()
-            logger.info("Account leased for model=%s tier=%s mode=%s reason=%s in_flight=%d", model or "<any>", account.tier, self._mode.value, self.last_selection_reason, stats.in_flight)
+            affinity_load = self._affinity_load(account.id)
+            logger.info(
+                "Account leased for model=%s account=%s tier=%s mode=%s reason=%s in_flight=%d affinity_load=%d affinity_ttl_seconds=%d",
+                model or "<any>",
+                account.id,
+                account.tier,
+                self._mode.value,
+                self.last_selection_reason,
+                stats.in_flight,
+                affinity_load,
+                self._affinity_ttl_seconds,
+            )
             return AccountLease(account=account, _rotator=self)
 
     async def release_account(self, account_id: str) -> None:
@@ -469,6 +538,9 @@ class AccountRotator:
     def remove_account(self, account_id: str) -> None:
         """删除账号时清理统计。"""
         self._stats.pop(account_id, None)
+        for key, binding in list(self._affinity.items()):
+            if binding.account_id == account_id:
+                self._affinity.pop(key, None)
 
     def has_accounts(self) -> bool:
         return bool(self._store.list_accounts())
