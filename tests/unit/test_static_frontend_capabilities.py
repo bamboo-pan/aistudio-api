@@ -183,6 +183,32 @@ def test_static_frontend_exposes_exhaustion_mode_and_resolution_usage():
     assert ".model-stats-panel" in style_css
 
 
+def test_static_frontend_shows_pool_status_and_account_load():
+    app_js = (ROOT / "src" / "aistudio_api" / "static" / "app.js").read_text(encoding="utf-8")
+    index_html = (ROOT / "src" / "aistudio_api" / "static" / "index.html").read_text(encoding="utf-8")
+    style_css = (ROOT / "src" / "aistudio_api" / "static" / "style.css").read_text(encoding="utf-8")
+
+    assert "totalAffinityLoad" in app_js
+    assert "accountLoad(a)" in app_js
+    assert "poolStatusLabel(a)" in app_js
+    assert "poolStatusClass(a)" in app_js
+    assert "poolStatusDetail(a)" in app_js
+    assert "可调度" in app_js
+    assert "默认账号" in app_js
+    assert "绑定${Math.round(a.affinity_ttl_seconds/60)}分钟过期" in app_js
+    assert "账号负载" in index_html
+    assert "<th>负载</th>" in index_html
+    assert "<th>池状态</th>" in index_html
+    assert "绑定用户/会话" in index_html
+    assert "default-account-note" in index_html
+    assert "poolStatusLabel(a)" in index_html
+    assert "poolStatusDetail(a)" in index_html
+    assert "<th>状态</th>" not in index_html
+    assert "待命" not in index_html
+    assert ".load-stack" in style_css
+    assert ".default-account-note" in style_css
+
+
 def test_static_frontend_exposes_image_upload_and_generation_page():
     app_js = (ROOT / "src" / "aistudio_api" / "static" / "app.js").read_text(encoding="utf-8")
     index_html = (ROOT / "src" / "aistudio_api" / "static" / "index.html").read_text(encoding="utf-8")

@@ -313,6 +313,61 @@ def test_balanced_selection_keeps_affinity_when_not_overloaded(tmp_path):
     assert second_pick == first.id
 
 
+def test_affinity_load_expires_after_ttl(tmp_path, monkeypatch):
+    store = AccountStore(accounts_dir=tmp_path)
+    first = store.save_account("first", None, storage_state(cookie_name="sid1"))
+    second = store.save_account("second", None, storage_state(cookie_name="sid2"), activate=False)
+    current_time = 1000.0
+    monkeypatch.setattr("aistudio_api.application.account_rotator.time.time", lambda: current_time)
+    rotator = AccountRotator(store, affinity_ttl_seconds=3600)
+
+    async def lease_with_affinity():
+        lease_one = await rotator.acquire_account("gemini-3-flash-preview", affinity_key="user-a")
+        await lease_one.release()
+        lease_two = await rotator.acquire_account("gemini-3-flash-preview", affinity_key="user-a")
+        await lease_two.release()
+        return lease_one.account.id, lease_two.account.id
+
+    first_pick, second_pick = asyncio.run(lease_with_affinity())
+    stats_before_expiry = rotator.get_all_stats()
+    current_time = 4601.0
+    stats_after_expiry = rotator.get_all_stats()
+    lease_after_expiry = asyncio.run(rotator.acquire_account("gemini-3-flash-preview", affinity_key="user-a"))
+    try:
+        expired_pick = lease_after_expiry.account.id
+    finally:
+        asyncio.run(lease_after_expiry.release())
+
+    assert first_pick == first.id
+    assert second_pick == first.id
+    assert stats_before_expiry[first.id]["affinity_load"] == 1
+    assert stats_before_expiry[first.id]["bound_users"] == 1
+    assert stats_before_expiry[first.id]["affinity_ttl_seconds"] == 3600
+    assert stats_before_expiry[second.id]["affinity_load"] == 0
+    assert stats_after_expiry[first.id]["affinity_load"] == 0
+    assert expired_pick == second.id
+
+
+def test_account_lease_log_includes_bound_account_and_load(tmp_path, caplog):
+    store = AccountStore(accounts_dir=tmp_path)
+    account = store.save_account("main", None, storage_state())
+    rotator = AccountRotator(store, affinity_ttl_seconds=3600)
+
+    async def lease_once():
+        lease = await rotator.acquire_account("gemini-3-flash-preview", affinity_key="user-a")
+        await lease.release()
+
+    with caplog.at_level(logging.INFO, logger="aistudio.rotator"):
+        asyncio.run(lease_once())
+
+    assert any(
+        f"account={account.id}" in record.message
+        and "affinity_load=1" in record.message
+        and "affinity_ttl_seconds=3600" in record.message
+        for record in caplog.records
+    )
+
+
 def test_account_stats_track_image_usage_by_resolution(tmp_path):
     store = AccountStore(accounts_dir=tmp_path)
     account = store.save_account("main", None, storage_state())

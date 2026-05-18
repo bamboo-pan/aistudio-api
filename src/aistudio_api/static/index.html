@@ -632,6 +632,7 @@
           <div class="account-metric"><span>健康</span><strong x-text="healthyAccountCount"></strong></div>
           <div class="account-metric"><span>Pro/Ultra</span><strong x-text="premiumAccountCount"></strong></div>
           <div class="account-metric"><span>冷却/异常</span><strong class="metric-warn" x-text="coolingAccountCount"></strong></div>
+          <div class="account-metric"><span>账号负载</span><strong x-text="totalAffinityLoad"></strong></div>
           <div class="account-metric"><span>图片使用</span><strong x-text="totalAccountImageUsage"></strong></div>
         </div>
 
@@ -705,7 +706,7 @@
             <div><h2>账号池</h2><p x-text="accountRows.length+' 个账号 · '+totalAccountRequests+' 次请求'"></p></div>
           </div>
           <div class="table-wrap"><table>
-            <thead><tr><th>账号</th><th>等级</th><th>请求</th><th>图片分辨率</th><th>健康</th><th>状态</th><th>操作</th></tr></thead>
+            <thead><tr><th>账号</th><th>等级</th><th>请求</th><th>负载</th><th>图片分辨率</th><th>健康</th><th>池状态</th><th>操作</th></tr></thead>
             <tbody>
               <template x-for="a in accountRows" :key="a.id"><tr>
                 <td>
@@ -713,6 +714,7 @@
                     <div class="acct-name" x-text="a.name||a.email||a.id"></div>
                     <div class="acct-meta" x-show="a.email&&a.email!==a.name" x-text="a.email"></div>
                     <div class="acct-id" x-text="a.id"></div>
+                    <div class="default-account-note" x-show="a.id===activeId">默认账号</div>
                   </div>
                   <div class="inline-edit" x-show="renameId===a.id">
                     <input class="inline-input" type="text" x-model="renameDraft" placeholder="账号名称" @keydown.enter.prevent="renameAccount(a)" @keydown.escape.prevent="cancelRename()">
@@ -728,6 +730,7 @@
                   </div><span class="tier-note" x-show="['pro','ultra'].includes(a.tier)">高级</span></div>
                 </td>
                 <td><div class="request-stack"><strong x-text="a.requests||0"></strong><span><span x-text="a.success||0"></span> 成功 · <span x-text="a.rate_limited||0"></span> 429</span></div></td>
+                <td><div class="load-stack"><strong x-text="accountLoad(a)"></strong><span>绑定用户/会话</span><small x-show="a.in_flight" x-text="a.in_flight+' 个处理中'"></small></div></td>
                 <td>
                   <div class="resolution-stack" x-show="imageSizeEntries(a).length" x-cloak>
                     <template x-for="([size,count]) in imageSizeEntries(a)" :key="size"><span class="resolution-chip"><span x-text="size"></span><strong x-text="count"></strong></span></template>
@@ -735,7 +738,7 @@
                   <span class="acct-meta" x-show="!imageSizeEntries(a).length">暂无图片</span>
                 </td>
                 <td><span class="badge" :class="healthClass(a.health_status)" x-text="healthLabel(a.health_status)"></span><div class="acct-meta" x-show="a.health_reason" x-text="a.health_reason"></div><div class="acct-meta" x-show="a.isolated_until" x-text="'至 '+fmtDate(a.isolated_until)"></div></td>
-                <td><span class="badge badge-green" x-show="a.id===activeId">激活</span><span class="badge badge-gray" x-show="a.id!==activeId">待命</span></td>
+                <td><span class="badge" :class="poolStatusClass(a)" x-text="poolStatusLabel(a)"></span><div class="acct-meta" x-text="poolStatusDetail(a)"></div></td>
                 <td>
                   <div class="table-actions">
                     <button class="btn btn-sm" x-show="a.id!==activeId" :disabled="isRowBusy(a.id)" @click="activateAccount(a.id)" x-text="isAccountBusy('activate',a.id)?'激活中':'手动激活'"></button>
@@ -760,7 +763,7 @@
                   </div>
                 </td>
               </tr></template>
-              <tr x-show="!accountRows.length"><td colspan="7" style="text-align:center;color:var(--muted);padding:24px" x-text="accountsLoading?'正在加载账号...':accountsError?'账号列表加载失败':'暂无账号'"></td></tr>
+              <tr x-show="!accountRows.length"><td colspan="8" style="text-align:center;color:var(--muted);padding:24px" x-text="accountsLoading?'正在加载账号...':accountsError?'账号列表加载失败':'暂无账号'"></td></tr>
             </tbody></table></div>
         </section>
 

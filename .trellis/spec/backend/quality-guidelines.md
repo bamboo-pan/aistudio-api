@@ -334,6 +334,10 @@ _record_request_result(model, "success", output.usage, account_id=account_contex
 - `AccountRotator.acquire_account(model=None, *, require_preferred=False, exclude_account_id=None, affinity_key=None) -> AccountLease | None`.
 - `AccountLease.account: AccountMeta` and `await AccountLease.release()`.
 - `AccountStats.in_flight: int` is exposed through `/rotation.accounts[account_id].in_flight`.
+- `AffinityBinding(account_id: str, created_at: float, expires_at: float)` stores bounded in-memory affinity.
+- `DEFAULT_AFFINITY_TTL_SECONDS == 3600` unless overridden for tests.
+- `/rotation.accounts[account_id].affinity_load: int` and `.bound_users: int` expose current non-expired logical user/session bindings.
+- `/rotation.accounts[account_id].affinity_ttl_seconds: int` exposes the binding lifetime used by the running process.
 - `AccountClientPool.get_client(account_id: str) -> AIStudioClient | None`.
 - `ChatRequest.user: str | None` may be used as an OpenAI-compatible affinity hint.
 
@@ -344,7 +348,12 @@ _record_request_result(model, "success", output.usage, account_id=account_contex
 - Request handlers must use the pooled `AIStudioClient` associated with the selected account; they must not call global `activate_account()` for normal balanced routing.
 - Each pooled client must have its own `SnapshotCache` and browser/capture/session state. Global active-account switching remains only for legacy/no-pool and manual activation flows.
 - Lightweight affinity may keep a logical user/session on the same account when that account is not more than one in-flight request above the least-busy account.
+- Affinity is intentionally temporary: a binding expires one hour after it is created and must not be refreshed indefinitely by repeated use.
+- Expired affinity bindings must be pruned before selection and before `/rotation` stats are returned, so expired bindings do not count as account load.
+- Account load is the count of non-expired affinity bindings assigned to an account; this is exposed as both `affinity_load` and the UI-friendly alias `bound_users`.
 - For OpenAI-compatible chat, `ChatRequest.user` is the preferred affinity key. Without it, derive a bounded in-memory affinity key from normalized first user content.
+- Account lease logs must include the selected request-bound account id, tier, mode, selection reason, in-flight count, affinity load, and affinity TTL. Do not log cookies, auth file contents, or prompt bodies beyond existing sanitized request logs.
+- The admin UI must not use `激活/待命` as the serving-state label in balanced mode. Display pool scheduling state (`可调度`, `处理中`, `冷却中`, etc.) separately from a `默认账号` marker for the registry active account.
 - On 429, update the failed selected account, then retry with `exclude_account_id` so the next attempt uses another eligible account when available.
 - If stored accounts exist but no eligible account can be leased, do not silently use the global fallback client; return a service-unavailable style error or wait for the shortest cooldown when appropriate.
 - Manual activation, login completion, credential import, account deletion, and force-next must invalidate affected pooled clients so stale auth/capture state is not reused.
@@ -353,6 +362,8 @@ _record_request_result(model, "success", output.usage, account_id=account_contex
 
 - Two concurrent leases + two healthy accounts -> selected account IDs differ and both `in_flight` values increment while leased.
 - Same affinity key + account not overloaded -> selected account remains stable.
+- Same affinity key after the one-hour binding TTL -> previous binding is ignored and the request participates in normal balanced selection again.
+- `/rotation` after active bindings -> selected accounts report positive `affinity_load`/`bound_users` and `affinity_ttl_seconds == 3600`.
 - Different `ChatRequest.user` values + two healthy accounts -> requests can distribute across accounts even with identical message content.
 - Selected account 429 -> that account gets `rate_limited`, retry excludes it, and success can be recorded on another account.
 - Pooled account auth changes -> next request creates a fresh pooled client for that account.
@@ -362,18 +373,24 @@ _record_request_result(model, "success", output.usage, account_id=account_contex
 ### 5. Good/Base/Bad Cases
 
 - Good: Two real Pro accounts handle two OpenAI-compatible chat requests with different `user` values, and `/rotation` shows each account has one success and zero in-flight requests after completion.
+- Good: The accounts table shows a healthy unused account as `可调度` with `0` bound users, not as a misleading standby serving state.
 - Base: Exhaustion mode still keeps the active account until it becomes unavailable.
 - Base: Premium-preferred model selection still filters eligible accounts to Pro/Ultra before balanced picking.
+- Bad: A binding created for one logical user lasts forever and keeps the user pinned to one account even after the TTL window.
 - Bad: Normal balanced routing calls `AccountService.activate_account()` before each request, racing global auth/capture state across concurrent users.
 - Bad: A pooled request succeeds on account A but records stats on account B because the active account changed before accounting.
+- Bad: The admin UI shows a request-serving pooled account as `待命`, implying it is not used.
 
 ### 6. Tests Required
 
 - Unit: balanced concurrent leases distribute across two accounts and release `in_flight` counts.
 - Unit: affinity keeps the same account when not overloaded.
+- Unit: affinity load is exposed and expires after the TTL.
+- Unit: account lease logs include selected account id and affinity load.
 - Unit: different OpenAI `user` values distribute across pooled clients.
 - Unit: pooled chat uses account-bound clients without switching the active account.
 - Unit: 429 retry excludes the failed account and records stats on both the failed and successful accounts.
+- Static/frontend: account table exposes pool status, default-account marker, and affinity load without `激活/待命` serving-state labels.
 - Integration/real: WSL browser-backed `/v1/chat/completions` with two real accounts returns successful responses for two distinct user affinity keys and `/rotation` shows balanced account success counts.
 
 ### 7. Wrong vs Correct
@@ -398,6 +415,21 @@ account_context = await _request_account_context(
 output = await account_context.client.generate_content(...)
 _record_request_result(model, "success", output.usage, account_id=account_context.account_id)
 await account_context.release()
+```
+
+#### Wrong
+
+```javascript
+<span x-show="a.id===activeId">激活</span>
+<span x-show="a.id!==activeId">待命</span>
+```
+
+#### Correct
+
+```javascript
+<span :class="poolStatusClass(a)" x-text="poolStatusLabel(a)"></span>
+<div x-show="a.id===activeId">默认账号</div>
+<strong x-text="accountLoad(a)"></strong>
 ```
 
 ## Scenario: Streaming Chat Success Requires Visible Output

@@ -158,6 +158,7 @@ function app(){return{
   get premiumAccountCount(){return this.accountRows.filter(a=>['pro','ultra'].includes(a.tier)).length},
   get coolingAccountCount(){return this.accountRows.filter(a=>['rate_limited','isolated','expired','missing_auth','error'].includes(a.health_status)||a.is_available===false).length},
   get totalAccountRequests(){return this.accountRows.reduce((s,a)=>s+(a.requests||0),0)},
+  get totalAffinityLoad(){return this.accountRows.reduce((s,a)=>s+(a.affinity_load||a.bound_users||0),0)},
   get totalAccountImageUsage(){return this.accountRows.reduce((s,a)=>s+(a.image_total||0),0)},
   get accountImageSizeTotals(){const totals={};this.accountRows.forEach(a=>Object.entries(a.image_sizes||{}).forEach(([size,count])=>{totals[size]=(totals[size]||0)+count}));return Object.entries(totals).sort((a,b)=>b[1]-a[1])},
 
@@ -166,6 +167,10 @@ function app(){return{
   rotationLabel(m){return m==='round_robin'?'均衡模式':m==='lru'?'LRU':m==='least_rl'?'最少限流':m==='exhaustion'?'耗尽模式':m||'未知'},
   rotationHint(m){return m==='exhaustion'?'当前账号持续使用到限流或不可用':m==='lru'?'优先选择最久未使用账号':m==='least_rl'?'优先选择限流次数最少账号':'按账号池负载与亲和关系均衡分配请求'},
   imageSizeEntries(a){return Object.entries(a?.image_sizes||{}).sort((x,y)=>y[1]-x[1])},
+  accountLoad(a){return a?.affinity_load??a?.bound_users??0},
+  poolStatusLabel(a){if((a?.in_flight||0)>0)return'处理中';if(a?.is_available===false)return this.healthLabel(a?.health_status);if((a?.health_status||'unknown')==='healthy')return'可调度';return this.healthLabel(a?.health_status)},
+  poolStatusClass(a){if((a?.in_flight||0)>0)return'badge-green';if(a?.is_available===false)return'badge-red';if((a?.health_status||'unknown')==='healthy')return'badge-green';return this.healthClass(a?.health_status)},
+  poolStatusDetail(a){const parts=[];const load=this.accountLoad(a);parts.push(`${load} 个绑定`);if((a?.in_flight||0)>0)parts.push(`${a.in_flight} 个处理中`);if(a?.id===this.activeId)parts.push('默认账号');if(a?.affinity_ttl_seconds)parts.push(`绑定${Math.round(a.affinity_ttl_seconds/60)}分钟过期`);return parts.join(' · ')},
   healthLabel(s){return {healthy:'健康',rate_limited:'冷却中',isolated:'已隔离',expired:'登录过期',missing_auth:'缺少凭证',error:'异常',unknown:'未知'}[s||'unknown']||s},
   healthClass(s){if(s==='healthy')return'badge-green';if(['rate_limited','isolated','expired','missing_auth','error'].includes(s))return'badge-red';return'badge-gray'},
   setAccountBusy(action,id,busy){const key=`${action}:${id}`;const next={...this.accountBusy};if(busy)next[key]=true;else delete next[key];this.accountBusy=next},
