@@ -444,3 +444,36 @@ Implemented bounded one-hour affinity bindings, exposed account load and pool st
 ### Next Steps
 
 - None - task complete
+
+
+## Session 14: Mature client compatibility support
+
+**Date**: 2026-05-18
+**Task**: Mature client compatibility support
+**Branch**: `feature/mature-client-compat`
+
+### Summary
+
+Implemented shared search tool normalization for OpenAI-compatible clients, added Responses and Anthropic Messages streaming subsets plus Messages count_tokens, updated compatibility docs/specs/tests, and verified with unit tests plus WSL browser-backed smoke.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c345497` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
