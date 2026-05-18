@@ -2,6 +2,7 @@ import asyncio
 import json
 
 import httpx
+import pytest
 
 from aistudio_api.api.app import app
 from aistudio_api.api.dependencies import get_client
@@ -24,13 +25,17 @@ class FakeTextClient:
 
 
 class FakeStreamClient:
-    def __init__(self):
+    def __init__(self, events: list[tuple[str, object]] | None = None):
         self.calls = []
+        self.events = events or [
+            ("tool_calls", [{"name": "lookup", "args": {"query": "weather"}}]),
+            ("usage", {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3}),
+        ]
 
     async def stream_generate_content(self, **kwargs):
         self.calls.append(kwargs)
-        yield ("tool_calls", [{"name": "lookup", "args": {"query": "weather"}}])
-        yield ("usage", {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3})
+        for event in self.events:
+            yield event
 
 
 def request_with_client(client, method: str, url: str, **kwargs) -> httpx.Response:
@@ -143,6 +148,59 @@ def test_openai_responses_accepts_flat_function_tool_input():
     assert client.calls[0]["tools"] is not None
 
 
+@pytest.mark.parametrize("tool_type", ["web_search", "web_search_preview", "browser_search"])
+def test_chat_completions_accepts_search_tool_shapes(tool_type):
+    client = FakeTextClient(text="grounded")
+
+    response = request_with_client(
+        client,
+        "POST",
+        "/v1/chat/completions",
+        json={
+            "model": "gemini-3-flash-preview",
+            "messages": [{"role": "user", "content": "search the web"}],
+            "tools": [{"type": tool_type}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert client.calls[0]["tools"] == [[None, None, None, [None, [[]]]]]
+
+
+def test_openai_responses_accepts_web_search_tool_and_outputs_search_call():
+    client = FakeTextClient(text="grounded")
+
+    response = request_with_client(
+        client,
+        "POST",
+        "/v1/responses",
+        json={"model": "gemini-3-flash-preview", "input": "search", "tools": [{"type": "web_search"}]},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["output"][0]["type"] == "web_search_call"
+    assert body["output"][1]["content"][0]["text"] == "grounded"
+    assert client.calls[0]["tools"] == [[None, None, None, [None, [[]]]]]
+
+
+def test_openai_responses_streaming_emits_responses_events():
+    client = FakeStreamClient(events=[("body", "hello"), ("usage", {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3})])
+
+    response = request_with_client(
+        client,
+        "POST",
+        "/v1/responses",
+        json={"model": "gemini-3-flash-preview", "input": "hello", "stream": True},
+    )
+
+    assert response.status_code == 200
+    assert "event: response.created" in response.text
+    assert "event: response.output_text.delta" in response.text
+    assert '"delta": "hello"' in response.text
+    assert "event: response.completed" in response.text
+
+
 def test_messages_accepts_anthropic_tools_and_returns_tool_use_blocks():
     client = FakeTextClient(text="", function_calls=[{"name": "lookup", "args": {"query": "weather"}}])
 
@@ -170,6 +228,79 @@ def test_messages_accepts_anthropic_tools_and_returns_tool_use_blocks():
     assert body["stop_reason"] == "tool_use"
     assert body["content"][0] == {"type": "tool_use", "id": body["content"][0]["id"], "name": "lookup", "input": {"query": "weather"}}
     assert client.calls[0]["tools"] is not None
+
+
+def test_messages_accepts_anthropic_web_search_tool():
+    client = FakeTextClient(text="grounded")
+
+    response = request_with_client(
+        client,
+        "POST",
+        "/v1/messages",
+        json={
+            "model": "gemini-3-flash-preview",
+            "messages": [{"role": "user", "content": "search"}],
+            "tools": [{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert client.calls[0]["tools"] == [[None, None, None, [None, [[]]]]]
+
+
+def test_messages_streaming_emits_anthropic_text_events():
+    client = FakeStreamClient(events=[("body", "hello"), ("usage", {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3})])
+
+    response = request_with_client(
+        client,
+        "POST",
+        "/v1/messages",
+        json={"model": "gemini-3-flash-preview", "stream": True, "messages": [{"role": "user", "content": "hello"}]},
+    )
+
+    assert response.status_code == 200
+    assert "event: message_start" in response.text
+    assert "event: content_block_delta" in response.text
+    assert '"text": "hello"' in response.text
+    assert "event: message_stop" in response.text
+
+
+def test_messages_streaming_emits_tool_use_events():
+    client = FakeStreamClient()
+
+    response = request_with_client(
+        client,
+        "POST",
+        "/v1/messages",
+        json={
+            "model": "gemini-3-flash-preview",
+            "stream": True,
+            "messages": [{"role": "user", "content": "use tool"}],
+            "tools": [{"name": "lookup", "input_schema": {"type": "object"}}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert '"type": "tool_use"' in response.text
+    assert '"type": "input_json_delta"' in response.text
+    assert "event: message_stop" in response.text
+
+
+def test_messages_count_tokens_returns_anthropic_shape():
+    response = request_with_client(
+        FakeTextClient(),
+        "POST",
+        "/v1/messages/count_tokens",
+        json={
+            "model": "gemini-3-flash-preview",
+            "system": "be terse",
+            "messages": [{"role": "user", "content": "hello world"}],
+            "tools": [{"name": "lookup", "input_schema": {"type": "object"}}],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["input_tokens"] >= 3
 
 
 def test_chat_streaming_tool_calls_include_openai_delta_index_and_string_arguments():

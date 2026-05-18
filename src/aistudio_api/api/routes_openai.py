@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 
-from aistudio_api.application.api_service import handle_chat, handle_image_generation, handle_image_prompt_optimization, handle_messages, handle_openai_responses, parse_image_request
+from aistudio_api.application.api_service import handle_chat, handle_image_generation, handle_image_prompt_optimization, handle_messages, handle_messages_count_tokens, handle_openai_responses, parse_image_request
 from aistudio_api.domain.model_capabilities import get_model_metadata, list_model_metadata
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
 
@@ -35,13 +35,18 @@ async def chat_completions(req: ChatRequest, request: Request, client: AIStudioC
 
 
 @router.post("/v1/responses")
-async def responses(req: dict, client: AIStudioClient = Depends(get_client)):
-    return await handle_openai_responses(req, client)
+async def responses(req: dict, request: Request, client: AIStudioClient = Depends(get_client)):
+    return await handle_openai_responses(req, client, request=request)
 
 
 @router.post("/v1/messages")
-async def messages(req: dict, client: AIStudioClient = Depends(get_client)):
-    return await handle_messages(req, client)
+async def messages(req: dict, request: Request, client: AIStudioClient = Depends(get_client)):
+    return await handle_messages(req, client, request=request)
+
+
+@router.post("/v1/messages/count_tokens")
+async def messages_count_tokens(req: dict):
+    return handle_messages_count_tokens(req)
 
 
 @router.post("/v1/images/generations")

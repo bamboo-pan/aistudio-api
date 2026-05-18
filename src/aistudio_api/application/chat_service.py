@@ -32,6 +32,13 @@ SCHEMA_TYPE_CODES = {
 MAX_INLINE_IMAGE_BYTES = 20 * 1024 * 1024
 OPENAI_CHAT_ROLES = {"system", "developer", "user", "assistant", "tool"}
 GEMINI_CONTENT_ROLES = {"user", "model"}
+SEARCH_TOOL_TYPES = {
+    "browser_search",
+    "google_search",
+    "search",
+    "web_search",
+    "web_search_preview",
+}
 
 
 GENERATION_CONFIG_FIELD_NAMES = {
@@ -319,13 +326,28 @@ def encode_function_declaration_to_wire(declaration: dict) -> list:
     return wire
 
 
+def is_search_tool_type(tool_type: str | None) -> bool:
+    normalized = (tool_type or "").strip().lower()
+    return normalized in SEARCH_TOOL_TYPES or normalized.startswith("web_search_preview_") or normalized.startswith("web_search_")
+
+
 def normalize_openai_tools(tools) -> list[list] | None:
+    normalized, _uses_search = normalize_openai_tools_and_search(tools)
+    return normalized
+
+
+def normalize_openai_tools_and_search(tools) -> tuple[list[list] | None, bool]:
     if not tools:
-        return None
+        return None, False
 
     function_declarations: list[dict] = []
+    uses_search = False
     for tool in tools:
-        if tool.type != "function":
+        tool_type = (tool.type or "").strip().lower()
+        if is_search_tool_type(tool_type):
+            uses_search = True
+            continue
+        if tool_type != "function":
             raise ValueError(f"unsupported tool type: {tool.type}")
         if tool.function is None:
             raise ValueError("tools[].function is required when type=function")
@@ -339,9 +361,9 @@ def normalize_openai_tools(tools) -> list[list] | None:
         )
 
     if not function_declarations:
-        return None
+        return None, uses_search
 
-    return [[None, [encode_function_declaration_to_wire(decl) for decl in function_declarations]]]
+    return [[None, [encode_function_declaration_to_wire(decl) for decl in function_declarations]]], uses_search
 
 
 def normalize_gemini_request(req, requested_model: str, tmp_dir: str = "/tmp", *, stream: bool = False) -> dict:

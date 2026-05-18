@@ -17,7 +17,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
-from aistudio_api.application.chat_service import cleanup_files, encode_schema_to_wire, normalize_chat_request, normalize_gemini_request, normalize_openai_tools
+from aistudio_api.application.chat_service import cleanup_files, encode_schema_to_wire, is_search_tool_type, normalize_chat_request, normalize_gemini_request, normalize_openai_tools_and_search
 from aistudio_api.application.chat_service import data_uri_to_file, url_to_file
 from aistudio_api.application.validation import validate_number_range
 from aistudio_api.domain.errors import AistudioError, AuthError, RequestError, UsageLimitExceeded
@@ -875,6 +875,10 @@ def _coerce_openai_content_blocks(content: Any) -> str | list[dict[str, Any]]:
                 blocks.extend(_coerce_openai_content_blocks(content_value))
             else:
                 blocks.append({"type": "text", "text": json.dumps(content_value, ensure_ascii=False)})
+        elif block_type in ("tool_use", "server_tool_use"):
+            name = block.get("name") or "unknown"
+            tool_input = block.get("input") if block.get("input") is not None else {}
+            blocks.append({"type": "text", "text": f"Tool use requested: {name} {json.dumps(tool_input, ensure_ascii=False)}"})
         elif block_type in ("file", "input_file"):
             file_data = block.get("file_data") or block.get("data")
             if not isinstance(file_data, str) or not file_data:
@@ -926,6 +930,9 @@ def _messages_from_responses_payload(payload: dict[str, Any]) -> list[dict[str, 
             messages.append({"role": "user", "content": _coerce_openai_content_blocks([item])})
         elif item_type in ("input_file", "file"):
             messages.append({"role": "user", "content": _coerce_openai_content_blocks([item])})
+        elif item_type in ("function_call_output", "tool_result", "input_tool_result"):
+            output = item.get("output") if "output" in item else item.get("content", "")
+            messages.append({"role": "tool", "content": str(output)})
         else:
             raise ValueError(f"unsupported input item type: {item_type}")
     return messages
@@ -959,8 +966,42 @@ def _parse_tool_arguments(arguments: Any) -> Any:
     return arguments if arguments is not None else {}
 
 
-def _responses_output_items(chat_response: dict[str, Any]) -> list[dict[str, Any]]:
+def _sse_event(event: str, data: dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+async def _iter_sse_data_payloads(response: StreamingResponse):
+    buffer = ""
+    async for chunk in response.body_iterator:
+        buffer += chunk.decode("utf-8") if isinstance(chunk, bytes) else str(chunk)
+        while "\n\n" in buffer:
+            raw_event, buffer = buffer.split("\n\n", 1)
+            data_lines = [line[5:].strip() for line in raw_event.splitlines() if line.startswith("data:")]
+            if data_lines:
+                yield "\n".join(data_lines)
+    data_lines = [line[5:].strip() for line in buffer.splitlines() if line.startswith("data:")]
+    if data_lines:
+        yield "\n".join(data_lines)
+
+
+def _chat_request_uses_search(req: ChatRequest) -> bool:
+    _tools, tools_use_search = normalize_openai_tools_and_search(req.tools)
+    return bool(req.grounding or tools_use_search)
+
+
+def _responses_web_search_item() -> dict[str, Any]:
+    return {
+        "id": f"ws_{uuid.uuid4().hex[:24]}",
+        "type": "web_search_call",
+        "status": "completed",
+        "action": {"type": "search"},
+    }
+
+
+def _responses_output_items(chat_response: dict[str, Any], *, uses_search: bool = False) -> list[dict[str, Any]]:
     output: list[dict[str, Any]] = []
+    if uses_search:
+        output.append(_responses_web_search_item())
     text = _chat_text(chat_response)
     if text:
         output.append(
@@ -1031,6 +1072,9 @@ def _messages_tools_from_payload(tools: Any) -> Any:
         if tool.get("type") == "function" and isinstance(tool.get("function"), dict):
             converted.append(tool)
             continue
+        if is_search_tool_type(tool.get("type")):
+            converted.append({"type": tool.get("type")})
+            continue
         if tool.get("type") not in (None, "function"):
             converted.append(tool)
             continue
@@ -1053,11 +1097,177 @@ def _messages_tools_from_payload(tools: Any) -> Any:
     return converted or None
 
 
-async def handle_openai_responses(payload: dict[str, Any], client: AIStudioClient) -> dict[str, Any]:
+def _build_responses_streaming_response(
+    chat_req: ChatRequest,
+    client: AIStudioClient,
+    *,
+    uses_search: bool,
+    request: Request | None = None,
+) -> StreamingResponse:
+    async def stream_response():
+        response_id = f"resp_{uuid.uuid4().hex[:24]}"
+        created_at = int(time.time())
+        response_model = chat_req.model
+        response_base = {
+            "id": response_id,
+            "object": "response",
+            "created_at": created_at,
+            "status": "in_progress",
+            "model": response_model,
+            "output": [],
+        }
+        text_item_id = f"msg_{uuid.uuid4().hex[:24]}"
+        text_started = False
+        text_output_index: int | None = None
+        text_accumulator: list[str] = []
+        output_items: list[dict[str, Any]] = []
+        final_usage = None
+        next_output_index = 0
+
+        try:
+            yield _sse_event("response.created", {"type": "response.created", "response": response_base})
+            yield _sse_event("response.in_progress", {"type": "response.in_progress", "response": response_base})
+            if uses_search:
+                search_item = _responses_web_search_item()
+                search_index = next_output_index
+                next_output_index += 1
+                output_items.append(search_item)
+                yield _sse_event("response.output_item.added", {"type": "response.output_item.added", "output_index": search_index, "item": search_item})
+                yield _sse_event("response.output_item.done", {"type": "response.output_item.done", "output_index": search_index, "item": search_item})
+
+            chat_stream = await handle_chat(chat_req, client, request=request)
+            async for payload in _iter_sse_data_payloads(chat_stream):
+                if payload == "[DONE]":
+                    break
+                try:
+                    event = json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
+                if "error" in event:
+                    yield _sse_event("error", {"type": "error", "error": event["error"]})
+                    continue
+                choices = event.get("choices") or []
+                if not choices and isinstance(event.get("usage"), dict):
+                    final_usage = event["usage"]
+                    continue
+                if not choices:
+                    continue
+                choice = choices[0]
+                delta = choice.get("delta") or {}
+                text_delta = delta.get("content")
+                if text_delta:
+                    text_accumulator.append(text_delta)
+                    if not text_started:
+                        text_started = True
+                        text_output_index = next_output_index
+                        next_output_index += 1
+                        item = {
+                            "id": text_item_id,
+                            "type": "message",
+                            "status": "in_progress",
+                            "role": "assistant",
+                            "content": [],
+                        }
+                        yield _sse_event("response.output_item.added", {"type": "response.output_item.added", "output_index": text_output_index, "item": item})
+                        yield _sse_event(
+                            "response.content_part.added",
+                            {
+                                "type": "response.content_part.added",
+                                "item_id": text_item_id,
+                                "output_index": text_output_index,
+                                "content_index": 0,
+                                "part": {"type": "output_text", "text": "", "annotations": []},
+                            },
+                        )
+                    yield _sse_event(
+                        "response.output_text.delta",
+                        {
+                            "type": "response.output_text.delta",
+                            "item_id": text_item_id,
+                            "output_index": text_output_index,
+                            "content_index": 0,
+                            "delta": text_delta,
+                        },
+                    )
+                for tool_call in delta.get("tool_calls") or []:
+                    function = tool_call.get("function") if isinstance(tool_call, dict) else None
+                    if not isinstance(function, dict):
+                        continue
+                    item = {
+                        "id": f"fc_{uuid.uuid4().hex[:24]}",
+                        "type": "function_call",
+                        "status": "completed",
+                        "call_id": tool_call.get("id"),
+                        "name": function.get("name") or "unknown",
+                        "arguments": function.get("arguments") or "{}",
+                    }
+                    tool_output_index = next_output_index
+                    next_output_index += 1
+                    output_items.append(item)
+                    yield _sse_event("response.output_item.added", {"type": "response.output_item.added", "output_index": tool_output_index, "item": item})
+                    yield _sse_event("response.output_item.done", {"type": "response.output_item.done", "output_index": tool_output_index, "item": item})
+                if choice.get("finish_reason") is not None:
+                    break
+
+            if text_started:
+                text_value = "".join(text_accumulator)
+                text_item = {
+                    "id": text_item_id,
+                    "type": "message",
+                    "status": "completed",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": text_value, "annotations": []}],
+                }
+                output_items.append(text_item)
+                yield _sse_event(
+                    "response.output_text.done",
+                    {
+                        "type": "response.output_text.done",
+                        "item_id": text_item_id,
+                        "output_index": text_output_index,
+                        "content_index": 0,
+                        "text": text_value,
+                    },
+                )
+                yield _sse_event(
+                    "response.content_part.done",
+                    {
+                        "type": "response.content_part.done",
+                        "item_id": text_item_id,
+                        "output_index": text_output_index,
+                        "content_index": 0,
+                        "part": {"type": "output_text", "text": text_value, "annotations": []},
+                    },
+                )
+                yield _sse_event(
+                    "response.output_item.done",
+                    {
+                        "type": "response.output_item.done",
+                        "output_index": text_output_index,
+                        "item": text_item,
+                    },
+                )
+            completed = dict(response_base)
+            completed["status"] = "completed"
+            completed["usage"] = final_usage
+            completed["output"] = output_items
+            yield _sse_event("response.completed", {"type": "response.completed", "response": completed})
+            yield "data: [DONE]\n\n"
+        except Exception as exc:
+            message, error_type, code = _openai_stream_error_detail(exc)
+            yield _sse_event("error", {"type": "error", "error": {"message": message, "type": error_type, "code": code}})
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        stream_response(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+async def handle_openai_responses(payload: dict[str, Any], client: AIStudioClient, request: Request | None = None) -> dict[str, Any] | StreamingResponse:
     if not payload.get("model"):
         raise _bad_request("model is required", "invalid_request_error")
-    if payload.get("stream"):
-        raise _bad_request("/v1/responses streaming is not supported yet; use /v1/chat/completions for streaming", "invalid_request_error")
     response_format = payload.get("response_format")
     text_config = payload.get("text")
     if response_format is None and isinstance(text_config, dict):
@@ -1073,8 +1283,12 @@ async def handle_openai_responses(payload: dict[str, Any], client: AIStudioClien
             thinking=payload.get("thinking"),
             response_format=response_format,
         )
+        uses_search = _chat_request_uses_search(chat_req)
     except (ValueError, ValidationError) as exc:
         raise _bad_request(str(exc), "invalid_request_error") from exc
+    if payload.get("stream"):
+        chat_req.stream = True
+        return _build_responses_streaming_response(chat_req, client, uses_search=uses_search, request=request)
     chat_response = await handle_chat(chat_req, client)
     text = _chat_text(chat_response)
     return {
@@ -1083,7 +1297,7 @@ async def handle_openai_responses(payload: dict[str, Any], client: AIStudioClien
         "created_at": int(time.time()),
         "status": "completed",
         "model": chat_response.get("model", payload["model"]),
-        "output": _responses_output_items(chat_response),
+        "output": _responses_output_items(chat_response, uses_search=uses_search),
         "output_text": text,
         "usage": chat_response.get("usage"),
     }
@@ -1109,11 +1323,191 @@ def _messages_from_messages_payload(payload: dict[str, Any]) -> list[dict[str, A
     return messages
 
 
-async def handle_messages(payload: dict[str, Any], client: AIStudioClient) -> dict[str, Any]:
+def _anthropic_thinking_value(value: Any) -> str | bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        thinking_type = str(value.get("type") or "").lower()
+        if thinking_type in ("disabled", "none", "off"):
+            return "off"
+        return "high"
+    return None
+
+
+def _anthropic_stream_error(message: str, error_type: str = "api_error") -> str:
+    return _sse_event("error", {"type": "error", "error": {"type": error_type, "message": message}})
+
+
+def _build_messages_streaming_response(chat_req: ChatRequest, client: AIStudioClient, *, request: Request | None = None) -> StreamingResponse:
+    async def stream_response():
+        message_id = f"msg_{uuid.uuid4().hex[:24]}"
+        content_index = 0
+        active_block: str | None = None
+        final_usage = None
+        stop_reason = "end_turn"
+
+        def close_active_block() -> str:
+            nonlocal active_block, content_index
+            if active_block is None:
+                return ""
+            payload = _sse_event("content_block_stop", {"type": "content_block_stop", "index": content_index})
+            active_block = None
+            content_index += 1
+            return payload
+
+        try:
+            yield _sse_event(
+                "message_start",
+                {
+                    "type": "message_start",
+                    "message": {
+                        "id": message_id,
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [],
+                        "model": chat_req.model,
+                        "stop_reason": None,
+                        "stop_sequence": None,
+                        "usage": {"input_tokens": 0, "output_tokens": 0},
+                    },
+                },
+            )
+
+            chat_stream = await handle_chat(chat_req, client, request=request)
+            async for payload in _iter_sse_data_payloads(chat_stream):
+                if payload == "[DONE]":
+                    break
+                try:
+                    event = json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
+                if "error" in event:
+                    error = event["error"]
+                    yield _anthropic_stream_error(str(error.get("message") or error), str(error.get("type") or "api_error"))
+                    continue
+                choices = event.get("choices") or []
+                if not choices and isinstance(event.get("usage"), dict):
+                    final_usage = event["usage"]
+                    continue
+                if not choices:
+                    continue
+                choice = choices[0]
+                delta = choice.get("delta") or {}
+                thinking_delta = delta.get("thinking")
+                if thinking_delta:
+                    if active_block != "thinking":
+                        yield close_active_block()
+                        active_block = "thinking"
+                        yield _sse_event(
+                            "content_block_start",
+                            {
+                                "type": "content_block_start",
+                                "index": content_index,
+                                "content_block": {"type": "thinking", "thinking": "", "signature": ""},
+                            },
+                        )
+                    yield _sse_event(
+                        "content_block_delta",
+                        {"type": "content_block_delta", "index": content_index, "delta": {"type": "thinking_delta", "thinking": thinking_delta}},
+                    )
+                text_delta = delta.get("content")
+                if text_delta:
+                    if active_block != "text":
+                        yield close_active_block()
+                        active_block = "text"
+                        yield _sse_event(
+                            "content_block_start",
+                            {"type": "content_block_start", "index": content_index, "content_block": {"type": "text", "text": ""}},
+                        )
+                    yield _sse_event(
+                        "content_block_delta",
+                        {"type": "content_block_delta", "index": content_index, "delta": {"type": "text_delta", "text": text_delta}},
+                    )
+                for tool_call in delta.get("tool_calls") or []:
+                    function = tool_call.get("function") if isinstance(tool_call, dict) else None
+                    if not isinstance(function, dict):
+                        continue
+                    yield close_active_block()
+                    active_block = "tool_use"
+                    stop_reason = "tool_use"
+                    arguments = function.get("arguments") or "{}"
+                    yield _sse_event(
+                        "content_block_start",
+                        {
+                            "type": "content_block_start",
+                            "index": content_index,
+                            "content_block": {
+                                "type": "tool_use",
+                                "id": tool_call.get("id") or f"toolu_{uuid.uuid4().hex[:24]}",
+                                "name": function.get("name") or "unknown",
+                                "input": {},
+                            },
+                        },
+                    )
+                    yield _sse_event(
+                        "content_block_delta",
+                        {"type": "content_block_delta", "index": content_index, "delta": {"type": "input_json_delta", "partial_json": arguments}},
+                    )
+                    yield close_active_block()
+                finish_reason = choice.get("finish_reason")
+                if finish_reason == "tool_calls":
+                    stop_reason = "tool_use"
+                elif finish_reason is not None and stop_reason != "tool_use":
+                    stop_reason = "end_turn"
+                    break
+
+            yield close_active_block()
+            usage = final_usage or {}
+            yield _sse_event(
+                "message_delta",
+                {
+                    "type": "message_delta",
+                    "delta": {"stop_reason": stop_reason, "stop_sequence": None},
+                    "usage": {"output_tokens": usage.get("completion_tokens", 0)},
+                },
+            )
+            yield _sse_event("message_stop", {"type": "message_stop"})
+        except Exception as exc:
+            message, error_type, _code = _openai_stream_error_detail(exc)
+            yield _anthropic_stream_error(message, error_type)
+
+    return StreamingResponse(
+        stream_response(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+def handle_messages_count_tokens(payload: dict[str, Any]) -> dict[str, int]:
     if not payload.get("model"):
         raise _bad_request("model is required", "invalid_request_error")
-    if payload.get("stream"):
-        raise _bad_request("/v1/messages streaming is not supported yet; use /v1/chat/completions for streaming", "invalid_request_error")
+    normalized = None
+    try:
+        chat_req = ChatRequest(
+            model=str(payload["model"]),
+            messages=_messages_from_messages_payload(payload),
+        )
+        normalized = normalize_chat_request(chat_req.messages, chat_req.model)
+        total_tokens = _estimate_content_tokens(normalized["contents"])
+        if normalized.get("system_instruction"):
+            total_tokens += _estimate_text_tokens(normalized["system_instruction"])
+        if payload.get("tools"):
+            total_tokens += _estimate_text_tokens(json.dumps(payload["tools"], ensure_ascii=False))
+        return {"input_tokens": total_tokens}
+    except (ValueError, ValidationError) as exc:
+        raise _bad_request(str(exc), "invalid_request_error") from exc
+    finally:
+        if normalized is not None:
+            cleanup_files(normalized["cleanup_paths"])
+
+
+async def handle_messages(payload: dict[str, Any], client: AIStudioClient, request: Request | None = None) -> dict[str, Any] | StreamingResponse:
+    if not payload.get("model"):
+        raise _bad_request("model is required", "invalid_request_error")
     try:
         chat_req = ChatRequest(
             model=str(payload["model"]),
@@ -1122,10 +1516,15 @@ async def handle_messages(payload: dict[str, Any], client: AIStudioClient) -> di
             top_p=payload.get("top_p"),
             max_tokens=payload.get("max_tokens"),
             tools=_messages_tools_from_payload(payload.get("tools")),
+            thinking=_anthropic_thinking_value(payload.get("thinking")),
             response_format=payload.get("response_format"),
         )
+        _chat_request_uses_search(chat_req)
     except (ValueError, ValidationError) as exc:
         raise _bad_request(str(exc), "invalid_request_error") from exc
+    if payload.get("stream"):
+        chat_req.stream = True
+        return _build_messages_streaming_response(chat_req, client, request=request)
     chat_response = await handle_chat(chat_req, client)
     usage = chat_response.get("usage") or {}
     return {
@@ -1296,16 +1695,17 @@ async def handle_chat(req: ChatRequest, client: AIStudioClient, request: Request
                 normalized = normalize_chat_request(req.messages, req.model)
                 model = normalized["model"]
                 tmp_files = list(normalized["cleanup_paths"])
-                tools = normalize_openai_tools(req.tools)
+                tools, tools_use_search = normalize_openai_tools_and_search(req.tools)
                 has_image_input = bool(normalized["capture_images"])
                 file_input_mime_types = tuple(normalized.get("file_input_mime_types") or ())
+                uses_search = bool(req.grounding or tools_use_search)
                 validate_chat_capabilities(
                     model,
                     has_image_input=has_image_input,
                     has_file_input=bool(file_input_mime_types),
                     file_input_mime_types=file_input_mime_types,
-                    uses_tools=bool(req.tools),
-                    uses_search=bool(req.grounding),
+                    uses_tools=bool(tools),
+                    uses_search=uses_search,
                     uses_thinking=_explicit_thinking_enabled(req.thinking),
                     stream=req.stream,
                     uses_structured_output=response_format_overrides is not None,
@@ -1328,7 +1728,7 @@ async def handle_chat(req: ChatRequest, client: AIStudioClient, request: Request
                     attempt + 1,
                 )
 
-                if req.grounding:
+                if uses_search:
                     from aistudio_api.infrastructure.gateway.request_rewriter import TOOLS_TEMPLATES
                     tools = list(tools or [])
                     tools.append(TOOLS_TEMPLATES["google_search"])

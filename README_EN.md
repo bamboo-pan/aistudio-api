@@ -9,9 +9,9 @@ A local API proxy for Google AI Studio. It exposes browser-backed AI Studio acce
 - **OpenAI-compatible API**: `/v1/chat/completions`, `/v1/responses`, `/v1/messages`, `/v1/models`, `/v1/images/generations`
 - **Gemini-native API**: `/v1beta/models`, `:generateContent`, `:streamGenerateContent`, `:countTokens`
 - **WebUI**: built-in Playground, image studio, account management, and runtime stats
-- **Streaming**: SSE for chat completions and Gemini `streamGenerateContent`
+- **Streaming**: SSE for chat completions, Responses-compatible streams, Messages-compatible streams, and Gemini `streamGenerateContent`
 - **Multimodal input**: image input plus local inline files when model capabilities allow them
-- **Tools**: Google Search, Code Execution, function declarations, and tool-call mapping
+- **Tools**: Google Search, common OpenAI/Anthropic search-tool aliases, Code Execution, function declarations, and tool-call mapping
 - **Thinking**: supports `off`, `low`, `medium`, and `high` reasoning controls
 - **Structured output**: `response_format` / `json_schema` support with model-capability validation
 - **Image generation and editing**: OpenAI-compatible image generation, reference images, server-side image persistence, and image-session history
@@ -156,7 +156,7 @@ curl http://localhost:8080/v1/responses \
   }'
 ```
 
-`/v1/responses` and `/v1/messages` do not currently support their own streaming mode. Use `/v1/chat/completions` when streaming is required.
+`/v1/responses` supports a practical client-compatibility SSE subset: text deltas, function-call output items, search-call placeholder items, and completion events. Hosted OpenAI features such as background mode, hosted `file_search`, `computer_use`, and full conversation state are outside browser replay mode.
 
 ### Messages API
 
@@ -168,6 +168,30 @@ curl http://localhost:8080/v1/messages \
     "system": "Keep answers concise",
     "messages": [{"role": "user", "content": "Write a one-sentence project intro."}],
     "max_tokens": 512
+  }'
+```
+
+`/v1/messages` supports a practical Anthropic Messages subset: non-streaming text/`tool_use`, plus `message_start`, `content_block_*`, `message_delta`, and `message_stop` events when `stream: true` is set. `/v1/messages/count_tokens` is also available for Claude Code-style gateway probes. Prompt caching, Anthropic beta server tools, and exact thinking signatures are not simulated.
+
+### Client Compatibility Recommendations
+
+| Client | Recommended endpoint | Support notes |
+|--------|----------------------|---------------|
+| CherryStudio / OpenAI-compatible clients | `http://localhost:8080/v1`, Chat Completions | Basic chat, streaming, function tools, and search are available. Search accepts the project-specific `grounding: true` flag and common `web_search`, `web_search_preview`, and `browser_search` tool shapes, all mapped to AI Studio Google Search. |
+| OpenCode | Custom OpenAI-compatible provider using `/v1/chat/completions` | Prefer OpenCode's `@ai-sdk/openai-compatible` path; tool calls and streaming use Chat Completions. |
+| Claude Code | Anthropic Messages gateway `/v1/messages` | Supports basic Messages, streaming events, `tool_use`, and `/v1/messages/count_tokens`. If Claude Code model discovery does not show Gemini IDs, configure the model explicitly through Claude Code model environment variables. |
+| Codex / OpenAI Responses clients | `/v1/responses` | Supports non-streaming and streaming Responses subsets, JSON schema, function calls, and search mapping; hosted OpenAI tools and background Responses are not supported. |
+
+OpenAI-style search tool example:
+
+```bash
+curl http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gemini-3-flash-preview",
+    "messages": [{"role": "user", "content": "What are today's important tech news stories?"}],
+    "tools": [{"type": "web_search"}],
+    "stream": true
   }'
 ```
 
