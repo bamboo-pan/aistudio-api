@@ -41,6 +41,12 @@ class FakeTextArea:
             raise RuntimeError("Element is not attached to the DOM")
         self.page.filled_texts.append(value)
 
+    def click(self):
+        self.page.textarea_clicks += 1
+
+    def focus(self):
+        self.page.textarea_focuses += 1
+
 
 class FakeButton:
     def __init__(self, page: "FakePage"):
@@ -49,6 +55,19 @@ class FakeButton:
     def click(self):
         self.page.clicks += 1
         self.page.trigger_generate_content_request()
+
+    def evaluate(self, script: str, *args):
+        return self.page.button_aria_disabled
+
+
+class FakeKeyboard:
+    def __init__(self, page: "FakePage"):
+        self.page = page
+
+    def press(self, key: str):
+        self.page.keyboard_presses.append(key)
+        if self.page.keyboard_triggers_send:
+            self.page.trigger_generate_content_request()
 
 
 class FakePage:
@@ -62,9 +81,14 @@ class FakePage:
         body: str = "",
         ready_after_waits: int | None = None,
         install_results: list[str] | None = None,
+        button_selectors: set[str] | None = None,
         goto_redirect_url: str | None = None,
         goto_error: Exception | None = None,
         redirect_on_next_fill: bool = False,
+        keyboard_triggers_send: bool = False,
+        generate_content_url: str = "https://aistudio.google.com/_/BardChatUi/data/batchexecute/GenerateContent",
+        botguard_on_send: bool = False,
+        button_aria_disabled: bool = False,
     ):
         self.url = url
         self.has_default_makersuite = has_default_makersuite
@@ -73,13 +97,21 @@ class FakePage:
         self.body = body
         self.ready_after_waits = ready_after_waits
         self.install_results = list(install_results or [])
+        self.button_selectors = {"button:has-text('Run')"} if button_selectors is None else button_selectors
         self.goto_redirect_url = goto_redirect_url
         self.goto_error = goto_error
         self.redirect_on_next_fill = redirect_on_next_fill
+        self.keyboard_triggers_send = keyboard_triggers_send
+        self.botguard_on_send = botguard_on_send
+        self.button_aria_disabled = button_aria_disabled
         self.goto_urls: list[str] = []
         self.wait_calls: list[int] = []
         self.filled_texts: list[str] = []
+        self.textarea_clicks = 0
+        self.textarea_focuses = 0
         self.clicks = 0
+        self.keyboard_presses: list[str] = []
+        self.has_bg_service = False
         self.route_handlers: list[tuple[str, object]] = []
         self.unroute_calls: list[str] = []
         self.routed_requests: list[FakeRoute] = []
@@ -88,6 +120,8 @@ class FakePage:
             ensure_ascii=False,
         )
         self.generate_content_headers = {"authorization": "Bearer token", "content-type": "application/json"}
+        self.generate_content_url = generate_content_url
+        self.keyboard = FakeKeyboard(self)
 
     def goto(self, url: str, **kwargs):
         self.url = self.goto_redirect_url or url
@@ -102,18 +136,22 @@ class FakePage:
             self.has_textarea = True
 
     def evaluate(self, script: str, *args):
+        if script == "mw:!!window.__bg_service":
+            return self.has_bg_service
         if "__bg_hooked" in script and "snapKey" in script:
             return self.install_results.pop(0) if self.install_results else "hooked:snapshotKey"
         if "window.default_MakerSuite" in script:
             return self.has_default_makersuite
         if "document.body" in script:
             return self.body
+        if "HTMLTextAreaElement.prototype" in script:
+            return True
         return None
 
     def query_selector(self, selector: str):
         if selector == "textarea" and self.has_textarea:
             return FakeTextArea(self)
-        if selector == "button:has-text('Run')":
+        if selector in self.button_selectors:
             return FakeButton(self)
         return None
 
@@ -128,8 +166,10 @@ class FakePage:
         self.route_handlers = [(p, h) for p, h in self.route_handlers if p != pattern or h is not handler]
 
     def trigger_generate_content_request(self):
+        if self.botguard_on_send:
+            self.has_bg_service = True
         request = FakeRequest(
-            "https://aistudio.google.com/_/BardChatUi/data/batchexecute/GenerateContent",
+            self.generate_content_url,
             self.generate_content_body,
             self.generate_content_headers,
         )
@@ -375,6 +415,56 @@ def test_install_hook_failure_reports_page_diagnostics():
     assert "body=Chat shell visible without runtime" in message
 
 
+def test_click_run_button_uses_alternate_aria_selector():
+    page = FakePage(
+        url=AI_STUDIO_URL,
+        has_textarea=True,
+        button_selectors={"button[aria-label*='Send' i]"},
+    )
+    session = BrowserSession(port=0)
+
+    assert session._click_run_button_sync(page) is True
+
+    assert page.clicks == 1
+    assert len(page.routed_requests) == 1
+
+
+def test_click_run_button_falls_back_to_keyboard_shortcut():
+    page = FakePage(
+        url=AI_STUDIO_URL,
+        has_textarea=True,
+        button_selectors=set(),
+        keyboard_triggers_send=True,
+    )
+    session = BrowserSession(port=0)
+
+    assert session._click_run_button_sync(page) is False
+
+    assert page.textarea_clicks == 1
+    assert page.keyboard_presses == ["Control+Enter"]
+    assert len(page.routed_requests) == 1
+
+
+def test_click_run_button_skips_aria_disabled_button():
+    page = FakePage(url=AI_STUDIO_URL, has_textarea=True, button_aria_disabled=True)
+    session = BrowserSession(port=0)
+
+    assert session._click_run_button_sync(page) is False
+
+    assert page.clicks == 0
+    assert page.keyboard_presses == ["Control+Enter"]
+
+
+def test_has_run_button_accepts_alternate_selector():
+    page = FakePage(
+        url=AI_STUDIO_URL,
+        button_selectors={"button[aria-label*='Run' i]"},
+    )
+    session = BrowserSession(port=0)
+
+    assert session._has_run_button_sync(page) is True
+
+
 def test_detect_tier_for_auth_file_does_not_require_active_auth(monkeypatch):
     session = TierDetectionSessionForTest()
 
@@ -545,8 +635,61 @@ def test_capture_template_uses_request_route_and_aborts_dummy_generation():
     assert len(page.routed_requests) == 1
     assert page.routed_requests[0].aborted is True
     assert page.routed_requests[0].continued is False
-    assert page.unroute_calls == ["**/*GenerateContent*"]
+    assert page.unroute_calls == ["**/*"]
     assert session.wait_until_idle_calls == 1
+
+
+def test_capture_template_accepts_batchexecute_url_without_generatecontent_marker():
+    page = FakePage(
+        url=AI_STUDIO_URL,
+        has_default_makersuite=True,
+        has_textarea=True,
+        generate_content_url="https://aistudio.google.com/_/BardChatUi/data/batchexecute?rpcids=abc123",
+    )
+    page.generate_content_body = json.dumps(
+        ["models/gemini-3.1-flash-lite", {"text": "template", "payload": "x" * 120}, None, None, "snapshot"],
+        ensure_ascii=False,
+    )
+    session = TemplateCaptureSessionForTest(page)
+
+    captured = session._capture_template_sync("gemini-3.1-flash-lite")
+
+    assert captured["url"] == "https://aistudio.google.com/_/BardChatUi/data/batchexecute?rpcids=abc123"
+    assert captured["body"] == page.generate_content_body
+    assert page.routed_requests[0].aborted is True
+    assert page.unroute_calls == ["**/*"]
+
+
+def test_capture_template_accepts_current_generatecontent_rpc_host():
+    page = FakePage(
+        url=AI_STUDIO_URL,
+        has_default_makersuite=True,
+        has_textarea=True,
+        generate_content_url="https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GenerateContent",
+    )
+    session = TemplateCaptureSessionForTest(page)
+
+    captured = session._capture_template_sync("gemini-3-flash-preview")
+
+    assert captured["url"] == page.generate_content_url
+    assert captured["body"] == page.generate_content_body
+    assert page.routed_requests[0].aborted is True
+
+
+def test_text_capture_reuses_request_from_botguard_service_capture():
+    page = FakePage(url=AI_STUDIO_URL, has_default_makersuite=True, has_textarea=True, botguard_on_send=True)
+    session = BrowserSessionForTest(page)
+
+    captured = session._capture_template_sync("gemini-3.1-flash-lite")
+
+    assert captured == {
+        "url": "https://aistudio.google.com/_/BardChatUi/data/batchexecute/GenerateContent",
+        "headers": page.generate_content_headers,
+        "body": page.generate_content_body,
+    }
+    assert page.filled_texts == ["1"]
+    assert page.routed_requests[0].continued is True
+    assert page.unroute_calls == ["**/*"]
 
 
 def test_capture_template_recovers_when_page_redirects_to_docs_during_fill():
@@ -564,4 +707,4 @@ def test_capture_template_recovers_when_page_redirects_to_docs_during_fill():
     assert page.filled_texts == ["template"]
     assert session.goto_calls == 1
     assert session.install_calls == 1
-    assert page.unroute_calls == ["**/*GenerateContent*", "**/*GenerateContent*"]
+    assert page.unroute_calls == ["**/*", "**/*"]

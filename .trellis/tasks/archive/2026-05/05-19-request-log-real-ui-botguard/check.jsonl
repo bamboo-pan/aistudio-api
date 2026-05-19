@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend quality checklist entry point."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Quality and validation expectations for browser-backed API/frontend behavior."}
+{"file":".trellis/tasks/05-19-request-log-real-ui-botguard/research/failure-analysis.md","reason":"Ensure verification covers the real failure path and not only fake sessions."}

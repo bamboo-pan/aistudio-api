@@ -581,3 +581,36 @@ Added optional outbound AI Studio request logging with backend APIs, static UI, 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 18: Fix request log real UI BotGuard capture
+
+**Date**: 2026-05-19
+**Task**: Fix request log real UI BotGuard capture
+**Branch**: `fix/real-ui-request-log-botguard`
+
+### Summary
+
+Fixed browser-backed AI Studio GenerateContent capture for current RPC host, added BotGuard/UI regression coverage, restored AGENTS.md real API/UI testing requirement, and validated with Windows unit tests plus WSL API and frontend UI smokes.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2cd6bb2` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
