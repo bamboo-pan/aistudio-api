@@ -152,7 +152,7 @@ if payload.get("stream"):
 
 - OpenAI-compatible behavior must remain the default interface mode.
 - The built-in WebUI must expose one user-facing interface-mode dropdown on Playground and image generation pages, with these options: OpenAI compatible, OpenAI Responses, Gemini, and Claude.
-- The built-in WebUI must not expose manual model-selection dropdowns in Playground or image generation. Model IDs remain internal state and must be selected automatically from capability metadata.
+- The built-in WebUI must expose visible model-selection dropdowns in Playground and image generation. Interface mode chooses the protocol/route; model selectors choose the concrete text/image model within the current model list.
 - Model-list selection may call `GET /v1/models` or `GET /v1beta/models`, but the UI's internal model shape must still include `id` and `capabilities` so controls do not guess from raw API payloads at render time.
 - OpenAI compatible mode sends Playground chat to `/v1/chat/completions`.
 - OpenAI Responses mode sends Playground chat to `/v1/responses` and translates Responses output back to the existing transcript shape.
@@ -168,10 +168,10 @@ if payload.get("stream"):
 - Invalid stored interface preference -> fall back to `openai` and keep loading the UI.
 - Legacy `aistudio.apiSelection.v1` preferences -> migrate best-effort to the unified interface mode, then use `openai` if the legacy value is not a valid mode.
 - Gemini model list lacks project-specific capabilities -> infer conservative capabilities from known model id patterns and `supportedGenerationMethods`.
-- Selected internal model is missing after switching model-list API or restoring an old session -> clear the previous model and select the first available text/image-capable model as appropriate.
+- Selected model is missing after switching model-list API or restoring an old session -> clear the previous model and select the first available text/image-capable model as appropriate, while keeping the visible selector rendered with an empty-list message if no compatible model exists.
 - Gemini chat stream event has `error` -> show the error on the assistant message and continue stream cleanup.
 - Responses or Claude stream event has `error` -> show the error on the assistant message and continue stream cleanup.
-- Image generation has no image-capable model in the current model list -> disable submission with a clear in-page hint; do not render a broken model picker.
+- Image generation has no image-capable model in the current model list -> disable submission with a clear in-page hint and render the model picker with an empty-list message.
 
 ### 5. Good/Base/Bad Cases
 
@@ -180,14 +180,15 @@ if payload.get("stream"):
 - Good: User switches interface mode to Claude; Playground calls `/v1/messages` and parses text content blocks into the transcript.
 - Good: User switches chat to Gemini with Stream enabled; the frontend calls `/v1beta/models/{model}:streamGenerateContent` and parses Gemini SSE chunks into the transcript.
 - Base: User keeps defaults; existing `/v1/models`, `/v1/chat/completions`, and `/v1/images/generations` behavior is unchanged.
-- Bad: A visible model selector remains in Playground or image generation after interface mode selection is introduced.
+- Bad: Playground or image generation hides the model selector, leaving users unable to change models even though multiple compatible models exist.
 - Bad: A selector label implies provider-native image generation, but clicking generate sends an incompatible or nonexistent provider-native image request.
 - Bad: Gemini model list is displayed raw and the rest of the UI loses capability gating for files, search, thinking, or image models.
 
 ### 6. Tests Required
 
 - Unit/static: frontend exposes one interface-mode selector with OpenAI compatible, OpenAI Responses, Gemini, and Claude options.
-- Unit/static: frontend does not expose Playground/image model selection dropdowns.
+- Unit/static: frontend exposes Playground text-model, image-generation model, and prompt-optimizer model dropdowns with empty-list fallback text.
+- Unit/static: frontend interface-mode selector has a non-empty default label in markup and Alpine-bound state.
 - Unit/static: interface-mode selector persists in `localStorage` and defaults to OpenAI-compatible endpoints.
 - Unit/static: legacy `aistudio.apiSelection.v1` fallback remains safe.
 - Unit/static: Gemini model-list normalization and Gemini chat endpoint/body helpers are present.

@@ -16,7 +16,9 @@ def test_static_frontend_uses_model_capabilities_for_controls():
     assert "if(this.controlAvailable('thinking')) body.thinking=this.cfg.thinking" in app_js
     assert "this.cfg.thinking!=='off') body.thinking" not in app_js
     assert "ensureTextModelDefaults" in app_js
-    assert "selectModel(m.id)" not in index_html
+    assert "selectModel(m.id)" in index_html
+    assert "x-for=\"m in textModels\"" in index_html
+    assert "暂无文本模型" in index_html
     assert "controlAvailable('thinking')" in index_html
     assert "controlAvailable('stream')" in index_html
 
@@ -54,7 +56,7 @@ def test_static_frontend_exposes_configurable_api_interfaces():
     assert "this.fetchJson(this.imageGenerationEndpoint()" in app_js
     assert "接口模式" in index_html
     assert "interfaceModeOptions" in index_html
-    assert "interfaceModeLabel" in index_html
+    assert "interfaceModeLabel||'OpenAI 兼容'" in index_html
     assert "selectInterfaceMode(option.id)" in index_html
     assert "模型接口" not in index_html
     assert "聊天接口" not in index_html
@@ -65,8 +67,11 @@ def test_static_frontend_exposes_configurable_api_interfaces():
     assert "selectModelApi(option.id)" not in index_html
     assert "selectChatApi(option.id)" not in index_html
     assert "selectImageApi(option.id)" not in index_html
-    assert "selectModel(m.id)" not in index_html
-    assert "selectImageModel(m.id)" not in index_html
+    assert "selectModel(m.id)" in index_html
+    assert "selectImageModel(m.id)" in index_html
+    assert "selectPromptOptimizerModel(m.id)" in index_html
+    assert "openSelect==='imageModel'" in index_html
+    assert "aria-disabled=\"true\" x-show=\"!imageModels.length\"" in index_html
     assert "api-toolbar" in style_css
     assert ".api-control" in style_css
 
@@ -276,7 +281,7 @@ def test_static_frontend_exposes_image_upload_and_generation_page():
     assert "chatFileUploadEnabled" in app_js
     assert "applyRouteHash" in app_js
     assert "hashchange" in app_js
-    assert "selectImageModel(m.id)" not in index_html
+    assert "selectImageModel(m.id)" in index_html
     assert "x-model.number=\"imageCount\"" in index_html
     assert ":min=\"imageCountMin\"" in index_html
     assert ":max=\"imageCountMax\"" in index_html
@@ -332,7 +337,8 @@ def test_static_frontend_exposes_image_prompt_templates_and_optimizer():
     assert "promptOptionApplied" in app_js
     assert "风格模板" in index_html
     assert "提示词优化" in index_html
-    assert "优化模型" not in index_html
+    assert "优化模型" in index_html
+    assert "selectPromptOptimizerModel(m.id)" in index_html
     assert "@click=\"optimizeImagePrompt()\"" in index_html
     assert "@click=\"applyImagePromptOption(option)\"" in index_html
     assert "imagePromptOptions" in index_html
@@ -395,7 +401,7 @@ def test_static_frontend_custom_select_supports_keyboard_and_scrollable_image_me
     assert "Spacebar" in app_js
     assert "scrollIntoView({block:'nearest'})" in app_js
     assert "x-for=\"s in imageSizes\"" in index_html
-    assert "aria-disabled=\"true\" x-show=\"!imageModels.length\"" not in index_html
+    assert "aria-disabled=\"true\" x-show=\"!imageModels.length\"" in index_html
     assert "overscroll-behavior:contain" in style_css
     assert ".cselect-opt:hover,.cselect-opt.highlighted" in style_css
     assert "引导式 Studio" in index_html

@@ -45,7 +45,7 @@
       <div class="api-control" x-show="view==='chat'||view==='images'" x-cloak>
         <span>接口模式</span>
         <div class="cselect api-select" :class="{open:openSelect==='interfaceMode'}" @click.stop>
-          <div class="cselect-btn" @click="toggleSelect('interfaceMode',$event)" tabindex="0"><span x-text="interfaceModeLabel"></span><span class="arrow"></span></div>
+          <div class="cselect-btn" @click="toggleSelect('interfaceMode',$event)" tabindex="0"><span x-text="interfaceModeLabel||'OpenAI 兼容'">OpenAI 兼容</span><span class="arrow"></span></div>
           <div class="cselect-menu">
             <template x-for="option in interfaceModeOptions" :key="option.id">
               <div class="cselect-opt" :class="{active:interfaceMode===option.id}" @click="selectInterfaceMode(option.id)" x-text="option.label"></div>
@@ -66,6 +66,15 @@
             <h1>模型调试工作台</h1>
           </div>
           <div class="playground-actions">
+            <div class="cselect cselect-lg playground-model-select" :class="{open:openSelect==='model'}" @click.stop>
+              <div class="cselect-btn" @click="toggleSelect('model',$event)" tabindex="0"><span x-text="model||'选择模型'">选择模型</span><span class="arrow"></span></div>
+              <div class="cselect-menu">
+                <template x-for="m in textModels" :key="m.id">
+                  <div class="cselect-opt" :class="{active:model===m.id}" @click="selectModel(m.id)" x-text="m.id"></div>
+                </template>
+                <div class="cselect-opt" aria-disabled="true" x-show="!textModels.length">暂无文本模型</div>
+              </div>
+            </div>
             <span class="playground-status-pill" :class="{'is-live':busy}" x-text="chatStatusText"></span>
             <button class="btn btn-sm" :disabled="busy||!msgs.length" @click="clearChat()">清空会话</button>
           </div>
@@ -276,7 +285,8 @@
           </div>
           <div class="image-status-strip">
             <span class="image-status-pill" :class="{'is-editing':imageReferenceCount}" x-text="imageReferenceCount?'编辑模式':'生成模式'"></span>
-            <span class="image-status-pill" x-text="interfaceModeLabel"></span>
+            <span class="image-status-pill" x-text="interfaceModeLabel||'OpenAI 兼容'">OpenAI 兼容</span>
+            <span class="image-status-pill" x-text="imageModel||'未选择模型'">未选择模型</span>
             <span class="image-status-pill" x-text="imageRunSummary"></span>
           </div>
         </div>
@@ -320,6 +330,16 @@
                   <button class="btn btn-sm btn-primary" :disabled="!imagePromptOptimizeCanSubmit" @click="optimizeImagePrompt()" x-text="imagePromptOptimizing?'优化中':'优化提示词'"></button>
                 </div>
                 <div class="optimizer-controls">
+                  <div class="image-control">
+                    <div class="control-label">优化模型</div>
+                    <div class="cselect image-select" :class="{open:openSelect==='imagePromptOptimizerModel'}" @click.stop>
+                      <div class="cselect-btn" @click="toggleSelect('imagePromptOptimizerModel',$event)" tabindex="0"><span x-text="imagePromptOptimizerModel||'选择模型'">选择模型</span><span class="arrow"></span></div>
+                      <div class="cselect-menu">
+                        <template x-for="m in textModels" :key="m.id"><div class="cselect-opt" :class="{active:imagePromptOptimizerModel===m.id}" @click="selectPromptOptimizerModel(m.id)" x-text="m.id"></div></template>
+                        <div class="cselect-opt" aria-disabled="true" x-show="!textModels.length">暂无文本模型</div>
+                      </div>
+                    </div>
+                  </div>
                   <div class="image-control">
                     <div class="control-label">思考</div>
                     <div class="cselect image-select" :class="{open:openSelect==='imagePromptOptimizerThinking'}" @click.stop>
@@ -388,6 +408,16 @@
                 </div>
               </div>
               <div class="image-controls image-studio-controls">
+                <div class="image-control image-model-control">
+                  <div class="control-label">模型</div>
+                  <div class="cselect image-select" :class="{open:openSelect==='imageModel'}" @click.stop>
+                    <div class="cselect-btn" @click="toggleSelect('imageModel',$event)" tabindex="0"><span x-text="imageModel||'选择模型'">选择模型</span><span class="arrow"></span></div>
+                    <div class="cselect-menu">
+                      <template x-for="m in imageModels" :key="m.id"><div class="cselect-opt" :class="{active:imageModel===m.id}" @click="selectImageModel(m.id)" x-text="m.id"></div></template>
+                      <div class="cselect-opt" aria-disabled="true" x-show="!imageModels.length">暂无图像模型</div>
+                    </div>
+                  </div>
+                </div>
                 <div class="image-control">
                   <div class="control-label">尺寸</div>
                   <div class="cselect image-select" :class="{open:openSelect==='imageSize'}" @click.stop>

@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 15
+- **Total Sessions**: 16
 - **Last Active**: 2026-05-19
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~517 | Active |
+| `journal-1.md` | ~550 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 16 | 2026-05-19 | Restore frontend model selectors | `9b7ef9e` | `fix/frontend-model-selectors-regression` |
 | 15 | 2026-05-19 | Verify OpenCode interface compatibility | `9992802` | `feature/opencode-interface-verification` |
 | 14 | 2026-05-18 | Mature client compatibility support | `c345497` | `feature/mature-client-compat` |
 | 13 | 2026-05-18 | Clarify account pool status and load | `c82d8c8` | `feature/account-pool-status-load` |
