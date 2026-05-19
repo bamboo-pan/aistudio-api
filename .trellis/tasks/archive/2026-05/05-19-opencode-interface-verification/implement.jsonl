@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend API deployment and compatibility verification touches server routes and quality expectations."}
+{"file":".trellis/tasks/05-19-opencode-interface-verification/research/opencode-temporary-config.md","reason":"Defines the non-destructive OpenCode validation approach and temporary provider config."}
