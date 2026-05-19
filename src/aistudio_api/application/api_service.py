@@ -957,6 +957,15 @@ def _chat_tool_calls(chat_response: dict[str, Any]) -> list[dict[str, Any]]:
     return tool_calls if isinstance(tool_calls, list) else []
 
 
+def _chat_thinking(chat_response: dict[str, Any]) -> str:
+    message = _chat_message(chat_response)
+    for key in ("thinking", "reasoning_content", "reasoning"):
+        value = message.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
 def _parse_tool_arguments(arguments: Any) -> Any:
     if isinstance(arguments, str):
         try:
@@ -998,10 +1007,23 @@ def _responses_web_search_item() -> dict[str, Any]:
     }
 
 
+def _responses_reasoning_item(thinking: str, *, status: str = "completed") -> dict[str, Any]:
+    return {
+        "id": f"rs_{uuid.uuid4().hex[:24]}",
+        "type": "reasoning",
+        "status": status,
+        "content": [{"type": "reasoning_text", "text": thinking}],
+        "summary": [],
+    }
+
+
 def _responses_output_items(chat_response: dict[str, Any], *, uses_search: bool = False) -> list[dict[str, Any]]:
     output: list[dict[str, Any]] = []
     if uses_search:
         output.append(_responses_web_search_item())
+    thinking = _chat_thinking(chat_response)
+    if thinking:
+        output.append(_responses_reasoning_item(thinking))
     text = _chat_text(chat_response)
     if text:
         output.append(
@@ -1117,9 +1139,13 @@ def _build_responses_streaming_response(
             "output": [],
         }
         text_item_id = f"msg_{uuid.uuid4().hex[:24]}"
+        thinking_item_id = f"rs_{uuid.uuid4().hex[:24]}"
         text_started = False
+        thinking_started = False
         text_output_index: int | None = None
+        thinking_output_index: int | None = None
         text_accumulator: list[str] = []
+        thinking_accumulator: list[str] = []
         output_items: list[dict[str, Any]] = []
         final_usage = None
         next_output_index = 0
@@ -1154,6 +1180,33 @@ def _build_responses_streaming_response(
                     continue
                 choice = choices[0]
                 delta = choice.get("delta") or {}
+                thinking_delta = delta.get("thinking") or delta.get("reasoning_content") or delta.get("reasoning")
+                if thinking_delta:
+                    thinking_accumulator.append(thinking_delta)
+                    if not thinking_started:
+                        thinking_started = True
+                        thinking_output_index = next_output_index
+                        next_output_index += 1
+                        item = {
+                            "id": thinking_item_id,
+                            "type": "reasoning",
+                            "status": "in_progress",
+                            "content": [],
+                            "summary": [],
+                        }
+                        yield _sse_event(
+                            "response.output_item.added",
+                            {"type": "response.output_item.added", "output_index": thinking_output_index, "item": item},
+                        )
+                    yield _sse_event(
+                        "response.reasoning.delta",
+                        {
+                            "type": "response.reasoning.delta",
+                            "item_id": thinking_item_id,
+                            "output_index": thinking_output_index,
+                            "delta": thinking_delta,
+                        },
+                    )
                 text_delta = delta.get("content")
                 if text_delta:
                     text_accumulator.append(text_delta)
@@ -1209,6 +1262,34 @@ def _build_responses_streaming_response(
                 if choice.get("finish_reason") is not None:
                     break
 
+            if thinking_started:
+                thinking_value = "".join(thinking_accumulator)
+                thinking_item = {
+                    "id": thinking_item_id,
+                    "type": "reasoning",
+                    "status": "completed",
+                    "content": [{"type": "reasoning_text", "text": thinking_value}],
+                    "summary": [],
+                }
+                output_items.append(thinking_item)
+                yield _sse_event(
+                    "response.reasoning.done",
+                    {
+                        "type": "response.reasoning.done",
+                        "item_id": thinking_item_id,
+                        "output_index": thinking_output_index,
+                        "text": thinking_value,
+                    },
+                )
+                yield _sse_event(
+                    "response.output_item.done",
+                    {
+                        "type": "response.output_item.done",
+                        "output_index": thinking_output_index,
+                        "item": thinking_item,
+                    },
+                )
+
             if text_started:
                 text_value = "".join(text_accumulator)
                 text_item = {
@@ -1251,6 +1332,7 @@ def _build_responses_streaming_response(
             completed["status"] = "completed"
             completed["usage"] = final_usage
             completed["output"] = output_items
+            completed["thinking"] = "".join(thinking_accumulator)
             yield _sse_event("response.completed", {"type": "response.completed", "response": completed})
             yield "data: [DONE]\n\n"
         except Exception as exc:
@@ -1291,6 +1373,7 @@ async def handle_openai_responses(payload: dict[str, Any], client: AIStudioClien
         return _build_responses_streaming_response(chat_req, client, uses_search=uses_search, request=request)
     chat_response = await handle_chat(chat_req, client)
     text = _chat_text(chat_response)
+    thinking = _chat_thinking(chat_response)
     return {
         "id": f"resp_{uuid.uuid4().hex[:24]}",
         "object": "response",
@@ -1299,6 +1382,7 @@ async def handle_openai_responses(payload: dict[str, Any], client: AIStudioClien
         "model": chat_response.get("model", payload["model"]),
         "output": _responses_output_items(chat_response, uses_search=uses_search),
         "output_text": text,
+        "thinking": thinking,
         "usage": chat_response.get("usage"),
     }
 

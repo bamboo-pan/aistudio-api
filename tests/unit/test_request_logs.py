@@ -2,11 +2,16 @@ import asyncio
 import json
 from types import SimpleNamespace
 
+import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from aistudio_api.api.app import app
 from aistudio_api.api.dependencies import get_runtime_state
+from aistudio_api.api.dependencies import get_client
+from aistudio_api.api.state import runtime_state
 from aistudio_api.api.routes_request_logs import router as request_logs_router
+from aistudio_api.domain.models import Candidate, ModelOutput
 from aistudio_api.infrastructure.gateway.capture import CapturedRequest
 from aistudio_api.infrastructure.gateway.replay import RequestReplayService
 from aistudio_api.infrastructure.gateway.streaming import StreamingGateway
@@ -65,6 +70,9 @@ def test_request_log_store_persists_toggle_and_complete_request(tmp_path):
     )
 
     assert entry is not None
+    assert entry["chain_id"] == entry["id"]
+    assert entry["direction"] == "outbound"
+    assert entry["phase"] == "upstream_request"
     assert store.count() == 1
     summary = store.list()[0]
     assert summary["id"] == entry["id"]
@@ -76,6 +84,13 @@ def test_request_log_store_persists_toggle_and_complete_request(tmp_path):
     assert detail["body_raw"] == '{"hello":[1,true]}'
     assert detail["body_json"] == {"hello": [1, True]}
     assert detail["body_parse_error"] is None
+
+    updated = store.attach_response(entry["id"], status_code=200, response_headers={"content-type": "application/json"}, response_body='{"ok":true}', elapsed_ms=12.3456)
+    assert updated["status_code"] == 200
+    assert updated["elapsed_ms"] == 12.346
+    assert updated["response_headers"] == {"content-type": "application/json"}
+    assert updated["response_body_json"] == {"ok": True}
+    assert updated["response_body_parse_error"] is None
 
 
 def test_request_log_routes_manage_status_list_and_detail(tmp_path):
@@ -111,13 +126,20 @@ def test_replay_logs_actual_outbound_request_when_enabled(tmp_path):
 
     assert status == 200
     assert raw == b"ok"
-    detail = store.get(store.list()[0]["id"])
+    entries = {item["phase"]: store.get(item["id"]) for item in store.list()}
+    detail = entries["upstream_request"]
     assert detail["kind"] == "generate_content"
     assert detail["model"] == "gemini-test"
     assert detail["transport"] == "browser"
     assert detail["headers"] == {"content-type": "application/json+protobuf", "cookie": "SID=secret"}
     assert detail["captured_headers"]["content-length"] == "999"
     assert detail["body_json"] == {"rewritten": True}
+    assert detail["status_code"] == 200
+    assert detail["response_body_raw"] == "ok"
+    response_detail = entries["upstream_response"]
+    assert response_detail["chain_id"] == detail["chain_id"]
+    assert response_detail["status_code"] == 200
+    assert response_detail["response_body_raw"] == "ok"
 
 
 def test_replay_does_not_log_when_disabled(tmp_path):
@@ -145,11 +167,74 @@ def test_streaming_logs_actual_outbound_request_when_enabled(tmp_path):
     )
 
     assert events == [("usage", None), ("done", None)]
-    detail = store.get(store.list()[0]["id"])
+    entries = {item["phase"]: store.get(item["id"]) for item in store.list()}
+    detail = entries["upstream_request"]
     assert detail["kind"] == "stream_generate_content"
     assert detail["model"] == "gemini-stream"
     assert detail["transport"] == "browser_stream"
     assert json.loads(detail["body_raw"])[0] == "models/gemini-stream"
+    assert detail["status_code"] == 200
+    response_detail = entries["upstream_response"]
+    assert response_detail["chain_id"] == detail["chain_id"]
+    assert response_detail["status_code"] == 200
+
+
+def test_api_exchange_logging_records_correlated_client_and_upstream_entries(tmp_path):
+    store = RequestLogStore(tmp_path)
+    store.set_enabled(True)
+
+    class FakeClient:
+        async def generate_content(self, **kwargs):
+            runtime_state.request_log_store.save(
+                kind="generate_content",
+                model=kwargs.get("model"),
+                method="POST",
+                url="https://aistudio.google.com/rpc",
+                headers={"content-type": "application/json"},
+                body='{"outbound":true}',
+                transport="fake",
+            )
+            return ModelOutput(candidates=[Candidate(text="ok")], usage={"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+
+    async def send() -> httpx.Response:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as http_client:
+            return await http_client.post(
+                "/v1/chat/completions",
+                json={"model": "gemini-3-flash-preview", "messages": [{"role": "user", "content": "hello"}]},
+            )
+
+    old_store = runtime_state.request_log_store
+    old_busy_lock = runtime_state.busy_lock
+    old_account_service = runtime_state.account_service
+    old_rotator = runtime_state.rotator
+    runtime_state.request_log_store = store
+    runtime_state.busy_lock = asyncio.Semaphore(3)
+    runtime_state.account_service = None
+    runtime_state.rotator = None
+    app.dependency_overrides[get_client] = lambda: FakeClient()
+    try:
+        response = asyncio.run(send())
+    finally:
+        app.dependency_overrides.pop(get_client, None)
+        runtime_state.request_log_store = old_store
+        runtime_state.busy_lock = old_busy_lock
+        runtime_state.account_service = old_account_service
+        runtime_state.rotator = old_rotator
+
+    assert response.status_code == 200
+    entries = [store.get(item["id"]) for item in store.list()]
+    phases = {entry["phase"] for entry in entries}
+    assert {"client_request", "upstream_request", "client_response"}.issubset(phases)
+    chain_ids = {entry["chain_id"] for entry in entries}
+    assert len(chain_ids) == 1
+    client_request = next(entry for entry in entries if entry["phase"] == "client_request")
+    client_response = next(entry for entry in entries if entry["phase"] == "client_response")
+    upstream_request = next(entry for entry in entries if entry["phase"] == "upstream_request")
+    assert client_request["body_json"]["messages"][0]["content"] == "hello"
+    assert upstream_request["body_json"] == {"outbound": True}
+    assert client_response["status_code"] == 200
+    assert client_response["response_body_json"]["choices"][0]["message"]["content"] == "ok"
 
 
 async def _collect_stream_events(stream):

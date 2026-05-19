@@ -47,6 +47,9 @@ def test_static_frontend_exposes_configurable_api_interfaces():
     assert "completeGeminiChatFromCurrentMessages()" in app_js
     assert "completeOpenAIChatFromCurrentMessages()" in app_js
     assert "responsesRequestBody()" in app_js
+    assert "responseOutputThinking(payload)" in app_js
+    assert "response.reasoning.delta" in app_js
+    assert "thinking:this.responseOutputThinking(d)||''" in app_js
     assert "completeResponsesChatFromCurrentMessages()" in app_js
     assert "claudeRequestBody()" in app_js
     assert "completeClaudeChatFromCurrentMessages()" in app_js
@@ -68,6 +71,20 @@ def test_static_frontend_exposes_configurable_api_interfaces():
     assert "selectChatApi(option.id)" not in index_html
     assert "selectImageApi(option.id)" not in index_html
     assert "selectModel(m.id)" in index_html
+
+
+def test_static_frontend_request_logs_show_chain_phases_and_responses():
+    app_js = (ROOT / "src" / "aistudio_api" / "static" / "app.js").read_text(encoding="utf-8")
+    index_html = (ROOT / "src" / "aistudio_api" / "static" / "index.html").read_text(encoding="utf-8")
+    style_css = (ROOT / "src" / "aistudio_api" / "static" / "style.css").read_text(encoding="utf-8")
+
+    assert "client_request:'用户 → 后端'" in app_js
+    assert "upstream_response:'AI Studio → 后端'" in app_js
+    assert "response_body_size" in app_js
+    assert "activeRequestLog?.chain_id" in index_html
+    assert "activeRequestLog?.status_code" in index_html
+    assert "响应 Body JSON" in index_html
+    assert "response_body_raw" in index_html
     assert "selectImageModel(m.id)" in index_html
     assert "selectPromptOptimizerModel(m.id)" in index_html
     assert "openSelect==='imageModel'" in index_html

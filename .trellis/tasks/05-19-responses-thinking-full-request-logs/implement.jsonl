@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend spec index and pre-development checklist for API/gateway changes."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Contracts for request logging, client-compatible Responses gateway behavior, and frontend interface mode handling."}

@@ -34,30 +34,38 @@ Questions to answer:
 
 (To be filled by the team)
 
-## Scenario: Outbound AI Studio Request Logging
+## Scenario: Correlated API and AI Studio Request Logging
 
 ### 1. Scope / Trigger
 
-- Trigger: Code changes the request-log store, `/request-logs` APIs, static request-log UI, account client pooling, or AI Studio replay/streaming send boundaries.
-- Use this contract whenever implementing or refactoring optional capture of complete outbound requests sent to AI Studio.
+- Trigger: Code changes the request-log store, API exchange logging middleware, `/request-logs` APIs, static request-log UI, account client pooling, or AI Studio replay/streaming send boundaries.
+- Use this contract whenever implementing or refactoring optional capture of the complete client-backend-AI Studio request flow.
 
 ### 2. Signatures
 
 - `AISTUDIO_REQUEST_LOGS_DIR` sets the durable request-log root and defaults to `data/request-logs`.
 - `RequestLogStore.status() -> {"enabled": bool, "count": int}`.
 - `RequestLogStore.set_enabled(enabled: bool) -> {"enabled": bool, "count": int}`.
-- `RequestLogStore.save(kind, model, method, url, headers, body, captured_headers=None, transport="") -> dict | None`.
+- `RequestLogStore.save(kind, model, method, url, headers, body, captured_headers=None, transport="", chain_id=None, direction="outbound", phase=None, status_code=None, response_headers=None, response_body=None, elapsed_ms=None) -> dict | None`.
+- `RequestLogStore.attach_response(request_id, status_code=None, response_headers=None, response_body=None, elapsed_ms=None) -> dict`.
+- Request-log context helpers: `new_request_chain_id()`, `set_request_chain_id(chain_id)`, `reset_request_chain_id(token)`, `current_request_chain_id()`.
 - `GET /request-logs/status`, `PUT /request-logs/status`, `GET /request-logs?limit=<int>`, `GET /request-logs/{request_id}`.
 - Frontend route/hash: `#requests`.
 
 ### 3. Contracts
 
 - Request logging defaults to disabled and must persist the switch in the same store as the entries.
-- Saved entries represent outbound AI Studio wire requests after `modify_body`, not inbound OpenAI/Gemini/Claude-compatible payloads.
+- API exchange logging for `/v1*` and `/v1beta*` routes creates correlated `client_request` and `client_response` entries when logging is enabled.
+- AI Studio replay/streaming creates correlated `upstream_request` and `upstream_response` records for the same external API request.
+- All entries produced for one external request must share the same `chain_id`; gateway saves inherit the request-scoped chain id.
+- `phase` values are semantic and UI-visible: `client_request`, `upstream_request`, `upstream_response`, `client_response`.
+- Outbound `upstream_request` entries still represent AI Studio wire requests after `modify_body`, not inbound OpenAI/Gemini/Claude-compatible payloads.
 - Non-streaming replay, streaming replay, image generation replay, and account-pooled clients must share the same `RequestLogStore` instance at runtime.
 - Saved details must include id, timestamps, kind, model, transport, method, URL, sanitized replay headers, original captured headers, raw body, parsed JSON body when parseable, parse error when not parseable, and body size.
+- Entries that carry a response must include status code when known, response headers when available, raw response body, parsed response JSON when parseable, response parse error when not parseable, response body size, and elapsed milliseconds when known.
+- `upstream_request` entries attach their AI Studio response via `attach_response(...)` and may also have a separate `upstream_response` phase entry for timeline readability.
 - The feature intentionally does not redact stored outbound request details because the UI must not lose information.
-- The frontend request-log page must render the switch, list, selected structured detail, raw body, and complete JSON record.
+- The frontend request-log page must render the switch, list, selected structured detail, chain id, phase labels, status, raw body, response body, and complete JSON record.
 
 ### 4. Validation & Error Matrix
 
@@ -67,24 +75,29 @@ Questions to answer:
 - `limit < 1` -> normalize to 1; `limit > 1000` -> normalize to 1000.
 - Request-log write failure at replay boundary -> log a warning and continue the upstream request path.
 - Unparseable body -> preserve `body_raw`, set `body_json` to null, and store `body_parse_error`.
+- Unparseable response body -> preserve `response_body_raw`, set `response_body_json` to null, and store `response_body_parse_error`.
 
 ### 5. Good/Base/Bad Cases
 
-- Good: User enables logging, sends `/v1/chat/completions`, then opens `#requests` and sees the rewritten AI Studio body in both readable JSON and raw text.
+- Good: User enables logging, sends `/v1/responses`, then opens `#requests` and sees four correlated phases: user to backend, backend to AI Studio, AI Studio to backend, backend to user.
+- Good: Selecting an `upstream_request` entry shows both the rewritten AI Studio request body and attached AI Studio response body.
 - Good: Balanced account rotation uses an isolated client but writes to the same request-log directory and switch as the main runtime client.
 - Base: Logging remains off after startup until explicitly enabled, and normal chat/image/streaming requests run without creating files.
 - Bad: Logging before `modify_body` stores client-compatible input instead of the actual AI Studio request body.
+- Bad: Client request/response entries use one id while replay entries use another, so the UI cannot reconstruct the flow by `chain_id`.
 - Bad: A pooled account client creates a private `RequestLogStore`, so the UI switch appears on while rotated requests are not captured.
 - Bad: The detail UI renders only prettified JSON and drops raw body/headers, losing information.
 
 ### 6. Tests Required
 
 - Unit: store default-off behavior, persisted toggle, entry summary, full detail, raw body, parsed JSON body, and header preservation.
+- Unit: store response attachment, response body parsing, status code, elapsed time, phase, direction, and chain id fields.
 - Unit/API: `/request-logs/status`, `/request-logs`, and `/request-logs/{id}` manage status, listing, detail, and invalid ids.
-- Unit: non-streaming `RequestReplayService.replay` logs the actual outbound body and does not log while disabled.
-- Unit: `StreamingGateway.stream_chat` logs the rewritten outbound body while enabled.
-- Unit/static: frontend exposes the `requests` route, toggle/status calls, list/detail loading, raw body view, and complete JSON rendering.
-- Real: WSL browser-backed smoke must enable logging, send a real request, read list/detail, assert body/header preservation, and disable logging.
+- Unit: non-streaming `RequestReplayService.replay` logs the actual outbound body, attaches upstream response fields, and writes an `upstream_response` phase.
+- Unit: `StreamingGateway.stream_chat` logs the rewritten outbound body and final raw streaming response while enabled.
+- Unit/API: API exchange middleware logs correlated `client_request`, `upstream_request`, and `client_response` entries for a real route call.
+- Unit/static: frontend exposes the `requests` route, toggle/status calls, list/detail loading, phase labels, raw request body, response body view, and complete JSON rendering.
+- Real: WSL browser-backed smoke must enable logging, send a real API request, read list/detail in the WebUI, assert body/header preservation, response body preservation, and all four phases.
 
 ### 7. Wrong vs Correct
 
@@ -142,6 +155,9 @@ store.save(body=modified_body, headers=captured.replay_headers, captured_headers
 - Search tool requests must append the AI Studio `google_search` tool template while preserving valid function tools in the same request.
 - Unknown non-function tools still fail validation; do not silently drop unsupported tool types.
 - `/v1/chat/completions`, `/v1/responses`, and `/v1/messages` must share the same function-tool and search-tool normalization behavior.
+- `/v1/responses` must forward `thinking` values through the shared chat request path: `off` disables thinking, while `low`/`medium`/`high` set AI Studio thinking config overrides and keep `enable_thinking=True`.
+- `/v1/responses` non-streaming output must preserve returned thinking as a Responses `reasoning` output item and as a top-level `thinking` convenience field for the built-in UI.
+- `/v1/responses` with `stream: true` must translate chat thinking deltas into Responses SSE events `response.reasoning.delta` and `response.reasoning.done`, and the final `response.completed` payload must include accumulated `thinking`.
 - `/v1/responses` with `stream: true` must return SSE events including `response.created`, `response.in_progress`, text deltas, text done, output item done, `response.completed`, and final `data: [DONE]`.
 - `/v1/messages` with `stream: true` must return Anthropic-compatible SSE events including `message_start`, content block start/delta/stop, `message_delta`, `message_stop`, and final `data: [DONE]`.
 - `/v1/messages/count_tokens` returns `{"input_tokens": <int>}` using the same message/system/tool coercion assumptions as `/v1/messages`.
@@ -154,6 +170,8 @@ store.save(body=modified_body, headers=captured.replay_headers, captured_headers
 - Recognized search tool plus function tools -> include both Google Search and function declarations.
 - Unknown tool type -> `ValueError`/HTTP 400 with a clear unsupported tool message.
 - Responses `stream: true` -> translate existing Chat SSE into Responses SSE; upstream stream errors become `response.failed` before `[DONE]`.
+- Responses `thinking: "high"` -> outbound AI Studio generation config includes thinking config `[1, null, null, 3]` and request flag `1`.
+- Responses upstream thinking text -> client receives a reasoning output item/top-level thinking in non-streaming mode, or reasoning delta/done SSE events in streaming mode.
 - Messages `stream: true` -> translate existing Chat SSE into Messages SSE; upstream stream errors become `error` before `[DONE]`.
 - Empty or unsupported message content blocks -> preserve best-effort text while avoiding local crashes.
 
@@ -172,7 +190,10 @@ store.save(body=modified_body, headers=captured.replay_headers, captured_headers
 - Unit: function tools and search tools can coexist without dropping either tool family.
 - Unit: unknown tool types still fail with a clear validation error.
 - Unit: Responses non-streaming output includes `web_search_call` when search was requested.
+- Unit: Responses `thinking: "high"` forwards thinking config and `thinking: "off"` disables thinking.
+- Unit: Responses non-streaming output includes returned thinking as reasoning output and top-level `thinking`.
 - Unit: Responses streaming includes `response.created`, text delta/done, `response.completed`, and `[DONE]`.
+- Unit: Responses streaming includes `response.reasoning.delta`, `response.reasoning.done`, and final completed `thinking` when upstream emits thinking.
 - Unit: Messages streaming includes `message_start`, text delta, `message_stop`, and `[DONE]`.
 - Unit: `/v1/messages/count_tokens` returns `input_tokens` for system, messages, and tools payloads.
 - Real: WSL browser-backed smoke must cover Chat search, Responses streaming, Messages streaming, and Messages count_tokens for API/gateway changes.
@@ -226,6 +247,7 @@ if payload.get("stream"):
 - `ensureTextModelDefaults() -> void`
 - `chatRequestBody() -> dict`
 - `responsesRequestBody() -> dict`
+- `responseOutputThinking(payload) -> string`
 - `claudeRequestBody() -> dict`
 - `geminiChatRequestBody() -> dict`
 - `geminiChatEndpoint(stream=false) -> string`
@@ -240,6 +262,7 @@ if payload.get("stream"):
 - Model-list selection may call `GET /v1/models` or `GET /v1beta/models`, but the UI's internal model shape must still include `id` and `capabilities` so controls do not guess from raw API payloads at render time.
 - OpenAI compatible mode sends Playground chat to `/v1/chat/completions`.
 - OpenAI Responses mode sends Playground chat to `/v1/responses` and translates Responses output back to the existing transcript shape.
+- OpenAI Responses mode must translate Responses thinking back to the existing transcript shape: assistant `thinking` plus the collapsible thinking block.
 - Gemini mode sends Playground chat to `/v1beta/models/{model}:generateContent` or `:streamGenerateContent` and translates Gemini output back to the existing transcript shape.
 - Claude mode sends Playground chat to `/v1/messages` and translates Anthropic message output back to the existing transcript shape.
 - Gemini chat selection must translate the current transcript into `contents`, optional `systemInstruction`, optional `tools`, and optional `generationConfig` before calling `/v1beta/models/{model}:generateContent` or `:streamGenerateContent`.
