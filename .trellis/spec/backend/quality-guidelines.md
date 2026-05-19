@@ -335,6 +335,8 @@ return data.models.map(item => this.normalizeGeminiModel(item)).filter(item => i
 ### 3. Contracts
 
 - Capture is responsible for returning a complete `CapturedRequest` containing the replay URL, original headers, and template body.
+- Capture must accept the current AI Studio RPC endpoint shape as well as older URL shapes. In real AI Studio sessions, text generation may be emitted to `https://alkalimakersuite-pa.clients6.google.com/$rpc/.../MakerSuiteService/GenerateContent`, not only to `aistudio.google.com` or `.../batchexecute/GenerateContent`.
+- Browser-session prompt filling must update the UI the same way a user does: focus/click the textarea, fill the text, and dispatch input/change events before clicking the enabled run control. Do not click `aria-disabled="true"` run buttons and treat that as success.
 - Replay and streaming must pass `captured.url` and `captured.replay_headers` into `BrowserSession`; they must not ask the session to rediscover URL/header state from private template caches.
 - `CapturedRequest.replay_headers` must exclude hop/body-length headers that browser XHR should not set manually: `host` and `content-length`.
 - Pure HTTP replay may still use `captured.url` directly with an HTTP client and the same sanitized headers.
@@ -344,18 +346,25 @@ return data.models.map(item => this.normalizeGeminiModel(item)).filter(item => i
 - `captured is None` -> replay returns `(0, b"")` or streaming raises a clear captured-request error.
 - Missing/invalid auth after replay reaches AI Studio -> propagate upstream authentication/authorization status.
 - Empty session template cache with valid `CapturedRequest` -> replay must still send the browser XHR using captured URL/headers.
+- Current `alkalimakersuite-pa.clients6.google.com/.../GenerateContent` template URL -> capture and replay it directly; do not filter it out because the host is not `aistudio.google.com`.
+- Filled textarea but run button remains `aria-disabled="true"` -> report trigger failure instead of pretending a click succeeded.
 
 ### 5. Good/Base/Bad Cases
 
 - Good: A cached snapshot returns `CapturedRequest`; replay uses `captured.url` and succeeds without reading `BrowserSession._templates`.
+- Good: A fresh real WebUI/API send captures `alkalimakersuite-pa.clients6.google.com/$rpc/.../GenerateContent`, replays it through the browser, and writes a request-log entry when logging is enabled.
 - Base: A fresh capture returns `CapturedRequest`; replay and streaming both use the same captured URL/header contract.
 - Bad: Account switching clears `BrowserSession._templates`, capture reuses a service-level cached template, and replay fails locally with `no captured URL available for replay`.
+- Bad: Template capture filters only `aistudio.google.com` URLs and times out even though the real page emitted a valid `GenerateContent` request to a Google RPC host.
 
 ### 6. Tests Required
 
 - Unit: non-streaming replay with a fake browser session that has no template cache; assert URL, sanitized headers, body, and timeout passed to `send_hooked_request`.
 - Unit: streaming replay with a fake browser session that has no template cache; assert URL and sanitized headers passed to `send_streaming_request`.
-- Integration/real: browser-backed `/v1/chat/completions` request returns an upstream result or upstream auth error, not local `no captured URL available for replay`.
+- Unit: template capture accepts current `alkalimakersuite-pa.clients6.google.com/.../GenerateContent` RPC URLs, not only `aistudio.google.com` routes.
+- Unit: run-button clicking skips `aria-disabled="true"` controls and fills the prompt with input/change events.
+- Integration/real: browser-backed `/v1/chat/completions` request returns an upstream result or upstream auth error, not local `no captured URL available for replay` or `template capture timeout`.
+- Integration/real UI: built-in WebUI enables request logging through the UI, sends a Playground message successfully, opens `#requests`, and verifies the new entry detail contains `Body JSON`, `Body 原文`, and complete JSON.
 
 ### 7. Wrong vs Correct
 

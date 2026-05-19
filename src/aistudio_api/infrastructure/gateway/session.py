@@ -28,6 +28,52 @@ AI_DEVELOPERS_HOST = "ai.google.dev"
 AI_STUDIO_CHAT_PATH_PREFIXES = ("/prompts/", "/app/prompts/")
 AI_STUDIO_CHAT_READY_TIMEOUT_MS = 90_000
 AI_STUDIO_CHAT_READY_POLL_MS = 1_000
+AI_STUDIO_SEND_BUTTON_SELECTORS = (
+    "button:has-text('Run')",
+    "button:has-text('Send')",
+    "button:has-text('Generate')",
+    "button:has-text('运行')",
+    "button:has-text('发送')",
+    "button[aria-label*='Run' i]",
+    "button[aria-label*='Send' i]",
+    "button[aria-label*='Generate' i]",
+    "button[aria-label*='运行' i]",
+    "button[aria-label*='发送' i]",
+    "button[title*='Run' i]",
+    "button[title*='Send' i]",
+    "button[title*='Generate' i]",
+    "button[title*='运行' i]",
+    "button[title*='发送' i]",
+)
+AI_STUDIO_SEND_BUTTON_JS = r"""(clickButton) => {
+    const keywords = ['run', 'send', 'generate', '运行', '发送'];
+    const iconKeywords = ['send', 'play_arrow', 'arrow_upward'];
+    const visible = (el) => {
+        const rect = el.getBoundingClientRect();
+        const style = window.getComputedStyle(el);
+        return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+    };
+    const labelOf = (el) => [
+        el.innerText,
+        el.textContent,
+        el.getAttribute('aria-label'),
+        el.getAttribute('title'),
+        el.getAttribute('data-tooltip'),
+        el.querySelector('mat-icon')?.textContent,
+        el.querySelector('[data-mat-icon-name]')?.getAttribute('data-mat-icon-name'),
+    ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim().toLowerCase();
+    const enabled = (el) => !el.disabled && el.getAttribute('aria-disabled') !== 'true';
+    const candidates = Array.from(document.querySelectorAll('button, [role="button"]'))
+        .filter((el) => visible(el) && enabled(el));
+    const target = candidates.find((el) => {
+        const label = labelOf(el);
+        return keywords.some((keyword) => label.includes(keyword)) || iconKeywords.some((keyword) => label.includes(keyword));
+    });
+    if (!target) return {found: false, clicked: false, label: ''};
+    const label = labelOf(target);
+    if (clickButton) target.click();
+    return {found: true, clicked: !!clickButton, label};
+}"""
 INSTALL_HOOKS_JS = r"""
 mw:((() => {
     // Verify hooks are actually present on XHR prototype, not just a stale flag
@@ -252,6 +298,7 @@ class BrowserSession:
         self._cf = None
         self._snap_key: str | None = None
         self._templates: dict[str, dict[str, Any]] = {}
+        self._last_botguard_template: dict[str, Any] | None = None
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="aistudio-camoufox")
         self._botguard_lock = asyncio.Lock()
         self._snapshot_lock = asyncio.Lock()
@@ -518,6 +565,7 @@ class BrowserSession:
     def _switch_auth_sync(self, auth_file: str | None) -> None:
         self._auth_file = auth_file
         self._templates.clear()
+        self._last_botguard_template = None
         self._close_sync()
 
     def _browser_options_sync(self) -> dict[str, Any]:
@@ -628,18 +676,36 @@ class BrowserSession:
             except Exception:
                 dbg_url = dbg_title = dbg_body = '<error>'
             raise RuntimeError(f"textarea not found while capturing BotGuardService; url={dbg_url}, title={dbg_title}, body={dbg_body[:200]}")
-        textarea.fill("1")
+        self._fill_prompt_text_sync(page, textarea, "1")
         page.wait_for_timeout(800)
         page.evaluate(DIALOG_CLEANUP_JS)
-        if not self._click_run_button_sync(page):
-            raise RuntimeError("failed to trigger send while capturing BotGuardService")
+        captured: dict[str, Any] = {}
 
-        for i in range(45):
-            page.wait_for_timeout(1000)
-            if page.evaluate("mw:!!window.__bg_service"):
-                self._wait_until_idle_sync(page)
-                log.debug(f"[timing] botguard captured after {i+1}s, total {_t.time()-_t0:.1f}s")
-                return page
+        def on_route(route):
+            request = route.request
+            body = request.post_data
+            if not captured and self._is_template_capture_request(url=request.url, body=body, model_marker="", allow_text_markers=True):
+                captured["url"] = request.url
+                captured["headers"] = dict(request.headers)
+                captured["body"] = body
+            route.continue_()
+
+        route_pattern = "**/*"
+        page.route(route_pattern, on_route)
+        try:
+            if not self._click_run_button_sync(page):
+                raise RuntimeError("failed to trigger send while capturing BotGuardService")
+
+            for i in range(45):
+                page.wait_for_timeout(1000)
+                if page.evaluate("mw:!!window.__bg_service"):
+                    if captured:
+                        self._last_botguard_template = captured
+                    self._wait_until_idle_sync(page)
+                    log.debug(f"[timing] botguard captured after {i+1}s, total {_t.time()-_t0:.1f}s")
+                    return page
+        finally:
+            page.unroute(route_pattern, on_route)
 
         raise RuntimeError("BotGuardService capture timeout")
 
@@ -664,6 +730,12 @@ class BrowserSession:
             return captured
 
         page = self._ensure_botguard_service_sync()
+        if self._last_botguard_template:
+            captured = self._last_botguard_template
+            self._last_botguard_template = None
+            self._templates[model] = captured
+            log.debug(f"[timing] text template reused from BotGuard capture for {model} in {_t.time()-_t0:.1f}s")
+            return captured
         log.debug(f"[timing] botguard done in {_t.time()-_t0:.1f}s, starting template capture")
         captured = self._capture_template_request_with_recovery_sync(page, model)
         self._templates[model] = captured
@@ -675,28 +747,35 @@ class BrowserSession:
 
     def _capture_template_request_sync(self, page, model: str) -> dict[str, Any]:
         captured: dict[str, Any] = {}
-        route_pattern = "**/*GenerateContent*"
+        route_pattern = "**/*"
+        observed: list[str] = []
+        model_marker = (model or "").lower()
 
         def on_route(route):
             request = route.request
-            if "GenerateContent" not in request.url or "Count" in request.url or captured:
+            if captured:
                 route.continue_()
                 return
             body = request.post_data
-            if not body or len(body) <= 100:
+            url = request.url
+            if self._is_template_capture_request(url=url, body=body, model_marker=model_marker):
+                captured["url"] = url
+                captured["headers"] = dict(request.headers)
+                captured["body"] = body
+                route.abort()
+                return
+            if body and len(body) > 100 and AI_STUDIO_HOST in url and len(observed) < 5:
+                observed.append(f"{url} body={len(body)}")
                 route.continue_()
                 return
-            captured["url"] = request.url
-            captured["headers"] = dict(request.headers)
-            captured["body"] = body
-            route.abort()
+            route.continue_()
 
         page.route(route_pattern, on_route)
         try:
             textarea = page.query_selector("textarea")
             if textarea is None:
                 raise RuntimeError("textarea not found during template capture")
-            textarea.fill("template")
+            self._fill_prompt_text_sync(page, textarea, "template")
             page.wait_for_timeout(500)
             if not self._click_run_button_sync(page):
                 raise RuntimeError("failed to trigger send during template capture")
@@ -706,12 +785,32 @@ class BrowserSession:
                     break
                 page.wait_for_timeout(100)
             if not captured:
-                raise RuntimeError(f"template capture timeout for model={model}")
+                suffix = f"; observed={observed}" if observed else ""
+                raise RuntimeError(f"template capture timeout for model={model}{suffix}")
         finally:
             page.unroute(route_pattern, on_route)
 
         self._wait_until_idle_sync(page)
         return captured
+
+    def _is_template_capture_request(self, *, url: str, body: str | None, model_marker: str, allow_text_markers: bool = False) -> bool:
+        if not body or len(body) <= 100:
+            return False
+        lower_url = (url or "").lower()
+        if "counttokens" in lower_url or "count" in lower_url:
+            return False
+        if "generatecontent" in lower_url:
+            return True
+        if AI_STUDIO_HOST not in lower_url:
+            return False
+        if "/data/batchexecute" not in lower_url:
+            return False
+        lower_body = body.lower()
+        if "template" in lower_body or bool(model_marker and model_marker in lower_body):
+            return True
+        if allow_text_markers:
+            return "models/" in lower_body or "snapshot" in lower_body or "generatecontent" in lower_body
+        return False
 
     def _capture_template_request_with_recovery_sync(self, page, model: str) -> dict[str, Any]:
         last_error: Exception | None = None
@@ -1256,21 +1355,90 @@ mw:((hash) => {
         raise RuntimeError(f"Hook install failed: {result}; {diagnostics}")
 
     def _click_run_button_sync(self, page) -> bool:
+        for selector in AI_STUDIO_SEND_BUTTON_SELECTORS:
+            try:
+                button = page.query_selector(selector)
+            except Exception:
+                continue
+            if button is None:
+                continue
+            try:
+                if button.evaluate("el => el.disabled || el.getAttribute('aria-disabled') === 'true'"):
+                    continue
+            except Exception:
+                pass
+            try:
+                button.click()
+                return True
+            except Exception:
+                continue
+
         try:
-            button = page.query_selector("button:has-text('Run')")
+            result = page.evaluate(AI_STUDIO_SEND_BUTTON_JS, True)
+            if isinstance(result, dict) and result.get("clicked"):
+                return True
         except Exception:
-            return False
-        if button is None:
-            return False
+            pass
+
         try:
-            button.click()
-            return True
+            textarea = page.query_selector("textarea")
+            if textarea is None:
+                return False
+            try:
+                textarea.click()
+            except Exception:
+                try:
+                    textarea.focus()
+                except Exception:
+                    pass
+            page.keyboard.press("Control+Enter")
+            page.wait_for_timeout(500)
+            return False
         except Exception:
             return False
 
-    def _has_run_button_sync(self, page) -> bool:
+    def _fill_prompt_text_sync(self, page, textarea, text: str) -> None:
         try:
-            return page.query_selector("button:has-text('Run')") is not None
+            textarea.click()
+        except Exception:
+            try:
+                textarea.focus()
+            except Exception:
+                pass
+        textarea.fill(text)
+        try:
+            page.evaluate(
+                """(value) => {
+                    const textarea = document.querySelector('textarea');
+                    if (!textarea) return false;
+                    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+                    if (setter) setter.call(textarea, value);
+                    else textarea.value = value;
+                    textarea.dispatchEvent(new InputEvent('input', {bubbles: true, inputType: 'insertText', data: value}));
+                    textarea.dispatchEvent(new Event('change', {bubbles: true}));
+                    return true;
+                }""",
+                text,
+            )
+        except Exception:
+            pass
+
+    def _has_run_button_sync(self, page) -> bool:
+        for selector in AI_STUDIO_SEND_BUTTON_SELECTORS:
+            try:
+                button = page.query_selector(selector)
+                if button is not None:
+                    try:
+                        if button.evaluate("el => el.disabled || el.getAttribute('aria-disabled') === 'true'"):
+                            continue
+                    except Exception:
+                        pass
+                    return True
+            except Exception:
+                continue
+        try:
+            result = page.evaluate(AI_STUDIO_SEND_BUTTON_JS, False)
+            return isinstance(result, dict) and bool(result.get("found"))
         except Exception:
             return False
 
