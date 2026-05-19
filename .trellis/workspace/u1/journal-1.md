@@ -515,3 +515,36 @@ Verified the WSL-deployed API from Windows across OpenAI-compatible, Responses, 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 16: Restore frontend model selectors
+
+**Date**: 2026-05-19
+**Task**: Restore frontend model selectors
+**Branch**: `fix/frontend-model-selectors-regression`
+
+### Summary
+
+Restored visible Playground and image-generation model selectors after the unified interface-mode regression, corrected the static frontend spec/tests, and verified with Windows unit/browser checks plus WSL real-account frontend smoke.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9b7ef9e` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
