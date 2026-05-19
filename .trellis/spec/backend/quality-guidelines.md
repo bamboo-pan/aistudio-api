@@ -124,19 +124,25 @@ if payload.get("stream"):
 	return _build_responses_streaming_response(payload, client, request)
 ```
 
-## Scenario: Static Frontend API Surface Selection
+## Scenario: Static Frontend Interface Mode Selection
 
 ### 1. Scope / Trigger
 
-- Trigger: Code changes the built-in static frontend's model-list, chat, image-generation, or prompt-optimization request paths.
-- Use this contract whenever the UI can choose between OpenAI-compatible `/v1` routes and Gemini-native `/v1beta` routes.
+- Trigger: Code changes the built-in static frontend's model-list, chat, image-generation, prompt-optimization, or interface-mode request paths.
+- Use this contract whenever the UI can choose between OpenAI-compatible Chat Completions, OpenAI Responses, Gemini-native, or Claude/Anthropic-compatible routes.
 
 ### 2. Signatures
 
+- `interfaceModeOptions -> list[{id, label}]`
+- `validInterfaceMode(value) -> string`
+- `selectInterfaceMode(value) -> void`
 - `modelListEndpoint() -> string`
 - `normalizeModelList(data) -> list[dict]`
 - `normalizeGeminiModel(item) -> dict`
+- `ensureTextModelDefaults() -> void`
 - `chatRequestBody() -> dict`
+- `responsesRequestBody() -> dict`
+- `claudeRequestBody() -> dict`
 - `geminiChatRequestBody() -> dict`
 - `geminiChatEndpoint(stream=false) -> string`
 - `geminiMessageFromPayload(payload) -> {content, thinking, usage}`
@@ -144,36 +150,51 @@ if payload.get("stream"):
 
 ### 3. Contracts
 
-- OpenAI-compatible behavior must remain the default for models, chat, and images.
+- OpenAI-compatible behavior must remain the default interface mode.
+- The built-in WebUI must expose one user-facing interface-mode dropdown on Playground and image generation pages, with these options: OpenAI compatible, OpenAI Responses, Gemini, and Claude.
+- The built-in WebUI must not expose manual model-selection dropdowns in Playground or image generation. Model IDs remain internal state and must be selected automatically from capability metadata.
 - Model-list selection may call `GET /v1/models` or `GET /v1beta/models`, but the UI's internal model shape must still include `id` and `capabilities` so controls do not guess from raw API payloads at render time.
+- OpenAI compatible mode sends Playground chat to `/v1/chat/completions`.
+- OpenAI Responses mode sends Playground chat to `/v1/responses` and translates Responses output back to the existing transcript shape.
+- Gemini mode sends Playground chat to `/v1beta/models/{model}:generateContent` or `:streamGenerateContent` and translates Gemini output back to the existing transcript shape.
+- Claude mode sends Playground chat to `/v1/messages` and translates Anthropic message output back to the existing transcript shape.
 - Gemini chat selection must translate the current transcript into `contents`, optional `systemInstruction`, optional `tools`, and optional `generationConfig` before calling `/v1beta/models/{model}:generateContent` or `:streamGenerateContent`.
 - Gemini responses must be translated back to the existing transcript shape: assistant `content`, optional `thinking`, and normalized usage tokens.
-- Image generation remains routed through `/v1/images/generations` until a real Gemini-native image endpoint exists; disabled UI options are allowed, silently broken selectable options are not.
-- Account, rotation, stats, generated image files, and image-session endpoints are project management endpoints and must not be switched by the model/chat/image API selector.
+- Image generation remains routed through `/v1/images/generations`; the interface-mode selector must not point image generation at nonexistent provider-native image routes.
+- Account, rotation, stats, generated image files, and image-session endpoints are project management endpoints and must not be switched by the interface-mode selector.
 
 ### 4. Validation & Error Matrix
 
-- Invalid stored API preference -> fall back to `openai` and keep loading the UI.
+- Invalid stored interface preference -> fall back to `openai` and keep loading the UI.
+- Legacy `aistudio.apiSelection.v1` preferences -> migrate best-effort to the unified interface mode, then use `openai` if the legacy value is not a valid mode.
 - Gemini model list lacks project-specific capabilities -> infer conservative capabilities from known model id patterns and `supportedGenerationMethods`.
-- Selected model is missing after switching model-list API -> clear the previous model and select the first available model.
+- Selected internal model is missing after switching model-list API or restoring an old session -> clear the previous model and select the first available text/image-capable model as appropriate.
 - Gemini chat stream event has `error` -> show the error on the assistant message and continue stream cleanup.
-- Image API option has no backend implementation -> render it disabled and keep using the implemented OpenAI image endpoint.
+- Responses or Claude stream event has `error` -> show the error on the assistant message and continue stream cleanup.
+- Image generation has no image-capable model in the current model list -> disable submission with a clear in-page hint; do not render a broken model picker.
 
 ### 5. Good/Base/Bad Cases
 
-- Good: User switches model list to Gemini; the frontend calls `/v1beta/models`, strips the `models/` prefix for display, and still shows capability-driven controls.
+- Good: User switches interface mode to Gemini; the frontend calls `/v1beta/models`, strips the `models/` prefix internally, and still shows capability-driven controls.
+- Good: User switches interface mode to OpenAI Responses; Playground calls `/v1/responses` and parses `output_text` or output message content into the transcript.
+- Good: User switches interface mode to Claude; Playground calls `/v1/messages` and parses text content blocks into the transcript.
 - Good: User switches chat to Gemini with Stream enabled; the frontend calls `/v1beta/models/{model}:streamGenerateContent` and parses Gemini SSE chunks into the transcript.
 - Base: User keeps defaults; existing `/v1/models`, `/v1/chat/completions`, and `/v1/images/generations` behavior is unchanged.
-- Bad: A selector label says Gemini image generation is available, but clicking generate still sends an incompatible or nonexistent Gemini image request.
+- Bad: A visible model selector remains in Playground or image generation after interface mode selection is introduced.
+- Bad: A selector label implies provider-native image generation, but clicking generate sends an incompatible or nonexistent provider-native image request.
 - Bad: Gemini model list is displayed raw and the rest of the UI loses capability gating for files, search, thinking, or image models.
 
 ### 6. Tests Required
 
-- Unit/static: frontend exposes model, chat, and image API selectors.
-- Unit/static: selectors persist in `localStorage` and default to OpenAI-compatible endpoints.
+- Unit/static: frontend exposes one interface-mode selector with OpenAI compatible, OpenAI Responses, Gemini, and Claude options.
+- Unit/static: frontend does not expose Playground/image model selection dropdowns.
+- Unit/static: interface-mode selector persists in `localStorage` and defaults to OpenAI-compatible endpoints.
+- Unit/static: legacy `aistudio.apiSelection.v1` fallback remains safe.
 - Unit/static: Gemini model-list normalization and Gemini chat endpoint/body helpers are present.
+- Unit/static: Responses and Claude request builders and completion handlers are present.
 - Unit/static: image generation goes through an endpoint helper that currently returns `/v1/images/generations`.
 - Real: WSL smoke should serve `/static/index.html`, `/static/app.js`, `/v1/models`, and `/v1beta/models` from a temporary WSL copy with real account data available.
+- Real: WSL smoke should cover OpenAI compatible, OpenAI Responses, Gemini, Claude, and image generation request paths when this selector or its request builders change.
 
 ### 7. Wrong vs Correct
 
@@ -186,8 +207,14 @@ const r = await fetch('/v1/chat/completions', { method: 'POST', body: JSON.strin
 #### Correct
 
 ```javascript
-if (this.chatApi === 'gemini') {
+if (this.interfaceMode === 'gemini') {
 	return await this.completeGeminiChatFromCurrentMessages()
+}
+if (this.interfaceMode === 'responses') {
+	return await this.completeResponsesChatFromCurrentMessages()
+}
+if (this.interfaceMode === 'claude') {
+	return await this.completeClaudeChatFromCurrentMessages()
 }
 return await this.completeOpenAIChatFromCurrentMessages()
 ```

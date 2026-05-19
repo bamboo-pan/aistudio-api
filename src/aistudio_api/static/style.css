@@ -392,7 +392,7 @@ select.sel:focus,.sel:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(
 .image-prompt-optimizer{margin-top:12px;border:1px solid var(--border);border-radius:8px;background:#fbfcfd;padding:12px;display:flex;flex-direction:column;gap:12px}
 .optimizer-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
 .optimizer-head h3{font-size:15px;font-weight:720;line-height:1.25;margin:0}
-.optimizer-controls{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(130px,.8fr);gap:10px;align-items:start}
+.optimizer-controls{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;align-items:start}
 .image-prompt-optimize-error{margin:0}
 .prompt-option-list{display:flex;flex-direction:column;gap:10px}
 .prompt-option-card{border:1px solid var(--border);border-radius:8px;background:#fff;padding:11px;display:flex;flex-direction:column;gap:8px;min-width:0}
