@@ -477,3 +477,41 @@ Implemented shared search tool normalization for OpenAI-compatible clients, adde
 ### Next Steps
 
 - None - task complete
+
+
+## Session 15: Verify OpenCode interface compatibility
+
+**Date**: 2026-05-19
+**Task**: Verify OpenCode interface compatibility
+**Branch**: `feature/opencode-interface-verification`
+
+### Summary
+
+Verified the WSL-deployed API from Windows across OpenAI-compatible, Responses, Gemini-native, Claude Messages, web search, and isolated OpenCode provider paths.
+
+### Main Changes
+
+- Deployed the project in a temporary WSL directory and started the browser-backed API service on port 18080.
+- Verified from Windows host: health, models, OpenAI Chat Completions, OpenAI Responses, Gemini native generateContent, Anthropic Messages/count_tokens, web_search, Responses streaming, and Messages streaming.
+- Verified OpenCode through an isolated temporary custom provider config; the exported session contained assistant text OK-OPENCODE.
+- Confirmed global OpenCode config/data/state/cache directory timestamps were unchanged before vs after the isolated run.
+- Ran compatibility unit tests: python -m pytest tests/unit/test_openai_compatibility.py tests/unit/test_gemini_native_routes.py (22 passed).
+
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9992802` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
