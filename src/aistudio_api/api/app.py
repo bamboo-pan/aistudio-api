@@ -14,12 +14,14 @@ from fastapi.staticfiles import StaticFiles
 
 from aistudio_api.infrastructure.generated_images import GeneratedImageStore
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
+from aistudio_api.infrastructure.request_logs import RequestLogStore
 
 from .routes_accounts import router as accounts_router
 from .routes_gemini import router as gemini_router
 from .routes_generated_images import register_generated_image_routes
 from .routes_image_sessions import router as image_sessions_router
 from .routes_openai import router as openai_router
+from .routes_request_logs import router as request_logs_router
 from .routes_system import router as system_router
 from .state import runtime_state
 
@@ -38,9 +40,14 @@ async def lifespan(app: FastAPI):
     from aistudio_api.application.account_rotator import init_rotator, RotationMode
     from aistudio_api.application.account_client_pool import AccountClientPool
 
+    request_log_store = RequestLogStore()
+    request_log_store.ensure_directory()
+    runtime_state.request_log_store = request_log_store
+
     client = AIStudioClient(
         port=runtime_state.camoufox_port,
         use_pure_http=settings.use_pure_http,
+        request_log_store=request_log_store,
     )
     runtime_state.client = client
     from aistudio_api.config import settings as app_settings
@@ -77,6 +84,7 @@ async def lifespan(app: FastAPI):
         account_store,
         port=runtime_state.camoufox_port,
         use_pure_http=settings.use_pure_http,
+        request_log_store=request_log_store,
     )
 
     logger.info(
@@ -108,6 +116,7 @@ async def lifespan(app: FastAPI):
     runtime_state.account_service = None
     runtime_state.rotator = None
     runtime_state.account_client_pool = None
+    runtime_state.request_log_store = None
 
 
 app = FastAPI(title="AI Studio API", lifespan=lifespan)
@@ -116,6 +125,7 @@ app.include_router(gemini_router)
 app.include_router(openai_router)
 app.include_router(accounts_router)
 app.include_router(image_sessions_router)
+app.include_router(request_logs_router)
 register_generated_image_routes(app)
 
 

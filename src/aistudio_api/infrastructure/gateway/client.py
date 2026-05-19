@@ -17,6 +17,7 @@ from aistudio_api.infrastructure.gateway.replay import RequestReplayService
 from aistudio_api.infrastructure.gateway.session import BrowserSession
 from aistudio_api.infrastructure.gateway.streaming import StreamingGateway
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent, AistudioPart
+from aistudio_api.infrastructure.request_logs import RequestLogStore
 
 logger = logging.getLogger("aistudio")
 
@@ -32,10 +33,17 @@ PURE_HTTP_GENERATE_CONTENT_UNSUPPORTED = (
 
 
 class AIStudioClient:
-    def __init__(self, port: int = DEFAULT_CAMOUFOX_PORT, use_pure_http: bool = False, snapshot_cache: SnapshotCache | None = None):
+    def __init__(
+        self,
+        port: int = DEFAULT_CAMOUFOX_PORT,
+        use_pure_http: bool = False,
+        snapshot_cache: SnapshotCache | None = None,
+        request_log_store: RequestLogStore | None = None,
+    ):
         self.port = port
         self._use_pure_http = use_pure_http
         self._snapshot_cache = snapshot_cache or _snapshot_cache
+        self._request_log_store = request_log_store
         self._captured: Optional[CapturedRequest] = None
         
         if use_pure_http:
@@ -43,14 +51,14 @@ class AIStudioClient:
             from aistudio_api.infrastructure.gateway.pure_capture import PureHttpCaptureService
             self._capture_service = PureHttpCaptureService(self._snapshot_cache)
             self._session = None
-            self._replay_service = RequestReplayService(session=None)
+            self._replay_service = RequestReplayService(session=None, request_log_store=request_log_store)
         else:
             # Browser mode: uses browser for capture and replay
             self._session = BrowserSession(port=port)
             self._capture_service = RequestCaptureService(self._session, self._snapshot_cache)
-            self._replay_service = RequestReplayService(session=self._session)
+            self._replay_service = RequestReplayService(session=self._session, request_log_store=request_log_store)
         
-        self._streaming_gateway = StreamingGateway(session=self._session)
+        self._streaming_gateway = StreamingGateway(session=self._session, request_log_store=request_log_store)
 
     @property
     def is_pure_http(self) -> bool:
@@ -297,7 +305,7 @@ class AIStudioClient:
             enable_thinking=False if self._use_pure_http else enable_thinking,
         )
 
-        status, raw = await self._replay_service.replay(captured, body=modified_body)
+        status, raw = await self._replay_request(captured, body=modified_body, kind="generate_content", model=model)
         raw_text = raw.decode("utf-8", errors="replace")
         self._dump_raw_exchange(
             kind="generate_content",
@@ -338,7 +346,7 @@ class AIStudioClient:
             sanitize_plain_text=False,
             enable_thinking=False,
         )
-        status, raw = await self._replay_service.replay(captured, body=modified_body, timeout=timeout)
+        status, raw = await self._replay_request(captured, body=modified_body, timeout=timeout, kind="generate_image", model=model)
         raw_text = raw.decode("utf-8", errors="replace")
         self._dump_raw_exchange(
             kind="generate_image",
@@ -381,6 +389,29 @@ class AIStudioClient:
         if len(contents) != 1 or contents[0].role != "user":
             return False
         return all(part.text is not None and part.inline_data is None and part.file_id is None for part in contents[0].parts)
+
+    async def _replay_request(
+        self,
+        captured: CapturedRequest,
+        *,
+        body: str,
+        kind: str,
+        model: str,
+        timeout: int | None = None,
+    ) -> tuple[int, bytes]:
+        import inspect
+
+        replay = self._replay_service.replay
+        try:
+            parameters = inspect.signature(replay).parameters
+            accepts_metadata = "kind" in parameters or "model" in parameters or any(
+                parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
+            )
+        except (TypeError, ValueError):
+            accepts_metadata = True
+        if accepts_metadata:
+            return await replay(captured, body=body, timeout=timeout, kind=kind, model=model)
+        return await replay(captured, body=body, timeout=timeout)
 
     def _build_user_content(self, prompt: str, images: Optional[list[str]] = None) -> AistudioContent:
         import base64

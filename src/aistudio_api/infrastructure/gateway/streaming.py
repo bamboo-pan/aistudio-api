@@ -16,6 +16,7 @@ from aistudio_api.infrastructure.gateway.request_rewriter import modify_body
 from aistudio_api.infrastructure.gateway.session import BrowserSession
 from aistudio_api.infrastructure.gateway.stream_parser import IncrementalJSONStreamParser, classify_chunk
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent
+from aistudio_api.infrastructure.request_logs import RequestLogStore
 
 logger = logging.getLogger("aistudio")
 
@@ -65,8 +66,9 @@ def _summarize_error_body(raw_response: str, limit: int = 500) -> str:
 
 
 class StreamingGateway:
-    def __init__(self, session: BrowserSession | None = None):
+    def __init__(self, session: BrowserSession | None = None, request_log_store: RequestLogStore | None = None):
         self._session = session
+        self._request_log_store = request_log_store
 
     async def stream_chat(
         self,
@@ -107,6 +109,7 @@ class StreamingGateway:
             safety_off=safety_off,
             enable_thinking=enable_thinking,
         )
+        self._record_request(captured=captured, body=modified_body, model=model)
 
         parser = IncrementalJSONStreamParser()
         latest_usage: dict | None = None
@@ -150,3 +153,20 @@ class StreamingGateway:
 
         yield ("usage", latest_usage)
         yield ("done", None)
+
+    def _record_request(self, *, captured: CapturedRequest, body: str, model: str) -> None:
+        if self._request_log_store is None:
+            return
+        try:
+            self._request_log_store.save(
+                kind="stream_generate_content",
+                model=model or captured.model,
+                method="POST",
+                url=captured.url,
+                headers=captured.replay_headers,
+                captured_headers=captured.headers,
+                body=body,
+                transport="browser_stream",
+            )
+        except Exception as exc:
+            logger.warning("Request log write failed: %s", exc)

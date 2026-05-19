@@ -10,6 +10,7 @@ from typing import Callable
 from aistudio_api.infrastructure.account.account_store import AccountStore
 from aistudio_api.infrastructure.cache.snapshot_cache import SnapshotCache
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
+from aistudio_api.infrastructure.request_logs import RequestLogStore
 
 logger = logging.getLogger("aistudio.account_pool")
 
@@ -31,11 +32,13 @@ class AccountClientPool:
         client_factory: Callable[..., AIStudioClient] = AIStudioClient,
         port: int = 9222,
         use_pure_http: bool = False,
+        request_log_store: RequestLogStore | None = None,
     ) -> None:
         self._store = account_store
         self._client_factory = client_factory
         self._port = port
         self._use_pure_http = use_pure_http
+        self._request_log_store = request_log_store
         self._clients: dict[str, AccountClientEntry] = {}
         self._lock = asyncio.Lock()
 
@@ -55,6 +58,7 @@ class AccountClientPool:
                 port=self._port,
                 use_pure_http=self._use_pure_http,
                 snapshot_cache=SnapshotCache(),
+                request_log_store=self._request_log_store,
             )
             await client.switch_auth(auth_file)
             self._clients[account_id] = AccountClientEntry(

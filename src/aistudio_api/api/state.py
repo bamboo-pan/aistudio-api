@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
 from aistudio_api.application.account_client_pool import AccountClientPool
+from aistudio_api.infrastructure.request_logs import RequestLogStore
 
 
 @dataclass
@@ -20,6 +21,7 @@ class RuntimeState:
     account_service: object | None = None  # AccountService 实例
     rotator: object | None = None  # AccountRotator 实例
     account_client_pool: AccountClientPool | None = None
+    request_log_store: RequestLogStore | None = None
     model_stats: dict[str, dict] = field(
         default_factory=lambda: defaultdict(
             lambda: {
