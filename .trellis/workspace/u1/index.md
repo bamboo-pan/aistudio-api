@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 18
+- **Total Sessions**: 19
 - **Last Active**: 2026-05-19
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~616 | Active |
+| `journal-1.md` | ~649 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 19 | 2026-05-19 | Fix Responses output_text history input | `bea40e3` | `fix/responses-output-text-input` |
 | 18 | 2026-05-19 | Fix request log real UI BotGuard capture | `2cd6bb2` | `fix/real-ui-request-log-botguard` |
 | 17 | 2026-05-19 | Request capture log | `cc60be3` | `feature/request-capture-log` |
 | 16 | 2026-05-19 | Restore frontend model selectors | `9b7ef9e` | `fix/frontend-model-selectors-regression` |
