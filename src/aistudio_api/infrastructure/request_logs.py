@@ -8,6 +8,7 @@ import threading
 import time
 import uuid
 from collections.abc import Mapping
+from contextvars import ContextVar, Token
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,23 @@ from aistudio_api.config import settings
 
 
 _REQUEST_ID_RE = re.compile(r"^[a-f0-9]{32}$")
+_CURRENT_CHAIN_ID: ContextVar[str | None] = ContextVar("aistudio_request_log_chain_id", default=None)
+
+
+def new_request_chain_id() -> str:
+    return uuid.uuid4().hex
+
+
+def current_request_chain_id() -> str | None:
+    return _CURRENT_CHAIN_ID.get()
+
+
+def set_request_chain_id(chain_id: str) -> Token[str | None]:
+    return _CURRENT_CHAIN_ID.set(str(chain_id or ""))
+
+
+def reset_request_chain_id(token: Token[str | None]) -> None:
+    _CURRENT_CHAIN_ID.reset(token)
 
 
 class RequestLogStore:
@@ -77,6 +95,13 @@ class RequestLogStore:
         body: str | bytes,
         captured_headers: Mapping[str, Any] | None = None,
         transport: str = "",
+        chain_id: str | None = None,
+        direction: str = "outbound",
+        phase: str | None = None,
+        status_code: int | None = None,
+        response_headers: Mapping[str, Any] | None = None,
+        response_body: str | bytes | None = None,
+        elapsed_ms: float | None = None,
     ) -> dict[str, Any] | None:
         if not self.is_enabled():
             return None
@@ -85,13 +110,17 @@ class RequestLogStore:
         body_raw = self._body_to_text(body)
         body_json, body_parse_error = self._parse_body(body_raw)
         created_at_unix = time.time()
+        response_fields = self._response_fields(response_headers=response_headers, response_body=response_body)
         entry = {
             "id": request_id,
+            "chain_id": str(chain_id or current_request_chain_id() or request_id),
             "created_at": self._now_iso(created_at_unix),
             "created_at_unix": created_at_unix,
             "kind": str(kind or "request"),
             "model": str(model or ""),
             "transport": str(transport or ""),
+            "direction": str(direction or "outbound"),
+            "phase": str(phase or self._default_phase(direction)),
             "method": str(method or "POST").upper(),
             "url": str(url or ""),
             "headers": self._string_mapping(headers),
@@ -101,10 +130,37 @@ class RequestLogStore:
             "body_json": body_json,
             "body_parse_error": body_parse_error,
         }
+        if status_code is not None:
+            entry["status_code"] = int(status_code)
+        if elapsed_ms is not None:
+            entry["elapsed_ms"] = round(float(elapsed_ms), 3)
+        entry.update(response_fields)
         with self._lock:
             self.ensure_directory()
             self._write_json(self._path_for(request_id), entry)
         return entry
+
+    def attach_response(
+        self,
+        request_id: str,
+        *,
+        status_code: int | None = None,
+        response_headers: Mapping[str, Any] | None = None,
+        response_body: str | bytes | None = None,
+        elapsed_ms: float | None = None,
+    ) -> dict[str, Any]:
+        with self._lock:
+            path = self._path_for(request_id)
+            if not path.is_file():
+                raise FileNotFoundError(request_id)
+            entry = self._read_entry(path)
+            if status_code is not None:
+                entry["status_code"] = int(status_code)
+            if elapsed_ms is not None:
+                entry["elapsed_ms"] = round(float(elapsed_ms), 3)
+            entry.update(self._response_fields(response_headers=response_headers, response_body=response_body))
+            self._write_json(path, entry)
+            return entry
 
     def _path_for(self, request_id: str) -> Path:
         value = str(request_id or "").strip()
@@ -139,9 +195,15 @@ class RequestLogStore:
             "kind": entry.get("kind", ""),
             "model": entry.get("model", ""),
             "transport": entry.get("transport", ""),
+            "chain_id": entry.get("chain_id", ""),
+            "direction": entry.get("direction", ""),
+            "phase": entry.get("phase", ""),
+            "status_code": entry.get("status_code"),
+            "elapsed_ms": entry.get("elapsed_ms"),
             "method": entry.get("method", "POST"),
             "url": entry.get("url", ""),
             "body_size": entry.get("body_size", 0),
+            "response_body_size": entry.get("response_body_size", 0),
         }
 
     def _body_to_text(self, body: str | bytes) -> str:
@@ -150,13 +212,40 @@ class RequestLogStore:
         return str(body)
 
     def _parse_body(self, body: str) -> tuple[Any, str | None]:
+        if body == "":
+            return None, None
         try:
             return json.loads(body), None
         except json.JSONDecodeError as exc:
             return None, str(exc)
 
+    def _response_fields(
+        self,
+        *,
+        response_headers: Mapping[str, Any] | None,
+        response_body: str | bytes | None,
+    ) -> dict[str, Any]:
+        fields: dict[str, Any] = {}
+        if response_headers is not None:
+            fields["response_headers"] = self._string_mapping(response_headers)
+        if response_body is not None:
+            response_body_raw = self._body_to_text(response_body)
+            response_body_json, response_body_parse_error = self._parse_body(response_body_raw)
+            fields.update(
+                {
+                    "response_body_size": len(response_body_raw.encode("utf-8")),
+                    "response_body_raw": response_body_raw,
+                    "response_body_json": response_body_json,
+                    "response_body_parse_error": response_body_parse_error,
+                }
+            )
+        return fields
+
     def _string_mapping(self, mapping: Mapping[str, Any]) -> dict[str, str]:
         return {str(key): str(value) for key, value in mapping.items()}
+
+    def _default_phase(self, direction: str) -> str:
+        return "upstream_request" if str(direction or "").lower() == "outbound" else "request"
 
     def _now_iso(self, value: float | None = None) -> str:
         return datetime.fromtimestamp(value or time.time(), UTC).isoformat().replace("+00:00", "Z")

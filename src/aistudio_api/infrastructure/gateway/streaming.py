@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
@@ -109,7 +110,8 @@ class StreamingGateway:
             safety_off=safety_off,
             enable_thinking=enable_thinking,
         )
-        self._record_request(captured=captured, body=modified_body, model=model)
+        entry = self._record_request(captured=captured, body=modified_body, model=model)
+        started = time.perf_counter()
 
         parser = IncrementalJSONStreamParser()
         latest_usage: dict | None = None
@@ -136,6 +138,15 @@ class StreamingGateway:
                         yield (ctype, text)
 
         raw_response = "".join(raw_parts)
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        self._record_response(
+            captured=captured,
+            entry=entry,
+            model=model,
+            status_code=status_code,
+            raw_response=raw_response,
+            elapsed_ms=elapsed_ms,
+        )
         _dump_stream_exchange(
             model=model,
             url=captured.url,
@@ -154,11 +165,11 @@ class StreamingGateway:
         yield ("usage", latest_usage)
         yield ("done", None)
 
-    def _record_request(self, *, captured: CapturedRequest, body: str, model: str) -> None:
+    def _record_request(self, *, captured: CapturedRequest, body: str, model: str) -> dict | None:
         if self._request_log_store is None:
-            return
+            return None
         try:
-            self._request_log_store.save(
+            return self._request_log_store.save(
                 kind="stream_generate_content",
                 model=model or captured.model,
                 method="POST",
@@ -167,6 +178,48 @@ class StreamingGateway:
                 captured_headers=captured.headers,
                 body=body,
                 transport="browser_stream",
+                direction="outbound",
+                phase="upstream_request",
             )
         except Exception as exc:
             logger.warning("Request log write failed: %s", exc)
+            return None
+
+    def _record_response(
+        self,
+        *,
+        captured: CapturedRequest,
+        entry: dict | None,
+        model: str,
+        status_code: int,
+        raw_response: str,
+        elapsed_ms: float,
+    ) -> None:
+        if self._request_log_store is None:
+            return
+        chain_id = entry.get("chain_id") if isinstance(entry, dict) else None
+        try:
+            if isinstance(entry, dict) and entry.get("id"):
+                self._request_log_store.attach_response(
+                    str(entry["id"]),
+                    status_code=status_code,
+                    response_body=raw_response,
+                    elapsed_ms=elapsed_ms,
+                )
+            self._request_log_store.save(
+                kind="stream_generate_content",
+                model=model or captured.model,
+                method="POST",
+                url=captured.url,
+                headers={},
+                body="",
+                transport="browser_stream",
+                chain_id=chain_id,
+                direction="inbound",
+                phase="upstream_response",
+                status_code=status_code,
+                response_body=raw_response,
+                elapsed_ms=elapsed_ms,
+            )
+        except Exception as exc:
+            logger.warning("Request log response write failed: %s", exc)

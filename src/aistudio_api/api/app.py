@@ -3,18 +3,21 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.responses import RedirectResponse
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from aistudio_api.infrastructure.generated_images import GeneratedImageStore
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
-from aistudio_api.infrastructure.request_logs import RequestLogStore
+from aistudio_api.infrastructure.request_logs import RequestLogStore, new_request_chain_id, reset_request_chain_id, set_request_chain_id
 
 from .routes_accounts import router as accounts_router
 from .routes_gemini import router as gemini_router
@@ -120,6 +123,141 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="AI Studio API", lifespan=lifespan)
+
+
+def _should_log_api_exchange(request: Request) -> bool:
+    path = request.url.path
+    return path == "/v1" or path.startswith("/v1/") or path.startswith("/v1beta/")
+
+
+def _request_model_from_body(request: Request, body: bytes) -> str:
+    try:
+        payload = json.loads(body.decode("utf-8")) if body else None
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        payload = None
+    if isinstance(payload, dict) and payload.get("model"):
+        return str(payload["model"])
+
+    path = request.url.path
+    marker = "/v1beta/models/"
+    if path.startswith(marker):
+        return path[len(marker) :].split(":", 1)[0]
+    return ""
+
+
+def _chunk_to_bytes(chunk) -> bytes:
+    if isinstance(chunk, bytes):
+        return chunk
+    if isinstance(chunk, bytearray):
+        return bytes(chunk)
+    if isinstance(chunk, memoryview):
+        return chunk.tobytes()
+    return str(chunk).encode("utf-8")
+
+
+@app.middleware("http")
+async def request_log_exchange_middleware(request: Request, call_next):
+    store = runtime_state.request_log_store
+    if store is None or not _should_log_api_exchange(request) or not store.is_enabled():
+        return await call_next(request)
+
+    request_body = await request.body()
+    request_sent = False
+
+    async def receive_logged_body():
+        nonlocal request_sent
+        if request_sent:
+            return {"type": "http.request", "body": b"", "more_body": False}
+        request_sent = True
+        return {"type": "http.request", "body": request_body, "more_body": False}
+
+    logged_request = Request(request.scope, receive_logged_body)
+    chain_id = new_request_chain_id()
+    model = _request_model_from_body(request, request_body)
+    started = time.perf_counter()
+    token = set_request_chain_id(chain_id)
+    try:
+        try:
+            store.save(
+                kind="client_request",
+                model=model,
+                method=request.method,
+                url=str(request.url),
+                headers=request.headers,
+                body=request_body,
+                transport="http",
+                chain_id=chain_id,
+                direction="inbound",
+                phase="client_request",
+            )
+        except Exception as exc:
+            logger.warning("Request log client request write failed: %s", exc)
+        response = await call_next(logged_request)
+    except Exception as exc:
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        try:
+            store.save(
+                kind="client_response",
+                model=model,
+                method=request.method,
+                url=str(request.url),
+                headers={},
+                body="",
+                transport="http",
+                chain_id=chain_id,
+                direction="outbound",
+                phase="client_response",
+                status_code=500,
+                response_body=str(exc),
+                elapsed_ms=elapsed_ms,
+            )
+        except Exception as log_exc:
+            logger.warning("Request log failed client response write failed: %s", log_exc)
+        reset_request_chain_id(token)
+        raise
+    reset_request_chain_id(token)
+
+    response_chunks: list[bytes] = []
+    response_headers = dict(response.headers)
+
+    async def body_iterator():
+        stream_token = set_request_chain_id(chain_id)
+        try:
+            async for chunk in response.body_iterator:
+                chunk_bytes = _chunk_to_bytes(chunk)
+                response_chunks.append(chunk_bytes)
+                yield chunk
+        finally:
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            response_body = b"".join(response_chunks)
+            try:
+                store.save(
+                    kind="client_response",
+                    model=model,
+                    method=request.method,
+                    url=str(request.url),
+                    headers=response_headers,
+                    body="",
+                    transport="http",
+                    chain_id=chain_id,
+                    direction="outbound",
+                    phase="client_response",
+                    status_code=response.status_code,
+                    response_headers=response_headers,
+                    response_body=response_body,
+                    elapsed_ms=elapsed_ms,
+                )
+            except Exception as exc:
+                logger.warning("Request log client response write failed: %s", exc)
+            reset_request_chain_id(stream_token)
+
+    return StreamingResponse(
+        body_iterator(),
+        status_code=response.status_code,
+        headers=response_headers,
+        media_type=response.media_type,
+        background=response.background,
+    )
 app.include_router(system_router)
 app.include_router(gemini_router)
 app.include_router(openai_router)

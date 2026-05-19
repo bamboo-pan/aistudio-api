@@ -11,15 +11,16 @@ from aistudio_api.domain.models import Candidate, ModelOutput
 
 
 class FakeTextClient:
-    def __init__(self, *, text: str = "ok", function_calls: list[dict] | None = None):
+    def __init__(self, *, text: str = "ok", thinking: str = "", function_calls: list[dict] | None = None):
         self.text = text
+        self.thinking = thinking
         self.function_calls = function_calls or []
         self.calls = []
 
     async def generate_content(self, **kwargs):
         self.calls.append(kwargs)
         return ModelOutput(
-            candidates=[Candidate(text=self.text, function_calls=self.function_calls)],
+            candidates=[Candidate(text=self.text, thinking=self.thinking, function_calls=self.function_calls)],
             usage={"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7},
         )
 
@@ -123,6 +124,42 @@ def test_openai_responses_forwards_thinking_control():
     assert client.calls[0]["enable_thinking"] is False
 
 
+def test_openai_responses_forwards_enabled_thinking_level():
+    client = FakeTextClient(text="ok")
+
+    response = request_with_client(
+        client,
+        "POST",
+        "/v1/responses",
+        json={"model": "gemini-3-flash-preview", "input": "hello", "thinking": "high"},
+    )
+
+    assert response.status_code == 200
+    call = client.calls[0]
+    assert call["enable_thinking"] is True
+    assert call["generation_config_overrides"]["thinking_config"] == [1, None, None, 3]
+    assert call["generation_config_overrides"]["request_flag"] == 1
+
+
+def test_openai_responses_returns_thinking_output():
+    client = FakeTextClient(text="answer", thinking="private reasoning")
+
+    response = request_with_client(
+        client,
+        "POST",
+        "/v1/responses",
+        json={"model": "gemini-3-flash-preview", "input": "hello", "thinking": "high"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["thinking"] == "private reasoning"
+    reasoning = body["output"][0]
+    assert reasoning["type"] == "reasoning"
+    assert reasoning["content"][0] == {"type": "reasoning_text", "text": "private reasoning"}
+    assert body["output"][1]["content"][0]["text"] == "answer"
+
+
 def test_openai_responses_accepts_flat_function_tool_input():
     client = FakeTextClient(text="ok")
 
@@ -199,6 +236,23 @@ def test_openai_responses_streaming_emits_responses_events():
     assert "event: response.output_text.delta" in response.text
     assert '"delta": "hello"' in response.text
     assert "event: response.completed" in response.text
+
+
+def test_openai_responses_streaming_emits_reasoning_events():
+    client = FakeStreamClient(events=[("thinking", "plan"), ("body", "answer"), ("usage", {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3})])
+
+    response = request_with_client(
+        client,
+        "POST",
+        "/v1/responses",
+        json={"model": "gemini-3-flash-preview", "input": "hello", "thinking": "high", "stream": True},
+    )
+
+    assert response.status_code == 200
+    assert "event: response.reasoning.delta" in response.text
+    assert '"delta": "plan"' in response.text
+    assert "event: response.reasoning.done" in response.text
+    assert '"thinking": "plan"' in response.text
 
 
 def test_messages_accepts_anthropic_tools_and_returns_tool_use_blocks():

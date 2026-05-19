@@ -675,11 +675,13 @@
             <div class="request-detail" x-show="activeRequestLog" x-cloak>
               <div class="request-detail-grid">
                 <div><span>时间</span><strong x-text="fmtDate(activeRequestLog?.created_at)"></strong></div>
-                <div><span>类型</span><strong x-text="requestLogKindLabel(activeRequestLog?.kind)"></strong></div>
+                <div><span>类型</span><strong x-text="requestLogKindLabel(activeRequestLog?.kind,activeRequestLog?.phase)"></strong></div>
                 <div><span>模型</span><strong x-text="activeRequestLog?.model||'-'"></strong></div>
                 <div><span>传输</span><strong x-text="activeRequestLog?.transport||'-'"></strong></div>
                 <div><span>方法</span><strong x-text="activeRequestLog?.method||'POST'"></strong></div>
-                <div><span>大小</span><strong x-text="fileSizeLabel(activeRequestLog?.body_size||0)"></strong></div>
+                <div><span>状态</span><strong x-text="activeRequestLog?.status_code||'-'"></strong></div>
+                <div><span>链路</span><strong x-text="activeRequestLog?.chain_id||'-'"></strong></div>
+                <div><span>大小</span><strong x-text="fileSizeLabel((activeRequestLog?.body_size||0)+(activeRequestLog?.response_body_size||0))"></strong></div>
               </div>
 
               <div class="request-section">
@@ -718,6 +720,30 @@
               <div class="request-section">
                 <h3>Body 原文</h3>
                 <pre class="request-code" x-text="activeRequestLog?.body_raw||''"></pre>
+              </div>
+
+              <div class="request-section" x-show="activeRequestLog?.response_headers">
+                <h3>响应 Headers</h3>
+                <div class="request-header-table">
+                  <template x-for="row in requestHeaderRows(activeRequestLog,'response_headers')" :key="row.name">
+                    <div><span x-text="row.name"></span><code x-text="row.value"></code></div>
+                  </template>
+                </div>
+              </div>
+
+              <div class="request-section" x-show="activeRequestLog?.response_body_json!==undefined&&activeRequestLog?.response_body_json!==null">
+                <h3>响应 Body JSON</h3>
+                <pre class="request-code" x-text="jsonPretty(activeRequestLog?.response_body_json)"></pre>
+              </div>
+
+              <div class="request-section" x-show="activeRequestLog?.response_body_parse_error">
+                <h3>响应 Body 解析错误</h3>
+                <pre class="request-raw" x-text="activeRequestLog?.response_body_parse_error"></pre>
+              </div>
+
+              <div class="request-section" x-show="activeRequestLog?.response_body_raw!==undefined">
+                <h3>响应 Body 原文</h3>
+                <pre class="request-code" x-text="activeRequestLog?.response_body_raw||''"></pre>
               </div>
 
               <div class="request-section">

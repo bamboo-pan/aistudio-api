@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend spec index for final compliance review."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Verification contracts for request logging, Responses SSE translation, and frontend behavior."}

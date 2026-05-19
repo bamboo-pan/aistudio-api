@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 
 from aistudio_api.config import settings
 from aistudio_api.infrastructure.gateway.capture import CapturedRequest
@@ -34,16 +35,20 @@ class RequestReplayService:
 
         headers = captured.replay_headers
         transport = "browser" if self._session is not None else "http"
-        self._record_request(captured=captured, body=body, headers=headers, kind=kind, model=model, transport=transport)
+        entry = self._record_request(captured=captured, body=body, headers=headers, kind=kind, model=model, transport=transport)
+        started = time.perf_counter()
 
         try:
             if self._session is not None:
-                return await self._session.send_hooked_request(
+                status, raw = await self._session.send_hooked_request(
                     body=body,
                     url=captured.url,
                     headers=headers,
                     timeout_ms=timeout * 1000,
                 )
+                elapsed_ms = (time.perf_counter() - started) * 1000
+                self._record_response(captured=captured, entry=entry, kind=kind, model=model, status=status, raw=raw, transport=transport, elapsed_ms=elapsed_ms)
+                return status, raw
 
             import aiohttp
 
@@ -55,10 +60,25 @@ class RequestReplayService:
                     timeout=aiohttp.ClientTimeout(total=timeout),
                 ) as resp:
                     raw = await resp.read()
+                    elapsed_ms = (time.perf_counter() - started) * 1000
+                    self._record_response(
+                        captured=captured,
+                        entry=entry,
+                        kind=kind,
+                        model=model,
+                        status=resp.status,
+                        raw=raw,
+                        headers=resp.headers,
+                        transport=transport,
+                        elapsed_ms=elapsed_ms,
+                    )
                     return resp.status, raw
         except Exception as exc:
             logger.error("Replay error: %s", exc)
-            return 0, str(exc).encode()
+            raw = str(exc).encode()
+            elapsed_ms = (time.perf_counter() - started) * 1000
+            self._record_response(captured=captured, entry=entry, kind=kind, model=model, status=0, raw=raw, transport=transport, elapsed_ms=elapsed_ms)
+            return 0, raw
 
     def _record_request(
         self,
@@ -69,11 +89,11 @@ class RequestReplayService:
         kind: str,
         model: str | None,
         transport: str,
-    ) -> None:
+    ) -> dict | None:
         if self._request_log_store is None:
-            return
+            return None
         try:
-            self._request_log_store.save(
+            return self._request_log_store.save(
                 kind=kind,
                 model=model or captured.model,
                 method="POST",
@@ -82,6 +102,53 @@ class RequestReplayService:
                 captured_headers=captured.headers,
                 body=body,
                 transport=transport,
+                direction="outbound",
+                phase="upstream_request",
             )
         except Exception as exc:
             logger.warning("Request log write failed: %s", exc)
+            return None
+
+    def _record_response(
+        self,
+        *,
+        captured: CapturedRequest,
+        entry: dict | None,
+        kind: str,
+        model: str | None,
+        status: int,
+        raw: bytes,
+        transport: str,
+        elapsed_ms: float,
+        headers: dict | None = None,
+    ) -> None:
+        if self._request_log_store is None:
+            return
+        chain_id = entry.get("chain_id") if isinstance(entry, dict) else None
+        try:
+            if isinstance(entry, dict) and entry.get("id"):
+                self._request_log_store.attach_response(
+                    str(entry["id"]),
+                    status_code=status,
+                    response_headers=headers,
+                    response_body=raw,
+                    elapsed_ms=elapsed_ms,
+                )
+            self._request_log_store.save(
+                kind=kind,
+                model=model or captured.model,
+                method="POST",
+                url=captured.url,
+                headers=headers or {},
+                body="",
+                transport=transport,
+                chain_id=chain_id,
+                direction="inbound",
+                phase="upstream_response",
+                status_code=status,
+                response_headers=headers,
+                response_body=raw,
+                elapsed_ms=elapsed_ms,
+            )
+        except Exception as exc:
+            logger.warning("Request log response write failed: %s", exc)
