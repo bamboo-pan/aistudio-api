@@ -34,6 +34,90 @@ Questions to answer:
 
 (To be filled by the team)
 
+## Scenario: Outbound AI Studio Request Logging
+
+### 1. Scope / Trigger
+
+- Trigger: Code changes the request-log store, `/request-logs` APIs, static request-log UI, account client pooling, or AI Studio replay/streaming send boundaries.
+- Use this contract whenever implementing or refactoring optional capture of complete outbound requests sent to AI Studio.
+
+### 2. Signatures
+
+- `AISTUDIO_REQUEST_LOGS_DIR` sets the durable request-log root and defaults to `data/request-logs`.
+- `RequestLogStore.status() -> {"enabled": bool, "count": int}`.
+- `RequestLogStore.set_enabled(enabled: bool) -> {"enabled": bool, "count": int}`.
+- `RequestLogStore.save(kind, model, method, url, headers, body, captured_headers=None, transport="") -> dict | None`.
+- `GET /request-logs/status`, `PUT /request-logs/status`, `GET /request-logs?limit=<int>`, `GET /request-logs/{request_id}`.
+- Frontend route/hash: `#requests`.
+
+### 3. Contracts
+
+- Request logging defaults to disabled and must persist the switch in the same store as the entries.
+- Saved entries represent outbound AI Studio wire requests after `modify_body`, not inbound OpenAI/Gemini/Claude-compatible payloads.
+- Non-streaming replay, streaming replay, image generation replay, and account-pooled clients must share the same `RequestLogStore` instance at runtime.
+- Saved details must include id, timestamps, kind, model, transport, method, URL, sanitized replay headers, original captured headers, raw body, parsed JSON body when parseable, parse error when not parseable, and body size.
+- The feature intentionally does not redact stored outbound request details because the UI must not lose information.
+- The frontend request-log page must render the switch, list, selected structured detail, raw body, and complete JSON record.
+
+### 4. Validation & Error Matrix
+
+- Switch disabled -> `save(...)` returns `None` and writes no entry file.
+- Invalid `request_id` -> `GET /request-logs/{request_id}` returns HTTP 400.
+- Missing valid `request_id` -> `GET /request-logs/{request_id}` returns HTTP 404.
+- `limit < 1` -> normalize to 1; `limit > 1000` -> normalize to 1000.
+- Request-log write failure at replay boundary -> log a warning and continue the upstream request path.
+- Unparseable body -> preserve `body_raw`, set `body_json` to null, and store `body_parse_error`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: User enables logging, sends `/v1/chat/completions`, then opens `#requests` and sees the rewritten AI Studio body in both readable JSON and raw text.
+- Good: Balanced account rotation uses an isolated client but writes to the same request-log directory and switch as the main runtime client.
+- Base: Logging remains off after startup until explicitly enabled, and normal chat/image/streaming requests run without creating files.
+- Bad: Logging before `modify_body` stores client-compatible input instead of the actual AI Studio request body.
+- Bad: A pooled account client creates a private `RequestLogStore`, so the UI switch appears on while rotated requests are not captured.
+- Bad: The detail UI renders only prettified JSON and drops raw body/headers, losing information.
+
+### 6. Tests Required
+
+- Unit: store default-off behavior, persisted toggle, entry summary, full detail, raw body, parsed JSON body, and header preservation.
+- Unit/API: `/request-logs/status`, `/request-logs`, and `/request-logs/{id}` manage status, listing, detail, and invalid ids.
+- Unit: non-streaming `RequestReplayService.replay` logs the actual outbound body and does not log while disabled.
+- Unit: `StreamingGateway.stream_chat` logs the rewritten outbound body while enabled.
+- Unit/static: frontend exposes the `requests` route, toggle/status calls, list/detail loading, raw body view, and complete JSON rendering.
+- Real: WSL browser-backed smoke must enable logging, send a real request, read list/detail, assert body/header preservation, and disable logging.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+store = RequestLogStore()
+client = AIStudioClient()
+pool = AccountClientPool(account_store)
+```
+
+#### Correct
+
+```python
+store = RequestLogStore()
+client = AIStudioClient(request_log_store=store)
+pool = AccountClientPool(account_store, request_log_store=store)
+```
+
+#### Wrong
+
+```python
+store.save(body=inbound_payload)
+modified_body = modify_body(captured.body, contents, model=model)
+```
+
+#### Correct
+
+```python
+modified_body = modify_body(captured.body, contents, model=model)
+store.save(body=modified_body, headers=captured.replay_headers, captured_headers=captured.headers)
+```
+
 ## Scenario: Client-Compatible Chat/Responses/Messages Gateway
 
 ### 1. Scope / Trigger

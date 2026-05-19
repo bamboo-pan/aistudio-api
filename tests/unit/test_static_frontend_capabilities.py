@@ -76,6 +76,31 @@ def test_static_frontend_exposes_configurable_api_interfaces():
     assert ".api-control" in style_css
 
 
+def test_static_frontend_exposes_request_log_page():
+    app_js = (ROOT / "src" / "aistudio_api" / "static" / "app.js").read_text(encoding="utf-8")
+    index_html = (ROOT / "src" / "aistudio_api" / "static" / "index.html").read_text(encoding="utf-8")
+    style_css = (ROOT / "src" / "aistudio_api" / "static" / "style.css").read_text(encoding="utf-8")
+
+    assert "requestLogEnabled:false" in app_js
+    assert "loadRequestLogStatus()" in app_js
+    assert "toggleRequestLogging()" in app_js
+    assert "loadRequestLogs()" in app_js
+    assert "loadRequestLogDetail(id)" in app_js
+    assert "requestFullJson()" in app_js
+    assert "'/request-logs/status'" in app_js
+    assert "`/request-logs/${encodeURIComponent(id)}`" in app_js
+    assert "view==='requests'" in index_html
+    assert "请求记录" in index_html
+    assert "保存开启" in index_html
+    assert "Body JSON" in index_html
+    assert "Body 原文" in index_html
+    assert "完整记录" in index_html
+    assert "复制完整 JSON" in index_html
+    assert ".request-workspace" in style_css
+    assert ".request-switch.active" in style_css
+    assert ".request-code" in style_css
+
+
 def test_static_frontend_exposes_playground_workbench_tools():
     app_js = (ROOT / "src" / "aistudio_api" / "static" / "app.js").read_text(encoding="utf-8")
     index_html = (ROOT / "src" / "aistudio_api" / "static" / "index.html").read_text(encoding="utf-8")
