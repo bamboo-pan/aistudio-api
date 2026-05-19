@@ -124,6 +124,86 @@ if payload.get("stream"):
 	return _build_responses_streaming_response(payload, client, request)
 ```
 
+## Scenario: Static Frontend API Surface Selection
+
+### 1. Scope / Trigger
+
+- Trigger: Code changes the built-in static frontend's model-list, chat, image-generation, or prompt-optimization request paths.
+- Use this contract whenever the UI can choose between OpenAI-compatible `/v1` routes and Gemini-native `/v1beta` routes.
+
+### 2. Signatures
+
+- `modelListEndpoint() -> string`
+- `normalizeModelList(data) -> list[dict]`
+- `normalizeGeminiModel(item) -> dict`
+- `chatRequestBody() -> dict`
+- `geminiChatRequestBody() -> dict`
+- `geminiChatEndpoint(stream=false) -> string`
+- `geminiMessageFromPayload(payload) -> {content, thinking, usage}`
+- `imageGenerationEndpoint() -> string`
+
+### 3. Contracts
+
+- OpenAI-compatible behavior must remain the default for models, chat, and images.
+- Model-list selection may call `GET /v1/models` or `GET /v1beta/models`, but the UI's internal model shape must still include `id` and `capabilities` so controls do not guess from raw API payloads at render time.
+- Gemini chat selection must translate the current transcript into `contents`, optional `systemInstruction`, optional `tools`, and optional `generationConfig` before calling `/v1beta/models/{model}:generateContent` or `:streamGenerateContent`.
+- Gemini responses must be translated back to the existing transcript shape: assistant `content`, optional `thinking`, and normalized usage tokens.
+- Image generation remains routed through `/v1/images/generations` until a real Gemini-native image endpoint exists; disabled UI options are allowed, silently broken selectable options are not.
+- Account, rotation, stats, generated image files, and image-session endpoints are project management endpoints and must not be switched by the model/chat/image API selector.
+
+### 4. Validation & Error Matrix
+
+- Invalid stored API preference -> fall back to `openai` and keep loading the UI.
+- Gemini model list lacks project-specific capabilities -> infer conservative capabilities from known model id patterns and `supportedGenerationMethods`.
+- Selected model is missing after switching model-list API -> clear the previous model and select the first available model.
+- Gemini chat stream event has `error` -> show the error on the assistant message and continue stream cleanup.
+- Image API option has no backend implementation -> render it disabled and keep using the implemented OpenAI image endpoint.
+
+### 5. Good/Base/Bad Cases
+
+- Good: User switches model list to Gemini; the frontend calls `/v1beta/models`, strips the `models/` prefix for display, and still shows capability-driven controls.
+- Good: User switches chat to Gemini with Stream enabled; the frontend calls `/v1beta/models/{model}:streamGenerateContent` and parses Gemini SSE chunks into the transcript.
+- Base: User keeps defaults; existing `/v1/models`, `/v1/chat/completions`, and `/v1/images/generations` behavior is unchanged.
+- Bad: A selector label says Gemini image generation is available, but clicking generate still sends an incompatible or nonexistent Gemini image request.
+- Bad: Gemini model list is displayed raw and the rest of the UI loses capability gating for files, search, thinking, or image models.
+
+### 6. Tests Required
+
+- Unit/static: frontend exposes model, chat, and image API selectors.
+- Unit/static: selectors persist in `localStorage` and default to OpenAI-compatible endpoints.
+- Unit/static: Gemini model-list normalization and Gemini chat endpoint/body helpers are present.
+- Unit/static: image generation goes through an endpoint helper that currently returns `/v1/images/generations`.
+- Real: WSL smoke should serve `/static/index.html`, `/static/app.js`, `/v1/models`, and `/v1beta/models` from a temporary WSL copy with real account data available.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```javascript
+const r = await fetch('/v1/chat/completions', { method: 'POST', body: JSON.stringify(body) })
+```
+
+#### Correct
+
+```javascript
+if (this.chatApi === 'gemini') {
+	return await this.completeGeminiChatFromCurrentMessages()
+}
+return await this.completeOpenAIChatFromCurrentMessages()
+```
+
+#### Wrong
+
+```javascript
+return data.models
+```
+
+#### Correct
+
+```javascript
+return data.models.map(item => this.normalizeGeminiModel(item)).filter(item => item.id)
+```
+
 ## Scenario: Gateway Replay Uses Captured Request Contract
 
 ### 1. Scope / Trigger

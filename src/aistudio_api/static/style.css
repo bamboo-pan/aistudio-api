@@ -36,6 +36,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Ar
 .topbar{height:56px;border-bottom:1px solid var(--border);padding:0 20px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;background:#fff;gap:12px}
 .topbar-left{display:flex;align-items:center;gap:12px;min-width:0;flex:1}
 .topbar-right{display:flex;align-items:center;gap:8px;flex-shrink:0;position:relative}
+.api-toolbar{gap:10px;flex-wrap:wrap;justify-content:flex-end;min-width:0}
+.api-control{display:flex;align-items:center;gap:6px;min-width:0}
+.api-control>span{font-size:12px;color:var(--muted);font-weight:700;white-space:nowrap}
+.api-select{min-width:138px;max-width:210px}
+.api-select .cselect-btn{min-height:34px;border-radius:8px;font-size:13px}
+.api-option{align-items:flex-start;flex-direction:column;gap:2px}
+.api-option small{font-size:11px;color:var(--muted);font-weight:500;line-height:1.2}
+.cselect-opt.disabled{opacity:.48;cursor:not-allowed;color:var(--muted)}
+.cselect-opt.disabled:hover{background:#fff}
 .topbar-title{font-weight:600;font-size:16px}
 .topbar .sel{padding:6px 28px 6px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23676767' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E") no-repeat right 10px center;outline:none;font-family:inherit;max-width:260px;cursor:pointer;appearance:none;-webkit-appearance:none;-moz-appearance:none}
 .icon-btn{width:34px;height:34px;border-radius:8px;border:1px solid var(--border);background:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:.15s;flex-shrink:0}
@@ -540,6 +549,11 @@ select.sel:focus,.sel:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(
   .sidebar-toggle{display:none}
   .overlay.open{display:block}
   .mh-btn{display:block}
+  .topbar{height:auto;min-height:56px;align-items:flex-start;flex-wrap:wrap;padding:10px 12px}
+  .topbar-left{flex:1 1 100%}
+  .api-toolbar{width:100%;justify-content:flex-start;gap:8px}
+  .api-control{flex:1 1 148px;align-items:flex-start;flex-direction:column;gap:4px}
+  .api-select{width:100%;min-width:0;max-width:none}
   .topbar .sel{max-width:150px;font-size:12px}
   .cfg-dropdown{width:calc(100vw - 32px);right:-8px}
   .playground-shell{padding:14px;gap:12px}
