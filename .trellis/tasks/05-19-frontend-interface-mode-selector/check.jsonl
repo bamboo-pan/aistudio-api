@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/index.md","reason":"Spec index to verify package-level expectations."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Quality checks and forbidden patterns relevant to frontend/static changes."}
