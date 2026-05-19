@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 17
+- **Total Sessions**: 18
 - **Last Active**: 2026-05-19
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~583 | Active |
+| `journal-1.md` | ~616 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 18 | 2026-05-19 | Fix request log real UI BotGuard capture | `2cd6bb2` | `fix/real-ui-request-log-botguard` |
 | 17 | 2026-05-19 | Request capture log | `cc60be3` | `feature/request-capture-log` |
 | 16 | 2026-05-19 | Restore frontend model selectors | `9b7ef9e` | `fix/frontend-model-selectors-regression` |
 | 15 | 2026-05-19 | Verify OpenCode interface compatibility | `9992802` | `feature/opencode-interface-verification` |
