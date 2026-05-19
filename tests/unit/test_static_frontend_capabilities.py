@@ -81,8 +81,11 @@ def test_static_frontend_request_logs_show_chain_phases_and_responses():
     assert "client_request:'用户 → 后端'" in app_js
     assert "upstream_response:'AI Studio → 后端'" in app_js
     assert "response_body_size" in app_js
+    assert "requestLogEntries()" in app_js
+    assert "requestPhaseMeta(item)" in app_js
     assert "activeRequestLog?.chain_id" in index_html
     assert "activeRequestLog?.status_code" in index_html
+    assert "生命周期阶段" in index_html
     assert "响应 Body JSON" in index_html
     assert "response_body_raw" in index_html
     assert "selectImageModel(m.id)" in index_html
@@ -99,22 +102,39 @@ def test_static_frontend_exposes_request_log_page():
     style_css = (ROOT / "src" / "aistudio_api" / "static" / "style.css").read_text(encoding="utf-8")
 
     assert "requestLogEnabled:false" in app_js
+    assert "requestLogEntryTotal:0" in app_js
+    assert "requestLogSelection:{}" in app_js
+    assert "d.group_count" in app_js
+    assert "d.group_count??this.requestLogTotal||0" not in app_js
     assert "loadRequestLogStatus()" in app_js
     assert "toggleRequestLogging()" in app_js
     assert "loadRequestLogs()" in app_js
     assert "loadRequestLogDetail(id)" in app_js
+    assert "selectedRequestLogCount" in app_js
+    assert "selectAllRequestLogs()" in app_js
+    assert "deleteSelectedRequestLogs()" in app_js
+    assert "exportSelectedRequestLogs()" in app_js
     assert "requestFullJson()" in app_js
     assert "'/request-logs/status'" in app_js
-    assert "`/request-logs/${encodeURIComponent(id)}`" in app_js
+    assert "`/request-logs/groups/${encodeURIComponent(id)}`" in app_js
+    assert "'/request-logs/groups/delete'" in app_js
+    assert "'/request-logs/export'" in app_js
     assert "view==='requests'" in index_html
     assert "请求记录" in index_html
+    assert "完整请求" in index_html
     assert "保存开启" in index_html
+    assert "导出所选" in index_html
+    assert "删除所选" in index_html
     assert "Body JSON" in index_html
     assert "Body 原文" in index_html
     assert "完整记录" in index_html
     assert "复制完整 JSON" in index_html
+    assert "导出当前" in index_html
+    assert "删除当前" in index_html
     assert ".request-workspace" in style_css
     assert ".request-switch.active" in style_css
+    assert ".request-log-check" in style_css
+    assert ".request-phase-card" in style_css
     assert ".request-code" in style_css
 
 

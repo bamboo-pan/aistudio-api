@@ -18,6 +18,12 @@ from aistudio_api.config import settings
 
 _REQUEST_ID_RE = re.compile(r"^[a-f0-9]{32}$")
 _CURRENT_CHAIN_ID: ContextVar[str | None] = ContextVar("aistudio_request_log_chain_id", default=None)
+_PHASE_ORDER = {
+    "client_request": 10,
+    "upstream_request": 20,
+    "upstream_response": 30,
+    "client_response": 40,
+}
 
 
 def new_request_chain_id() -> str:
@@ -49,7 +55,7 @@ class RequestLogStore:
         self.entries_dir.mkdir(parents=True, exist_ok=True)
 
     def status(self) -> dict[str, Any]:
-        return {"enabled": self.is_enabled(), "count": self.count()}
+        return {"enabled": self.is_enabled(), "count": self.count(), "group_count": self.group_count()}
 
     def is_enabled(self) -> bool:
         return bool(self._read_state().get("enabled", False))
@@ -77,6 +83,64 @@ class RequestLogStore:
         if limit is not None:
             return items[: max(0, limit)]
         return items
+
+    def group_count(self) -> int:
+        return len(self._group_entries().keys())
+
+    def list_groups(self, *, limit: int | None = None) -> list[dict[str, Any]]:
+        groups = [self._group_summary(chain_id, entries) for chain_id, entries in self._group_entries().items()]
+        groups.sort(key=lambda item: (item.get("updated_at_unix") or 0, item.get("id") or ""), reverse=True)
+        if limit is not None:
+            return groups[: max(0, limit)]
+        return groups
+
+    def get_group(self, chain_id: str) -> dict[str, Any]:
+        normalized_id = self._normalize_chain_id(chain_id)
+        entries = self._group_entries().get(normalized_id)
+        if not entries:
+            raise FileNotFoundError(normalized_id)
+        return self._group_detail(normalized_id, entries)
+
+    def export_groups(self, chain_ids: list[str]) -> dict[str, Any]:
+        requested_ids = self._normalize_chain_ids(chain_ids)
+        groups = self._group_entries()
+        data = [self._group_detail(chain_id, groups[chain_id]) for chain_id in requested_ids if chain_id in groups]
+        found_ids = {item["id"] for item in data}
+        return {
+            "data": data,
+            "missing": [chain_id for chain_id in requested_ids if chain_id not in found_ids],
+        }
+
+    def delete_group(self, chain_id: str) -> dict[str, Any]:
+        result = self.delete_groups([chain_id])
+        if not result["deleted_entries"]:
+            raise FileNotFoundError(chain_id)
+        return result
+
+    def delete_groups(self, chain_ids: list[str]) -> dict[str, Any]:
+        requested_ids = self._normalize_chain_ids(chain_ids)
+        deleted_entries = 0
+        deleted_groups: list[str] = []
+        with self._lock:
+            grouped_paths = self._group_entry_paths()
+            for chain_id in requested_ids:
+                paths = grouped_paths.get(chain_id, [])
+                if not paths:
+                    continue
+                for path in paths:
+                    try:
+                        path.unlink()
+                        deleted_entries += 1
+                    except FileNotFoundError:
+                        continue
+                deleted_groups.append(chain_id)
+        return {
+            "requested": len(requested_ids),
+            "deleted_groups": len(deleted_groups),
+            "deleted_entries": deleted_entries,
+            "groups": deleted_groups,
+            "missing": [chain_id for chain_id in requested_ids if chain_id not in set(deleted_groups)],
+        }
 
     def get(self, request_id: str) -> dict[str, Any]:
         path = self._path_for(request_id)
@@ -181,6 +245,28 @@ class RequestLogStore:
             raise ValueError("request log file must contain an object")
         return data
 
+    def _group_entries(self) -> dict[str, list[dict[str, Any]]]:
+        self.ensure_directory()
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for path in self.entries_dir.glob("*.json"):
+            try:
+                entry = self._read_entry(path)
+            except (OSError, ValueError, json.JSONDecodeError):
+                continue
+            groups.setdefault(self._chain_key(entry), []).append(entry)
+        return groups
+
+    def _group_entry_paths(self) -> dict[str, list[Path]]:
+        self.ensure_directory()
+        groups: dict[str, list[Path]] = {}
+        for path in self.entries_dir.glob("*.json"):
+            try:
+                entry = self._read_entry(path)
+            except (OSError, ValueError, json.JSONDecodeError):
+                continue
+            groups.setdefault(self._chain_key(entry), []).append(path)
+        return groups
+
     def _write_json(self, path: Path, data: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = path.with_suffix(".tmp")
@@ -205,6 +291,94 @@ class RequestLogStore:
             "body_size": entry.get("body_size", 0),
             "response_body_size": entry.get("response_body_size", 0),
         }
+
+    def _group_summary(self, chain_id: str, entries: list[dict[str, Any]]) -> dict[str, Any]:
+        sorted_entries = self._sort_group_entries(entries)
+        time_entries = sorted(entries, key=lambda entry: (entry.get("created_at_unix") or 0, entry.get("id") or ""))
+        first_time_entry = time_entries[0]
+        last_time_entry = time_entries[-1]
+        representative = self._representative_entry(sorted_entries)
+        body_size = sum(int(entry.get("body_size") or 0) for entry in entries)
+        response_body_size = sum(int(entry.get("response_body_size") or 0) for entry in entries)
+        return {
+            "id": chain_id,
+            "chain_id": chain_id,
+            "created_at": first_time_entry.get("created_at"),
+            "created_at_unix": first_time_entry.get("created_at_unix"),
+            "updated_at": last_time_entry.get("created_at"),
+            "updated_at_unix": last_time_entry.get("created_at_unix"),
+            "entry_count": len(entries),
+            "phase_count": len({str(entry.get("phase") or "") for entry in entries if entry.get("phase")}),
+            "phases": [self._summary(entry) for entry in sorted_entries],
+            "kind": representative.get("kind", ""),
+            "model": self._first_non_empty(sorted_entries, "model"),
+            "transport": representative.get("transport", ""),
+            "direction": representative.get("direction", ""),
+            "phase": representative.get("phase", ""),
+            "status_code": self._last_non_empty(sorted_entries, "status_code"),
+            "elapsed_ms": self._last_non_empty(sorted_entries, "elapsed_ms"),
+            "method": representative.get("method", "POST"),
+            "url": representative.get("url", ""),
+            "body_size": body_size,
+            "response_body_size": response_body_size,
+            "total_size": body_size + response_body_size,
+        }
+
+    def _group_detail(self, chain_id: str, entries: list[dict[str, Any]]) -> dict[str, Any]:
+        summary = self._group_summary(chain_id, entries)
+        summary["entries"] = self._sort_group_entries(entries)
+        return summary
+
+    def _sort_group_entries(self, entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return sorted(
+            entries,
+            key=lambda entry: (
+                _PHASE_ORDER.get(str(entry.get("phase") or ""), 100),
+                entry.get("created_at_unix") or 0,
+                entry.get("id") or "",
+            ),
+        )
+
+    def _representative_entry(self, entries: list[dict[str, Any]]) -> dict[str, Any]:
+        for phase in ("client_request", "upstream_request", "client_response"):
+            for entry in entries:
+                if entry.get("phase") == phase:
+                    return entry
+        return entries[0] if entries else {}
+
+    def _chain_key(self, entry: dict[str, Any]) -> str:
+        return str(entry.get("chain_id") or entry.get("id") or "").strip()
+
+    def _normalize_chain_id(self, chain_id: str) -> str:
+        normalized = str(chain_id or "").strip()
+        if not normalized:
+            raise ValueError("request log group id is required")
+        return normalized
+
+    def _normalize_chain_ids(self, chain_ids: list[str]) -> list[str]:
+        normalized_ids: list[str] = []
+        seen: set[str] = set()
+        for chain_id in chain_ids:
+            normalized = self._normalize_chain_id(chain_id)
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            normalized_ids.append(normalized)
+        return normalized_ids
+
+    def _first_non_empty(self, entries: list[dict[str, Any]], key: str) -> Any:
+        for entry in entries:
+            value = entry.get(key)
+            if value not in (None, ""):
+                return value
+        return ""
+
+    def _last_non_empty(self, entries: list[dict[str, Any]], key: str) -> Any:
+        for entry in reversed(entries):
+            value = entry.get(key)
+            if value not in (None, ""):
+                return value
+        return None
 
     def _body_to_text(self, body: str | bytes) -> str:
         if isinstance(body, bytes):

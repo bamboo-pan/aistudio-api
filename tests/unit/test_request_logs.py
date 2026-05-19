@@ -53,7 +53,7 @@ class FakeStreamingSession:
 def test_request_log_store_persists_toggle_and_complete_request(tmp_path):
     store = RequestLogStore(tmp_path)
 
-    assert store.status() == {"enabled": False, "count": 0}
+    assert store.status() == {"enabled": False, "count": 0, "group_count": 0}
     assert store.save(kind="generate_content", model="m", method="POST", url="u", headers={}, body="{}") is None
 
     status = store.set_enabled(True)
@@ -93,6 +93,84 @@ def test_request_log_store_persists_toggle_and_complete_request(tmp_path):
     assert updated["response_body_parse_error"] is None
 
 
+def test_request_log_store_groups_exports_and_deletes_lifecycle(tmp_path):
+    store = RequestLogStore(tmp_path)
+    store.set_enabled(True)
+    chain_id = "chain-alpha"
+
+    store.save(
+        kind="client_response",
+        model="gemini-test",
+        method="POST",
+        url="http://testserver/v1/chat/completions",
+        headers={},
+        body="",
+        chain_id=chain_id,
+        phase="client_response",
+        status_code=200,
+        response_body='{"ok":true}',
+        elapsed_ms=15.25,
+    )
+    store.save(
+        kind="client_request",
+        model="gemini-test",
+        method="POST",
+        url="http://testserver/v1/chat/completions",
+        headers={"content-type": "application/json"},
+        body='{"messages":[{"role":"user","content":"hi"}]}',
+        chain_id=chain_id,
+        phase="client_request",
+    )
+    store.save(
+        kind="generate_content",
+        model="gemini-test",
+        method="POST",
+        url="https://aistudio.google.com/rpc",
+        headers={"content-type": "application/json"},
+        body='{"outbound":true}',
+        chain_id=chain_id,
+        phase="upstream_request",
+        status_code=200,
+        response_body='{"candidate":"ok"}',
+        elapsed_ms=11.5,
+    )
+    store.save(
+        kind="generate_content",
+        model="gemini-test",
+        method="POST",
+        url="https://aistudio.google.com/rpc",
+        headers={},
+        body="",
+        chain_id=chain_id,
+        direction="inbound",
+        phase="upstream_response",
+        status_code=200,
+        response_body='{"candidate":"ok"}',
+    )
+
+    assert store.group_count() == 1
+    summary = store.list_groups()[0]
+    assert summary["id"] == chain_id
+    assert summary["entry_count"] == 4
+    assert summary["status_code"] == 200
+    assert summary["elapsed_ms"] == 15.25
+    assert [phase["phase"] for phase in summary["phases"]] == ["client_request", "upstream_request", "upstream_response", "client_response"]
+
+    detail = store.get_group(chain_id)
+    assert [entry["phase"] for entry in detail["entries"]] == ["client_request", "upstream_request", "upstream_response", "client_response"]
+    assert detail["total_size"] == detail["body_size"] + detail["response_body_size"]
+
+    exported = store.export_groups([chain_id, "missing-chain"])
+    assert exported["data"][0]["id"] == chain_id
+    assert exported["missing"] == ["missing-chain"]
+
+    deleted = store.delete_group(chain_id)
+    assert deleted["deleted_groups"] == 1
+    assert deleted["deleted_entries"] == 4
+    assert store.count() == 0
+    assert store.group_count() == 0
+
+
 def test_request_log_routes_manage_status_list_and_detail(tmp_path):
     store = RequestLogStore(tmp_path)
     runtime_state = SimpleNamespace(request_log_store=store)
@@ -101,7 +179,7 @@ def test_request_log_routes_manage_status_list_and_detail(tmp_path):
     app.dependency_overrides[get_runtime_state] = lambda: runtime_state
     client = TestClient(app)
 
-    assert client.get("/request-logs/status").json() == {"enabled": False, "count": 0}
+    assert client.get("/request-logs/status").json() == {"enabled": False, "count": 0, "group_count": 0}
     assert client.put("/request-logs/status", json={"enabled": True}).json()["enabled"] is True
     saved = store.save(kind="generate_image", model="image-model", method="POST", url="https://aistudio.google.com/rpc", headers={}, body="[]")
 
@@ -113,7 +191,45 @@ def test_request_log_routes_manage_status_list_and_detail(tmp_path):
     detail = client.get(f"/request-logs/{saved['id']}").json()
     assert detail["kind"] == "generate_image"
     assert detail["body_raw"] == "[]"
+    group_detail = client.get(f"/request-logs/groups/{saved['chain_id']}").json()
+    assert group_detail["entries"][0]["id"] == saved["id"]
+    exported = client.post("/request-logs/export", json={"ids": [saved["chain_id"]]}).json()
+    assert exported["data"][0]["id"] == saved["chain_id"]
     assert client.get("/request-logs/not-a-valid-id").status_code == 400
+
+
+def test_request_log_routes_manage_lifecycle_groups(tmp_path):
+    store = RequestLogStore(tmp_path)
+    store.set_enabled(True)
+    runtime_state = SimpleNamespace(request_log_store=store)
+    app = FastAPI()
+    app.include_router(request_logs_router)
+    app.dependency_overrides[get_runtime_state] = lambda: runtime_state
+    client = TestClient(app)
+
+    store.save(kind="client_request", model="m", method="POST", url="http://test/v1/chat/completions", headers={}, body="{}", chain_id="chain-one", phase="client_request")
+    store.save(kind="client_response", model="m", method="POST", url="http://test/v1/chat/completions", headers={}, body="", chain_id="chain-one", phase="client_response", status_code=200, response_body='{"ok":true}')
+    store.save(kind="client_request", model="m", method="POST", url="http://test/v1/responses", headers={}, body="{}", chain_id="chain-two", phase="client_request")
+
+    listing = client.get("/request-logs").json()
+    assert listing["total"] == 2
+    assert listing["entry_total"] == 3
+    assert {item["id"] for item in listing["data"]} == {"chain-one", "chain-two"}
+
+    detail = client.get("/request-logs/groups/chain-one").json()
+    assert [entry["phase"] for entry in detail["entries"]] == ["client_request", "client_response"]
+    assert detail["status_code"] == 200
+
+    exported = client.post("/request-logs/export", json={"ids": ["chain-one", "missing"]}).json()
+    assert [item["id"] for item in exported["data"]] == ["chain-one"]
+    assert exported["missing"] == ["missing"]
+
+    deleted = client.post("/request-logs/groups/delete", json={"ids": ["chain-one"]}).json()
+    assert deleted["deleted_groups"] == 1
+    assert deleted["deleted_entries"] == 2
+    assert store.group_count() == 1
+    assert client.get("/request-logs/groups/chain-one").status_code == 404
+    assert client.delete("/request-logs/groups/chain-two").json()["deleted_entries"] == 1
 
 
 def test_replay_logs_actual_outbound_request_when_enabled(tmp_path):
