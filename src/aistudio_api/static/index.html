@@ -55,7 +55,43 @@
         <span class="topbar-title" x-text="view==='images'?'图片生成':'账号管理'"></span>
       </template>
     </div>
-    <div class="topbar-right"></div>
+    <div class="topbar-right api-toolbar">
+      <div class="api-control" x-show="view==='chat'||view==='images'" x-cloak>
+        <span>模型接口</span>
+        <div class="cselect api-select" :class="{open:openSelect==='modelApi'}" @click.stop>
+          <div class="cselect-btn" @click="toggleSelect('modelApi',$event)" tabindex="0"><span x-text="modelApiLabel"></span><span class="arrow"></span></div>
+          <div class="cselect-menu">
+            <template x-for="option in modelApiOptions" :key="option.id">
+              <div class="cselect-opt" :class="{active:modelApi===option.id}" @click="selectModelApi(option.id)" x-text="option.label"></div>
+            </template>
+          </div>
+        </div>
+      </div>
+      <div class="api-control" x-show="view==='chat'" x-cloak>
+        <span>聊天接口</span>
+        <div class="cselect api-select" :class="{open:openSelect==='chatApi'}" @click.stop>
+          <div class="cselect-btn" @click="toggleSelect('chatApi',$event)" tabindex="0"><span x-text="chatApiLabel"></span><span class="arrow"></span></div>
+          <div class="cselect-menu">
+            <template x-for="option in chatApiOptions" :key="option.id">
+              <div class="cselect-opt" :class="{active:chatApi===option.id}" @click="selectChatApi(option.id)" x-text="option.label"></div>
+            </template>
+          </div>
+        </div>
+      </div>
+      <div class="api-control" x-show="view==='images'" x-cloak>
+        <span>图片接口</span>
+        <div class="cselect api-select" :class="{open:openSelect==='imageApi'}" @click.stop>
+          <div class="cselect-btn" @click="toggleSelect('imageApi',$event)" tabindex="0"><span x-text="imageApiLabel"></span><span class="arrow"></span></div>
+          <div class="cselect-menu">
+            <template x-for="option in imageApiOptions" :key="option.id">
+              <div class="cselect-opt api-option" :class="{active:imageApi===option.id,disabled:option.disabled}" :aria-disabled="option.disabled?'true':'false'" @click="!option.disabled&&selectImageApi(option.id)">
+                <span x-text="option.label"></span><small x-show="option.hint" x-text="option.hint"></small>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Chat -->

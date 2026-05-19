@@ -20,6 +20,42 @@ def test_static_frontend_uses_model_capabilities_for_controls():
     assert "controlAvailable('stream')" in index_html
 
 
+def test_static_frontend_exposes_configurable_api_interfaces():
+    app_js = (ROOT / "src" / "aistudio_api" / "static" / "app.js").read_text(encoding="utf-8")
+    index_html = (ROOT / "src" / "aistudio_api" / "static" / "index.html").read_text(encoding="utf-8")
+    style_css = (ROOT / "src" / "aistudio_api" / "static" / "style.css").read_text(encoding="utf-8")
+
+    assert "modelApi:'openai'" in app_js
+    assert "chatApi:'openai'" in app_js
+    assert "imageApi:'openai'" in app_js
+    assert "aistudio.apiSelection.v1" in app_js
+    assert "modelListEndpoint(){return this.modelApi==='gemini'?'/v1beta/models':'/v1/models'}" in app_js
+    assert "normalizeGeminiModel(item)" in app_js
+    assert "selectModelApi(value)" in app_js
+    assert "selectChatApi(value)" in app_js
+    assert "selectImageApi(value)" in app_js
+    assert "geminiChatRequestBody()" in app_js
+    assert "openAiContentToGeminiParts(content)" in app_js
+    assert "geminiChatEndpoint(stream=false)" in app_js
+    assert "stream?'streamGenerateContent':'generateContent'" in app_js
+    assert "completeGeminiChatFromCurrentMessages()" in app_js
+    assert "completeOpenAIChatFromCurrentMessages()" in app_js
+    assert "imageGenerationEndpoint(){return'/v1/images/generations'}" in app_js
+    assert "this.fetchJson(this.imageGenerationEndpoint()" in app_js
+    assert "模型接口" in index_html
+    assert "聊天接口" in index_html
+    assert "图片接口" in index_html
+    assert "modelApiOptions" in index_html
+    assert "chatApiOptions" in index_html
+    assert "imageApiOptions" in index_html
+    assert "selectModelApi(option.id)" in index_html
+    assert "selectChatApi(option.id)" in index_html
+    assert "!option.disabled&&selectImageApi(option.id)" in index_html
+    assert "api-toolbar" in style_css
+    assert ".api-control" in style_css
+    assert ".cselect-opt.disabled" in style_css
+
+
 def test_static_frontend_exposes_playground_workbench_tools():
     app_js = (ROOT / "src" / "aistudio_api" / "static" / "app.js").read_text(encoding="utf-8")
     index_html = (ROOT / "src" / "aistudio_api" / "static" / "index.html").read_text(encoding="utf-8")

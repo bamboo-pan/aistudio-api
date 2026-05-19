@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend/static frontend task uses the repo-wide backend spec index and pre-development checklist."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Frontend API selection touches client-facing protocol behavior and must preserve compatibility contracts."}
