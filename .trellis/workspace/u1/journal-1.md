@@ -614,3 +614,36 @@ Fixed browser-backed AI Studio GenerateContent capture for current RPC host, add
 ### Next Steps
 
 - None - task complete
+
+
+## Session 19: Fix Responses output_text history input
+
+**Date**: 2026-05-19
+**Task**: Fix Responses output_text history input
+**Branch**: `fix/responses-output-text-input`
+
+### Summary
+
+Accepted Responses output_text assistant history blocks at the server compatibility boundary, added regression coverage, updated backend spec, and verified with unit plus WSL real API/UI smoke tests.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `bea40e3` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

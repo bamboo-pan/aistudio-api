@@ -93,6 +93,35 @@ def test_openai_responses_accepts_text_format_json_schema():
     assert call["sanitize_plain_text"] is False
 
 
+def test_openai_responses_accepts_output_text_history_blocks():
+    client = FakeTextClient(text="fresh answer")
+
+    response = request_with_client(
+        client,
+        "POST",
+        "/v1/responses",
+        json={
+            "model": "gemini-3-flash-preview",
+            "input": [
+                {"role": "user", "content": "nihao"},
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [{"type": "output_text", "text": "你好！有什么我可以帮你的吗？"}],
+                },
+                {"role": "user", "content": "看下今日头条新闻"},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["output_text"] == "fresh answer"
+    contents = client.calls[0]["contents"]
+    assert contents[1].role == "model"
+    assert contents[1].parts[0].text == "你好！有什么我可以帮你的吗？"
+
+
 def test_openai_responses_maps_function_calls_to_output_items():
     client = FakeTextClient(text="", function_calls=[{"name": "lookup", "args": {"query": "weather"}}])
 

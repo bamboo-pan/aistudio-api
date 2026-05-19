@@ -837,7 +837,7 @@ def _coerce_openai_content_blocks(content: Any) -> str | list[dict[str, Any]]:
         if not isinstance(block, dict):
             raise ValueError("message content blocks must be objects")
         block_type = str(block.get("type") or "text")
-        if block_type in ("text", "input_text"):
+        if block_type in ("text", "input_text", "output_text"):
             text = block.get("text")
             if not isinstance(text, str):
                 raise ValueError("text content blocks require text")
