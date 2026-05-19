@@ -630,7 +630,7 @@
           <div>
             <div class="account-kicker">AI Studio Requests</div>
             <h1>请求记录</h1>
-            <p><span x-text="requestLogEnabled?'保存已开启':'保存已关闭'"></span><span> · </span><span x-text="requestLogTotal+' 条记录'"></span></p>
+            <p><span x-text="requestLogEnabled?'保存已开启':'保存已关闭'"></span><span> · </span><span x-text="requestLogTotal+' 个完整请求'"></span><span> · </span><span x-text="requestLogEntryTotal+' 条阶段记录'"></span></p>
           </div>
           <div class="request-hero-actions">
             <button type="button" class="request-switch" :class="{active:requestLogEnabled}" :disabled="requestLogSaving" @click="toggleRequestLogging()" :aria-pressed="requestLogEnabled.toString()">
@@ -643,8 +643,9 @@
 
         <div class="request-metrics">
           <div class="account-metric"><span>开关</span><strong x-text="requestLogEnabled?'On':'Off'"></strong></div>
-          <div class="account-metric"><span>记录</span><strong x-text="requestLogTotal"></strong></div>
-          <div class="account-metric metric-wide"><span>当前详情</span><strong x-text="activeRequestLogId||'未选择'"></strong></div>
+          <div class="account-metric"><span>完整请求</span><strong x-text="requestLogTotal"></strong></div>
+          <div class="account-metric"><span>已选</span><strong x-text="selectedRequestLogCount"></strong></div>
+          <div class="account-metric metric-wide"><span>当前请求</span><strong x-text="activeRequestLogId||'未选择'"></strong></div>
         </div>
 
         <div class="notice notice-error request-notice" x-show="requestLogError" x-cloak x-text="requestLogError"></div>
@@ -652,15 +653,30 @@
         <div class="request-workspace">
           <section class="account-panel request-list-panel">
             <div class="account-panel-head">
-              <div><h2>请求列表</h2><p x-text="requestLogLoading?'加载中':requestLogs.length+' 条最近记录'"></p></div>
+              <div><h2>完整请求</h2><p x-text="requestLogLoading?'加载中':requestLogs.length+' 个最近请求组'"></p></div>
+              <div class="request-panel-actions">
+                <button class="btn btn-sm" :disabled="!requestLogs.length||requestLogLoading" @click="allRequestLogsSelected?clearRequestLogSelection():selectAllRequestLogs()" x-text="allRequestLogsSelected?'清除选择':'全选'"></button>
+                <button class="btn btn-sm" :disabled="!selectedRequestLogCount||requestLogExporting" @click="exportSelectedRequestLogs()" x-text="requestLogExporting?'导出中':'导出所选'"></button>
+                <button class="btn btn-sm btn-danger-outline" :disabled="!selectedRequestLogCount||requestLogDeleting" @click="deleteSelectedRequestLogs()" x-text="requestLogDeleting?'删除中':'删除所选'"></button>
+              </div>
             </div>
             <div class="request-log-list" x-show="requestLogs.length" x-cloak>
               <template x-for="item in requestLogs" :key="item.id">
-                <button type="button" class="request-log-item" :class="{active:activeRequestLogId===item.id}" @click="selectRequestLog(item)">
-                  <span class="request-log-row"><strong x-text="requestLogTitle(item)"></strong><span x-text="fmtDate(item.created_at)"></span></span>
-                  <span class="request-log-url" x-text="requestLogUrlPath(item.url)"></span>
-                  <span class="request-log-meta" x-text="requestLogMeta(item)"></span>
-                </button>
+                <div class="request-log-item" :class="{active:activeRequestLogId===requestLogGroupId(item),selected:isRequestLogSelected(item)}">
+                  <label class="request-log-check" @click.stop>
+                    <input type="checkbox" :checked="isRequestLogSelected(item)" @change="toggleRequestLogSelection(item,$event)">
+                  </label>
+                  <button type="button" class="request-log-main" @click="selectRequestLog(item)">
+                    <span class="request-log-row"><strong x-text="requestLogTitle(item)"></strong><span x-text="requestLogTimeline(item)"></span></span>
+                    <span class="request-log-url" x-text="requestLogUrlPath(item.url)"></span>
+                    <span class="request-log-meta" x-text="requestLogMeta(item)"></span>
+                    <span class="request-log-phases">
+                      <template x-for="phase in item.phases||[]" :key="phase.id">
+                        <span x-text="requestLogKindLabel(phase.kind,phase.phase)"></span>
+                      </template>
+                    </span>
+                  </button>
+                </div>
               </template>
             </div>
             <div class="account-empty request-empty" x-show="!requestLogs.length&&!requestLogLoading">暂无请求记录</div>
@@ -669,81 +685,113 @@
           <section class="account-panel request-detail-panel">
             <div class="account-panel-head request-detail-head">
               <div><h2>请求详情</h2><p x-text="requestLogDetailLoading?'加载中':activeRequestLogId||'未选择请求'"></p></div>
-              <button class="btn btn-sm" :disabled="!activeRequestLog" @click="writeClipboard(requestFullJson())">复制完整 JSON</button>
+              <div class="request-panel-actions">
+                <button class="btn btn-sm" :disabled="!activeRequestLog" @click="writeClipboard(requestFullJson())">复制完整 JSON</button>
+                <button class="btn btn-sm" :disabled="!activeRequestLog||requestLogExporting" @click="exportActiveRequestLog()">导出当前</button>
+                <button class="btn btn-sm btn-danger-outline" :disabled="!activeRequestLog||requestLogDeleting" @click="deleteActiveRequestLog()">删除当前</button>
+              </div>
             </div>
             <div class="request-detail-empty" x-show="!activeRequestLog&&!requestLogDetailLoading">选择左侧请求后查看完整内容</div>
             <div class="request-detail" x-show="activeRequestLog" x-cloak>
               <div class="request-detail-grid">
-                <div><span>时间</span><strong x-text="fmtDate(activeRequestLog?.created_at)"></strong></div>
-                <div><span>类型</span><strong x-text="requestLogKindLabel(activeRequestLog?.kind,activeRequestLog?.phase)"></strong></div>
+                <div><span>开始</span><strong x-text="fmtDate(activeRequestLog?.created_at)"></strong></div>
+                <div><span>结束</span><strong x-text="fmtDate(activeRequestLog?.updated_at)"></strong></div>
+                <div><span>阶段</span><strong x-text="activeRequestLog?.entry_count||requestLogEntries().length"></strong></div>
                 <div><span>模型</span><strong x-text="activeRequestLog?.model||'-'"></strong></div>
-                <div><span>传输</span><strong x-text="activeRequestLog?.transport||'-'"></strong></div>
                 <div><span>方法</span><strong x-text="activeRequestLog?.method||'POST'"></strong></div>
                 <div><span>状态</span><strong x-text="activeRequestLog?.status_code||'-'"></strong></div>
                 <div><span>链路</span><strong x-text="activeRequestLog?.chain_id||'-'"></strong></div>
-                <div><span>大小</span><strong x-text="fileSizeLabel((activeRequestLog?.body_size||0)+(activeRequestLog?.response_body_size||0))"></strong></div>
+                <div><span>大小</span><strong x-text="fileSizeLabel(activeRequestLog?.total_size??((activeRequestLog?.body_size||0)+(activeRequestLog?.response_body_size||0)))"></strong></div>
               </div>
 
               <div class="request-section">
-                <h3>URL</h3>
+                <h3>入口 URL</h3>
                 <pre class="request-raw" x-text="activeRequestLog?.url||''"></pre>
               </div>
 
               <div class="request-section">
-                <h3>发送 Headers</h3>
-                <div class="request-header-table">
-                  <template x-for="row in requestHeaderRows(activeRequestLog,'headers')" :key="row.name">
-                    <div><span x-text="row.name"></span><code x-text="row.value"></code></div>
+                <h3>生命周期阶段</h3>
+                <div class="request-phase-list">
+                  <template x-for="entry in requestLogEntries()" :key="entry.id">
+                    <article class="request-phase-card">
+                      <header class="request-phase-head">
+                        <div><strong x-text="requestLogKindLabel(entry.kind,entry.phase)"></strong><span x-text="entry.id"></span></div>
+                        <span x-text="requestPhaseMeta(entry)"></span>
+                      </header>
+
+                      <div class="request-detail-grid request-phase-grid">
+                        <div><span>时间</span><strong x-text="fmtDate(entry.created_at)"></strong></div>
+                        <div><span>模型</span><strong x-text="entry.model||'-'"></strong></div>
+                        <div><span>传输</span><strong x-text="entry.transport||'-'"></strong></div>
+                        <div><span>方法</span><strong x-text="entry.method||'POST'"></strong></div>
+                        <div><span>状态</span><strong x-text="entry.status_code||'-'"></strong></div>
+                        <div><span>大小</span><strong x-text="fileSizeLabel((entry.body_size||0)+(entry.response_body_size||0))"></strong></div>
+                      </div>
+
+                      <div class="request-section">
+                        <h3>URL</h3>
+                        <pre class="request-raw" x-text="entry.url||''"></pre>
+                      </div>
+
+                      <div class="request-section">
+                        <h3>发送 Headers</h3>
+                        <div class="request-header-table">
+                          <template x-for="row in requestHeaderRows(entry,'headers')" :key="row.name">
+                            <div><span x-text="row.name"></span><code x-text="row.value"></code></div>
+                          </template>
+                        </div>
+                      </div>
+
+                      <div class="request-section">
+                        <h3>捕获 Headers</h3>
+                        <div class="request-header-table">
+                          <template x-for="row in requestHeaderRows(entry,'captured_headers')" :key="row.name">
+                            <div><span x-text="row.name"></span><code x-text="row.value"></code></div>
+                          </template>
+                        </div>
+                      </div>
+
+                      <div class="request-section" x-show="entry.body_json!==undefined&&entry.body_json!==null">
+                        <h3>Body JSON</h3>
+                        <pre class="request-code" x-text="jsonPretty(entry.body_json)"></pre>
+                      </div>
+
+                      <div class="request-section" x-show="entry.body_parse_error">
+                        <h3>Body 解析错误</h3>
+                        <pre class="request-raw" x-text="entry.body_parse_error"></pre>
+                      </div>
+
+                      <div class="request-section">
+                        <h3>Body 原文</h3>
+                        <pre class="request-code" x-text="entry.body_raw||''"></pre>
+                      </div>
+
+                      <div class="request-section" x-show="entry.response_headers">
+                        <h3>响应 Headers</h3>
+                        <div class="request-header-table">
+                          <template x-for="row in requestHeaderRows(entry,'response_headers')" :key="row.name">
+                            <div><span x-text="row.name"></span><code x-text="row.value"></code></div>
+                          </template>
+                        </div>
+                      </div>
+
+                      <div class="request-section" x-show="entry.response_body_json!==undefined&&entry.response_body_json!==null">
+                        <h3>响应 Body JSON</h3>
+                        <pre class="request-code" x-text="jsonPretty(entry.response_body_json)"></pre>
+                      </div>
+
+                      <div class="request-section" x-show="entry.response_body_parse_error">
+                        <h3>响应 Body 解析错误</h3>
+                        <pre class="request-raw" x-text="entry.response_body_parse_error"></pre>
+                      </div>
+
+                      <div class="request-section" x-show="entry.response_body_raw!==undefined">
+                        <h3>响应 Body 原文</h3>
+                        <pre class="request-code" x-text="entry.response_body_raw||''"></pre>
+                      </div>
+                    </article>
                   </template>
                 </div>
-              </div>
-
-              <div class="request-section">
-                <h3>捕获 Headers</h3>
-                <div class="request-header-table">
-                  <template x-for="row in requestHeaderRows(activeRequestLog,'captured_headers')" :key="row.name">
-                    <div><span x-text="row.name"></span><code x-text="row.value"></code></div>
-                  </template>
-                </div>
-              </div>
-
-              <div class="request-section" x-show="activeRequestLog?.body_json!==null">
-                <h3>Body JSON</h3>
-                <pre class="request-code" x-text="jsonPretty(activeRequestLog?.body_json)"></pre>
-              </div>
-
-              <div class="request-section" x-show="activeRequestLog?.body_parse_error">
-                <h3>Body 解析错误</h3>
-                <pre class="request-raw" x-text="activeRequestLog?.body_parse_error"></pre>
-              </div>
-
-              <div class="request-section">
-                <h3>Body 原文</h3>
-                <pre class="request-code" x-text="activeRequestLog?.body_raw||''"></pre>
-              </div>
-
-              <div class="request-section" x-show="activeRequestLog?.response_headers">
-                <h3>响应 Headers</h3>
-                <div class="request-header-table">
-                  <template x-for="row in requestHeaderRows(activeRequestLog,'response_headers')" :key="row.name">
-                    <div><span x-text="row.name"></span><code x-text="row.value"></code></div>
-                  </template>
-                </div>
-              </div>
-
-              <div class="request-section" x-show="activeRequestLog?.response_body_json!==undefined&&activeRequestLog?.response_body_json!==null">
-                <h3>响应 Body JSON</h3>
-                <pre class="request-code" x-text="jsonPretty(activeRequestLog?.response_body_json)"></pre>
-              </div>
-
-              <div class="request-section" x-show="activeRequestLog?.response_body_parse_error">
-                <h3>响应 Body 解析错误</h3>
-                <pre class="request-raw" x-text="activeRequestLog?.response_body_parse_error"></pre>
-              </div>
-
-              <div class="request-section" x-show="activeRequestLog?.response_body_raw!==undefined">
-                <h3>响应 Body 原文</h3>
-                <pre class="request-code" x-text="activeRequestLog?.response_body_raw||''"></pre>
               </div>
 
               <div class="request-section">

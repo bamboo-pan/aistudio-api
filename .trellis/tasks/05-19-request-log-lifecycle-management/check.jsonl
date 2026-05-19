@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend spec index for final quality verification."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Verify request-log lifecycle grouping against the correlated logging contract and test requirements."}

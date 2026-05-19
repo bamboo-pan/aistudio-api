@@ -44,12 +44,14 @@ Questions to answer:
 ### 2. Signatures
 
 - `AISTUDIO_REQUEST_LOGS_DIR` sets the durable request-log root and defaults to `data/request-logs`.
-- `RequestLogStore.status() -> {"enabled": bool, "count": int}`.
-- `RequestLogStore.set_enabled(enabled: bool) -> {"enabled": bool, "count": int}`.
+- `RequestLogStore.status() -> {"enabled": bool, "count": int, "group_count": int}` where `count` is stored phase entries and `group_count` is complete request lifecycles.
+- `RequestLogStore.set_enabled(enabled: bool) -> {"enabled": bool, "count": int, "group_count": int}`.
 - `RequestLogStore.save(kind, model, method, url, headers, body, captured_headers=None, transport="", chain_id=None, direction="outbound", phase=None, status_code=None, response_headers=None, response_body=None, elapsed_ms=None) -> dict | None`.
 - `RequestLogStore.attach_response(request_id, status_code=None, response_headers=None, response_body=None, elapsed_ms=None) -> dict`.
+- `RequestLogStore.list_groups(limit=None) -> list[dict]`, `get_group(chain_id) -> dict`, `export_groups(chain_ids) -> {"data": list[dict], "missing": list[str]}`, `delete_group(chain_id) -> dict`, and `delete_groups(chain_ids) -> dict`.
 - Request-log context helpers: `new_request_chain_id()`, `set_request_chain_id(chain_id)`, `reset_request_chain_id(token)`, `current_request_chain_id()`.
 - `GET /request-logs/status`, `PUT /request-logs/status`, `GET /request-logs?limit=<int>`, `GET /request-logs/{request_id}`.
+- Group management APIs: `GET /request-logs/groups/{chain_id}`, `DELETE /request-logs/groups/{chain_id}`, `POST /request-logs/groups/delete {"ids": string[]}`, and `POST /request-logs/export {"ids": string[]}`.
 - Frontend route/hash: `#requests`.
 
 ### 3. Contracts
@@ -58,6 +60,10 @@ Questions to answer:
 - API exchange logging for `/v1*` and `/v1beta*` routes creates correlated `client_request` and `client_response` entries when logging is enabled.
 - AI Studio replay/streaming creates correlated `upstream_request` and `upstream_response` records for the same external API request.
 - All entries produced for one external request must share the same `chain_id`; gateway saves inherit the request-scoped chain id.
+- The request-log list API returns complete request lifecycle groups by default. `total` is group count, `entry_total` is phase-entry count, and every group id is the `chain_id`.
+- A legacy entry without a usable `chain_id` is treated as a one-entry lifecycle keyed by its own `id`.
+- Group detail responses include the group summary plus `entries` sorted by semantic phase order (`client_request`, `upstream_request`, `upstream_response`, `client_response`) and then time/id.
+- Export and delete operations use complete request group ids, not individual phase entry ids. Deleting a group removes every entry in that lifecycle and leaves unrelated groups intact.
 - `phase` values are semantic and UI-visible: `client_request`, `upstream_request`, `upstream_response`, `client_response`.
 - Outbound `upstream_request` entries still represent AI Studio wire requests after `modify_body`, not inbound OpenAI/Gemini/Claude-compatible payloads.
 - Non-streaming replay, streaming replay, image generation replay, and account-pooled clients must share the same `RequestLogStore` instance at runtime.
@@ -65,13 +71,15 @@ Questions to answer:
 - Entries that carry a response must include status code when known, response headers when available, raw response body, parsed response JSON when parseable, response parse error when not parseable, response body size, and elapsed milliseconds when known.
 - `upstream_request` entries attach their AI Studio response via `attach_response(...)` and may also have a separate `upstream_response` phase entry for timeline readability.
 - The feature intentionally does not redact stored outbound request details because the UI must not lose information.
-- The frontend request-log page must render the switch, list, selected structured detail, chain id, phase labels, status, raw body, response body, and complete JSON record.
+- The frontend request-log page must render the switch, grouped lifecycle list, selection controls, selected structured group detail, chain id, phase labels, status, raw body, response body, complete JSON record, and group-level delete/export actions.
 
 ### 4. Validation & Error Matrix
 
 - Switch disabled -> `save(...)` returns `None` and writes no entry file.
 - Invalid `request_id` -> `GET /request-logs/{request_id}` returns HTTP 400.
 - Missing valid `request_id` -> `GET /request-logs/{request_id}` returns HTTP 404.
+- Empty group id in store helpers -> `ValueError`; missing group id in route handlers -> HTTP 404 when syntactically present but not found.
+- Batch export/delete with duplicate ids -> de-duplicate in request order; missing ids are reported in `missing` instead of failing the whole operation.
 - `limit < 1` -> normalize to 1; `limit > 1000` -> normalize to 1000.
 - Request-log write failure at replay boundary -> log a warning and continue the upstream request path.
 - Unparseable body -> preserve `body_raw`, set `body_json` to null, and store `body_parse_error`.
@@ -80,6 +88,8 @@ Questions to answer:
 ### 5. Good/Base/Bad Cases
 
 - Good: User enables logging, sends `/v1/responses`, then opens `#requests` and sees four correlated phases: user to backend, backend to AI Studio, AI Studio to backend, backend to user.
+- Good: User selects one grouped request and deletes it; all four phase entries disappear while other request groups remain.
+- Good: User exports selected request groups and receives complete lifecycle JSON with each group's ordered `entries`.
 - Good: Selecting an `upstream_request` entry shows both the rewritten AI Studio request body and attached AI Studio response body.
 - Good: Balanced account rotation uses an isolated client but writes to the same request-log directory and switch as the main runtime client.
 - Base: Logging remains off after startup until explicitly enabled, and normal chat/image/streaming requests run without creating files.
@@ -93,10 +103,12 @@ Questions to answer:
 - Unit: store default-off behavior, persisted toggle, entry summary, full detail, raw body, parsed JSON body, and header preservation.
 - Unit: store response attachment, response body parsing, status code, elapsed time, phase, direction, and chain id fields.
 - Unit/API: `/request-logs/status`, `/request-logs`, and `/request-logs/{id}` manage status, listing, detail, and invalid ids.
+- Unit/API: grouped list/detail/export/delete cover group counts, entry counts, phase ordering, missing ids, and removal of every entry in a selected lifecycle.
 - Unit: non-streaming `RequestReplayService.replay` logs the actual outbound body, attaches upstream response fields, and writes an `upstream_response` phase.
 - Unit: `StreamingGateway.stream_chat` logs the rewritten outbound body and final raw streaming response while enabled.
 - Unit/API: API exchange middleware logs correlated `client_request`, `upstream_request`, and `client_response` entries for a real route call.
-- Unit/static: frontend exposes the `requests` route, toggle/status calls, list/detail loading, phase labels, raw request body, response body view, and complete JSON rendering.
+- Unit/static: frontend exposes the `requests` route, toggle/status calls, grouped list/detail loading, selection, delete/export controls, phase labels, raw request body, response body view, and complete JSON rendering.
+- Static syntax: when editing `src/aistudio_api/static/app.js`, run `node --check src/aistudio_api/static/app.js`; Python/static string tests do not catch JavaScript parse errors such as invalid `??`/`||` mixing.
 - Real: WSL browser-backed smoke must enable logging, send a real API request, read list/detail in the WebUI, assert body/header preservation, response body preservation, and all four phases.
 
 ### 7. Wrong vs Correct
