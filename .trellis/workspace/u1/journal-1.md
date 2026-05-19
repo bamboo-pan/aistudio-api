@@ -548,3 +548,36 @@ Restored visible Playground and image-generation model selectors after the unifi
 ### Next Steps
 
 - None - task complete
+
+
+## Session 17: Request capture log
+
+**Date**: 2026-05-19
+**Task**: Request capture log
+**Branch**: `feature/request-capture-log`
+
+### Summary
+
+Added optional outbound AI Studio request logging with backend APIs, static UI, tests, spec contract, and WSL smoke validation.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cc60be3` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
