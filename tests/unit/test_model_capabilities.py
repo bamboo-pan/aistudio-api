@@ -1,9 +1,12 @@
 import pytest
 
 from aistudio_api.domain.model_capabilities import (
+    clear_dynamic_model_capabilities,
     get_model_metadata,
+    get_model_capabilities,
     list_model_metadata,
     plan_image_generation,
+    register_dynamic_models,
     validate_chat_capabilities,
 )
 
@@ -88,6 +91,28 @@ def test_model_metadata_exposes_structured_output_for_text_model():
     assert "application/pdf" in metadata["capabilities"]["file_input_mime_types"]
     assert metadata["capabilities"]["structured_output"] is True
     assert metadata["capabilities"]["tool_calls"] is True
+
+
+def test_model_metadata_includes_new_gemini_flash_model():
+    metadata = get_model_metadata("gemini-3.5-flash")
+
+    assert metadata["id"] == "gemini-3.5-flash"
+    assert metadata["capabilities"]["text_output"] is True
+    assert metadata["capabilities"]["streaming"] is True
+    assert any(item["id"] == "gemini-3.5-flash" for item in list_model_metadata())
+
+
+def test_register_dynamic_models_makes_discovered_text_model_strictly_available():
+    clear_dynamic_model_capabilities()
+    try:
+        register_dynamic_models(["models/gemini-dynamic-preview"])
+
+        capabilities = get_model_capabilities("gemini-dynamic-preview", strict=True)
+        assert capabilities.id == "gemini-dynamic-preview"
+        assert capabilities.text_output is True
+        assert any(item["id"] == "gemini-dynamic-preview" for item in list_model_metadata())
+    finally:
+        clear_dynamic_model_capabilities()
 
 
 def test_chat_capability_validation_rejects_file_input_for_gemma():

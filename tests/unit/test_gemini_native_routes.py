@@ -5,11 +5,22 @@ import httpx
 from aistudio_api.api.app import app
 from aistudio_api.api.dependencies import get_client
 from aistudio_api.api.state import runtime_state
+from aistudio_api.domain.model_capabilities import clear_dynamic_model_capabilities
 
 
 class UnusedClient:
     async def generate_content(self, **kwargs):
         raise AssertionError("downstream client should not be called")
+
+
+class ModelListClient(UnusedClient):
+    def __init__(self, models: list[str]):
+        self.models = models
+        self.list_calls = 0
+
+    async def list_available_models(self):
+        self.list_calls += 1
+        return self.models
 
 
 def request_with_client(client, method: str, url: str, **kwargs) -> httpx.Response:
@@ -43,6 +54,25 @@ def test_gemini_models_route_exposes_supported_generation_methods():
     assert "generateContent" in flash["supportedGenerationMethods"]
     assert "countTokens" in flash["supportedGenerationMethods"]
     assert "streamGenerateContent" in flash["supportedGenerationMethods"]
+
+
+def test_gemini_models_refresh_registers_discovered_models():
+    client = ModelListClient(["models/gemini-dynamic-preview"])
+    old_client = runtime_state.client
+    runtime_state.client = client
+    clear_dynamic_model_capabilities()
+    try:
+        response = request_with_client(UnusedClient(), "GET", "/v1beta/models?refresh=true")
+    finally:
+        runtime_state.client = old_client
+        clear_dynamic_model_capabilities()
+
+    assert response.status_code == 200
+    assert client.list_calls == 1
+    models = response.json()["models"]
+    dynamic = next(model for model in models if model["name"] == "models/gemini-dynamic-preview")
+    assert "generateContent" in dynamic["supportedGenerationMethods"]
+    assert "streamGenerateContent" in dynamic["supportedGenerationMethods"]
 
 
 def test_gemini_count_tokens_accepts_generate_content_request_wrapper():

@@ -7,6 +7,7 @@ import pytest
 from aistudio_api.api.app import app
 from aistudio_api.api.dependencies import get_client
 from aistudio_api.api.state import runtime_state
+from aistudio_api.domain.model_capabilities import clear_dynamic_model_capabilities, get_model_capabilities
 from aistudio_api.domain.models import Candidate, ModelOutput
 
 
@@ -37,6 +38,17 @@ class FakeStreamClient:
         self.calls.append(kwargs)
         for event in self.events:
             yield event
+
+
+class ModelListClient(FakeTextClient):
+    def __init__(self, models: list[str]):
+        super().__init__()
+        self.models = models
+        self.list_calls = 0
+
+    async def list_available_models(self):
+        self.list_calls += 1
+        return self.models
 
 
 def request_with_client(client, method: str, url: str, **kwargs) -> httpx.Response:
@@ -91,6 +103,24 @@ def test_openai_responses_accepts_text_format_json_schema():
     assert call["generation_config_overrides"]["response_mime_type"] == "application/json"
     assert call["generation_config_overrides"]["response_schema"] == [6, None, None, None, None, None, [["ok", [4]]]]
     assert call["sanitize_plain_text"] is False
+
+
+def test_openai_models_refresh_registers_discovered_models():
+    client = ModelListClient(["models/gemini-dynamic-preview"])
+    old_client = runtime_state.client
+    runtime_state.client = client
+    clear_dynamic_model_capabilities()
+    try:
+        response = request_with_client(FakeTextClient(), "GET", "/v1/models?refresh=true")
+        capabilities = get_model_capabilities("gemini-dynamic-preview", strict=True)
+    finally:
+        runtime_state.client = old_client
+        clear_dynamic_model_capabilities()
+
+    assert response.status_code == 200
+    assert client.list_calls == 1
+    assert capabilities.text_output is True
+    assert any(model["id"] == "gemini-dynamic-preview" for model in response.json()["data"])
 
 
 def test_openai_responses_accepts_output_text_history_blocks():

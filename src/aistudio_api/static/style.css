@@ -51,6 +51,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Ar
 .icon-btn:hover{background:var(--hover)}
 .icon-btn.active{background:var(--green-bg);border-color:var(--green)}
 .icon-btn svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.model-picker-row{display:flex;align-items:center;gap:8px;min-width:0}
+.model-picker-row .cselect{min-width:0;flex:1}
+.model-refresh-btn{width:36px;height:36px}
+.icon-btn svg.spin{animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 .mh-btn{display:none;background:none;border:none;cursor:pointer;padding:4px;font-size:20px}
 .overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:50}
 

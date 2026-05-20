@@ -310,3 +310,36 @@ Fixed browser-backed image generation after switching between Pro accounts, alig
 ### Next Steps
 
 - None - task complete
+
+
+## Session 10: Fix dynamic model list refresh
+
+**Date**: 2026-05-20
+**Task**: Fix dynamic model list refresh
+**Branch**: `fix-dynamic-model-list`
+
+### Summary
+
+Added browser-backed dynamic model discovery, refreshable OpenAI/Gemini model list APIs, frontend refresh controls, tests, WSL real API/UI verification, and backend spec coverage.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4d13e90` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

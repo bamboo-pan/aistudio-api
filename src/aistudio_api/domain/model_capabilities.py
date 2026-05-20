@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -265,6 +266,7 @@ MODEL_CAPABILITIES: dict[str, ModelCapabilities] = {
     "gemma-4-31b-it": _text_model("gemma-4-31b-it", image_input=False, file_input=False),
     "gemma-4-26b-a4b-it": _text_model("gemma-4-26b-a4b-it", image_input=False, file_input=False),
     # Gemini 3 series
+    "gemini-3.5-flash": _text_model("gemini-3.5-flash"),
     "gemini-3-flash-preview": _text_model("gemini-3-flash-preview"),
     "gemini-3.1-pro-preview": _text_model("gemini-3.1-pro-preview"),
     "gemini-3.1-flash-lite": _text_model("gemini-3.1-flash-lite"),
@@ -277,6 +279,9 @@ MODEL_CAPABILITIES: dict[str, ModelCapabilities] = {
     "gemini-flash-latest": _text_model("gemini-flash-latest"),
     "gemini-flash-lite-latest": _text_model("gemini-flash-lite-latest"),
 }
+
+
+DYNAMIC_MODEL_CAPABILITIES: dict[str, ModelCapabilities] = {}
 
 
 GENERIC_TEXT_CAPABILITIES = ModelCapabilities(
@@ -312,16 +317,10 @@ GENERIC_IMAGE_CAPABILITIES = ModelCapabilities(
 
 
 def canonical_model_id(model: str) -> str:
-    return model.removeprefix("models/")
+    return model.strip().removeprefix("models/")
 
 
-def get_model_capabilities(model: str, *, strict: bool = False) -> ModelCapabilities:
-    model_id = canonical_model_id(model)
-    capabilities = MODEL_CAPABILITIES.get(model_id)
-    if capabilities is not None:
-        return capabilities
-    if strict:
-        raise ValueError(f"Model '{model}' is not registered")
+def _inferred_model_capabilities(model_id: str) -> ModelCapabilities:
     generic = GENERIC_IMAGE_CAPABILITIES if "image" in model_id.lower() else GENERIC_TEXT_CAPABILITIES
     return ModelCapabilities(
         id=model_id,
@@ -341,8 +340,56 @@ def get_model_capabilities(model: str, *, strict: bool = False) -> ModelCapabili
     )
 
 
+def register_dynamic_model(model: str) -> ModelCapabilities | None:
+    model_id = canonical_model_id(model)
+    if not model_id:
+        return None
+    capabilities = MODEL_CAPABILITIES.get(model_id)
+    if capabilities is not None:
+        return capabilities
+    capabilities = _inferred_model_capabilities(model_id)
+    DYNAMIC_MODEL_CAPABILITIES[model_id] = capabilities
+    return capabilities
+
+
+def register_dynamic_models(models: Iterable[str]) -> list[ModelCapabilities]:
+    registered: list[ModelCapabilities] = []
+    seen: set[str] = set()
+    for model in models:
+        capabilities = register_dynamic_model(model)
+        if capabilities is None or capabilities.id in seen:
+            continue
+        seen.add(capabilities.id)
+        registered.append(capabilities)
+    return registered
+
+
+def clear_dynamic_model_capabilities() -> None:
+    DYNAMIC_MODEL_CAPABILITIES.clear()
+
+
+def _all_model_capabilities() -> list[ModelCapabilities]:
+    return [*MODEL_CAPABILITIES.values(), *DYNAMIC_MODEL_CAPABILITIES.values()]
+
+
+def list_model_ids() -> list[str]:
+    return [capabilities.id for capabilities in _all_model_capabilities()]
+
+
+def get_model_capabilities(model: str, *, strict: bool = False) -> ModelCapabilities:
+    model_id = canonical_model_id(model)
+    capabilities = MODEL_CAPABILITIES.get(model_id)
+    if capabilities is None:
+        capabilities = DYNAMIC_MODEL_CAPABILITIES.get(model_id)
+    if capabilities is not None:
+        return capabilities
+    if strict:
+        raise ValueError(f"Model '{model}' is not registered")
+    return _inferred_model_capabilities(model_id)
+
+
 def list_model_metadata() -> list[dict[str, Any]]:
-    return [capabilities.to_model_dict() for capabilities in MODEL_CAPABILITIES.values()]
+    return [capabilities.to_model_dict() for capabilities in _all_model_capabilities()]
 
 
 def get_model_metadata(model: str) -> dict[str, Any]:

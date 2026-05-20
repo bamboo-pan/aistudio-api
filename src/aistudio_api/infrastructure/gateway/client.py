@@ -80,6 +80,11 @@ class AIStudioClient:
             await self._session.switch_auth(auth_file)
         self.clear_capture_state()
 
+    async def list_available_models(self) -> list[str]:
+        if self._session is None:
+            return []
+        return await self._session.list_available_models()
+
     def clear_snapshot_cache(self) -> None:
         """清除 snapshot 缓存及其依赖的 capture 模板。"""
         self.clear_capture_state()
