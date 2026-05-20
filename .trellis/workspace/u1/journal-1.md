@@ -680,3 +680,36 @@ Restored Responses tool-call events for IDE payloads and hardened browser templa
 ### Next Steps
 
 - None - task complete
+
+
+## Session 21: Fix Responses tool call argument streaming
+
+**Date**: 2026-05-20
+**Task**: Fix Responses tool call argument streaming
+**Branch**: `fix-duplicated-tool-call-arguments`
+
+### Summary
+
+Fixed Responses streaming function-call events so clients reconstruct tool arguments once, added regression coverage, updated backend contract, and verified with unit tests plus WSL real API/UI smoke.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `97704f2` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

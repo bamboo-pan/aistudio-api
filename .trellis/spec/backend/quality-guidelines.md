@@ -334,6 +334,7 @@ store.save(body=modified_body, headers=captured.replay_headers, captured_headers
 - Do not encode Responses follow-up tool results as structured AI Studio `functionResponse` wire parts unless a real browser-backed test proves the exact wire shape. The current real endpoint rejects the attempted structured `functionResponse` replay with `Unexpected list for single non-message field`; text history is the supported compatibility path here.
 - When AI Studio returns a plain text response exactly shaped like `Tool call requested: <name> <json-arguments>` and `<name>` is one of the current Responses request's declared tools, `/v1/responses` must restore that text to a Responses `function_call` output item/event instead of exposing it as assistant text. This fallback is required because real browser-backed tool requests can come back as compatibility text even when the outbound AI Studio wire contains tool declarations.
 - Responses streaming must emit `response.function_call_arguments.delta` and `response.function_call_arguments.done` for both structured upstream tool calls and restored text-shaped tool calls.
+- Responses streaming `response.output_item.added` for `function_call` items must be an in-progress shell with `arguments: ""`; clients reconstruct arguments by appending `response.function_call_arguments.delta`, so pre-populating the added item with the complete argument payload duplicates it into `{"..."}{"..."}` in Cursor/Responses-style clients.
 - `/v1/responses` non-streaming output must preserve returned thinking as a Responses `reasoning` output item and as a top-level `thinking` convenience field for the built-in UI.
 - `/v1/responses` with `stream: true` must translate chat thinking deltas into Responses SSE events `response.reasoning.delta` and `response.reasoning.done`, and the final `response.completed` payload must include accumulated `thinking`.
 - `/v1/responses` with `stream: true` must return SSE events including `response.created`, `response.in_progress`, text deltas, text done, output item done, function-call argument events when tools are requested, `response.completed`, and final `data: [DONE]`.
@@ -370,6 +371,7 @@ store.save(body=modified_body, headers=captured.replay_headers, captured_headers
 - Bad: `/v1/responses` emits `output_text` in one response, then rejects the same `output_text` block when the client sends it back as assistant history.
 - Bad: `/v1/responses` forwards attempted structured `functionResponse` wire based only on fake-client tests, then real AI Studio rejects the request body before continuation.
 - Bad: `/v1/responses` forwards `Tool call requested: Shell {...}` to the client as assistant text, so an IDE displays the request instead of executing the tool.
+- Bad: `/v1/responses` streams a `function_call` item whose `response.output_item.added.item.arguments` already contains the complete JSON, then sends the same JSON again in `response.function_call_arguments.delta`; clients that merge initial item state plus deltas execute with duplicated invalid JSON arguments.
 - Bad: Streaming wrappers emit text deltas but never emit done/completed events, leaving clients waiting.
 
 ### 6. Tests Required
@@ -382,6 +384,7 @@ store.save(body=modified_body, headers=captured.replay_headers, captured_headers
 - Unit: Responses accepts top-level `function_call`, `reasoning`, and `function_call_output` input history and normalizes tool call/result text in downstream contents.
 - Unit: Responses restores text-shaped tool requests for declared tools to non-streaming `function_call` output items.
 - Unit: Responses streaming restores text-shaped tool requests for declared tools to `response.function_call_arguments.delta`/`done` events and does not emit assistant text deltas for that request.
+- Unit: Responses streaming reconstructs function-call arguments from `response.output_item.added` plus `response.function_call_arguments.delta` into exactly one valid JSON payload for both structured upstream tool calls and restored text-shaped tool calls.
 - Unit: Responses streaming still emits ordinary text deltas incrementally when the text is not a possible declared-tool request.
 - Unit: Responses `thinking: "high"` forwards thinking config and `thinking: "off"` disables thinking.
 - Unit: Responses non-streaming output includes returned thinking as reasoning output and top-level `thinking`.

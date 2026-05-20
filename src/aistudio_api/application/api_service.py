@@ -1129,6 +1129,13 @@ def _responses_function_call_item(name: str, arguments: str, *, call_id: str | N
     }
 
 
+def _responses_function_call_added_item(item: dict[str, Any]) -> dict[str, Any]:
+    added_item = dict(item)
+    added_item["status"] = "in_progress"
+    added_item["arguments"] = ""
+    return added_item
+
+
 def _responses_output_items(
     chat_response: dict[str, Any],
     *,
@@ -1266,7 +1273,10 @@ def _build_responses_streaming_response(
         def function_call_events(tool_request: dict[str, Any], output_index: int):
             item = _responses_function_call_item(tool_request["name"], tool_request["arguments"])
             output_items.append(item)
-            yield _sse_event("response.output_item.added", {"type": "response.output_item.added", "output_index": output_index, "item": item})
+            yield _sse_event(
+                "response.output_item.added",
+                {"type": "response.output_item.added", "output_index": output_index, "item": _responses_function_call_added_item(item)},
+            )
             yield _sse_event(
                 "response.function_call_arguments.delta",
                 {
@@ -1399,7 +1409,10 @@ def _build_responses_streaming_response(
                     tool_output_index = next_output_index
                     next_output_index += 1
                     output_items.append(item)
-                    yield _sse_event("response.output_item.added", {"type": "response.output_item.added", "output_index": tool_output_index, "item": item})
+                    yield _sse_event(
+                        "response.output_item.added",
+                        {"type": "response.output_item.added", "output_index": tool_output_index, "item": _responses_function_call_added_item(item)},
+                    )
                     yield _sse_event(
                         "response.function_call_arguments.delta",
                         {
