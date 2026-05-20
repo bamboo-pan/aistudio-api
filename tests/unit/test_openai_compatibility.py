@@ -169,6 +169,58 @@ def test_openai_responses_maps_function_calls_to_output_items():
     assert json.loads(function_call["arguments"]) == {"query": "weather"}
 
 
+def test_openai_responses_accepts_function_call_history_and_output():
+    client = FakeTextClient(text="follow-up answer")
+
+    response = request_with_client(
+        client,
+        "POST",
+        "/v1/responses",
+        json={
+            "model": "gemini-3-flash-preview",
+            "input": [
+                {"role": "user", "content": "search Google releases"},
+                {
+                    "id": "fc_test",
+                    "type": "function_call",
+                    "status": "completed",
+                    "call_id": "call_test",
+                    "name": "search_web",
+                    "arguments": '{"query":"Google latest AI model release May 2026"}',
+                },
+                {
+                    "id": "rs_test",
+                    "type": "reasoning",
+                    "status": "completed",
+                    "content": [{"type": "reasoning_text", "text": "planning"}],
+                    "summary": [],
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_test",
+                    "output": '{"items":[{"title":"Google I/O 2026"}]}',
+                },
+            ],
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "search_web",
+                    "description": "Search the web",
+                    "parameters": {"type": "object", "properties": {"query": {"type": "string"}}},
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["output_text"] == "follow-up answer"
+    contents = client.calls[0]["contents"]
+    assert contents[1].role == "model"
+    assert contents[1].parts[0].text == 'Tool call requested: search_web {"query": "Google latest AI model release May 2026"}'
+    assert contents[2].role == "user"
+    assert contents[2].parts[0].text == 'Tool result for search_web: {"items":[{"title":"Google I/O 2026"}]}'
+
+
 def test_openai_responses_forwards_thinking_control():
     client = FakeTextClient(text="ok")
 
