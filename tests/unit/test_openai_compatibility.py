@@ -73,6 +73,44 @@ def request_with_client(client, method: str, url: str, **kwargs) -> httpx.Respon
         app.dependency_overrides.pop(get_client, None)
 
 
+def response_stream_events(text: str) -> list[tuple[str | None, dict]]:
+    events = []
+    event_name = None
+    data_lines = []
+    for line in text.splitlines():
+        if not line:
+            if data_lines:
+                data = "\n".join(data_lines)
+                if data != "[DONE]":
+                    events.append((event_name, json.loads(data)))
+            event_name = None
+            data_lines = []
+            continue
+        if line.startswith("event: "):
+            event_name = line.removeprefix("event: ")
+        elif line.startswith("data: "):
+            data_lines.append(line.removeprefix("data: "))
+    if data_lines:
+        data = "\n".join(data_lines)
+        if data != "[DONE]":
+            events.append((event_name, json.loads(data)))
+    return events
+
+
+def reconstructed_function_call_arguments(events: list[tuple[str | None, dict]]) -> str:
+    arguments_by_item_id: dict[str, str] = {}
+    for event_name, data in events:
+        if event_name == "response.output_item.added" and data.get("item", {}).get("type") == "function_call":
+            item = data["item"]
+            arguments_by_item_id[item["id"]] = item.get("arguments") or ""
+        elif event_name == "response.function_call_arguments.delta":
+            arguments_by_item_id[data["item_id"]] = arguments_by_item_id.get(data["item_id"], "") + data.get("delta", "")
+        elif event_name == "response.function_call_arguments.done":
+            arguments_by_item_id.setdefault(data["item_id"], data.get("arguments") or "")
+    assert len(arguments_by_item_id) == 1
+    return next(iter(arguments_by_item_id.values()))
+
+
 def test_openai_responses_accepts_text_format_json_schema():
     client = FakeTextClient(text='{"ok":true}')
 
@@ -426,6 +464,35 @@ def test_openai_responses_streaming_restores_text_tool_request_to_function_call_
     assert '"type": "function_call"' in response.text
     assert '"name": "Shell"' in response.text
     assert '"output_text": ""' in response.text
+    arguments = reconstructed_function_call_arguments(response_stream_events(response.text))
+    assert json.loads(arguments) == {"command": "python debug_list_page.py"}
+
+
+def test_openai_responses_streaming_tool_call_added_item_does_not_duplicate_arguments():
+    client = FakeStreamClient(events=[("tool_calls", [{"name": "Shell", "args": {"command": "dir"}}])])
+
+    response = request_with_client(
+        client,
+        "POST",
+        "/v1/responses",
+        json={
+            "model": "gemini-3-flash-preview",
+            "input": "run it",
+            "stream": True,
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "Shell",
+                    "description": "Run a shell command",
+                    "parameters": {"type": "object", "properties": {"command": {"type": "string"}}},
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    arguments = reconstructed_function_call_arguments(response_stream_events(response.text))
+    assert json.loads(arguments) == {"command": "dir"}
 
 
 def test_messages_accepts_anthropic_tools_and_returns_tool_use_blocks():
