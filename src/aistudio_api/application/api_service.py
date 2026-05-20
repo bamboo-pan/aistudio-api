@@ -7,7 +7,6 @@ import asyncio
 import hashlib
 import json
 import logging
-import tempfile
 import time
 import uuid
 from dataclasses import dataclass
@@ -17,6 +16,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
+from aistudio_api.config import settings
 from aistudio_api.application.chat_service import cleanup_files, encode_schema_to_wire, is_search_tool_type, normalize_chat_request, normalize_gemini_request, normalize_openai_tools_and_search
 from aistudio_api.application.chat_service import data_uri_to_file, url_to_file
 from aistudio_api.application.validation import validate_number_range
@@ -368,13 +368,17 @@ def _optimizer_system_prompt() -> str:
     )
 
 
-def _optimizer_user_prompt(raw_prompt: str, style_template_id: str, style_template: dict[str, str]) -> str:
+def _optimizer_user_prompt(raw_prompt: str, style_template_id: str, style_template: dict[str, str], image_count: int = 0) -> str:
     style_hint = style_template.get("prompt_hint") or "No fixed style template. Preserve the original style direction."
+    reference_note = ""
+    if image_count:
+        reference_note = f"\n参考素材: 用户同时提供了 {image_count} 张图片素材。请结合这些图片的主体、构图、色彩、材质和风格约束优化提示词，不要生成与参考图脱节的内容。\n"
     return (
         f"原始提示词:\n{raw_prompt}\n\n"
         f"风格模板: {style_template['label']} ({style_template_id})\n"
         f"模板说明: {style_template['description']}\n"
-        f"模板提示: {style_hint}\n\n"
+        f"模板提示: {style_hint}\n"
+        f"{reference_note}\n"
         "请输出 3 个优化版本:\n"
         "1. 一个强调主体与构图的稳定版本。\n"
         "2. 一个强调光线、材质与质感的精修版本。\n"
@@ -433,15 +437,26 @@ async def handle_image_prompt_optimization(req: ImagePromptOptimizationRequest, 
         raise _bad_request(str(exc), "invalid_request_error") from exc
     if not capabilities.text_output or capabilities.image_output:
         raise _bad_request(f"Model '{req.model}' must be a text prompt optimization model", "invalid_request_error")
+    images = req.images or []
+    if images and not capabilities.image_input:
+        raise _bad_request(f"Model '{req.model}' does not support image input for prompt optimization", "invalid_request_error")
     thinking = req.thinking
     if not capabilities.thinking:
         thinking = "off"
+    user_content: str | list[dict[str, Any]]
+    user_prompt = _optimizer_user_prompt(raw_prompt, req.style_template, style_template, len(images))
+    if images:
+        user_content = [{"type": "text", "text": user_prompt}]
+        for image in images:
+            user_content.append({"type": "image_url", "image_url": {"url": _image_reference_url(image)}})
+    else:
+        user_content = user_prompt
 
     chat_req = ChatRequest(
         model=capabilities.id,
         messages=[
             {"role": "system", "content": _optimizer_system_prompt()},
-            {"role": "user", "content": _optimizer_user_prompt(raw_prompt, req.style_template, style_template)},
+            {"role": "user", "content": user_content},
         ],
         thinking=thinking,
         temperature=0.8,
@@ -567,7 +582,7 @@ def _image_request_images_to_files(images: list[Any] | None) -> list[str]:
         raise ValueError(f"images supports at most {MAX_IMAGE_EDIT_INPUTS} items")
 
     paths: list[str] = []
-    tmp_dir = tempfile.gettempdir()
+    tmp_dir = settings.tmp_dir
     try:
         for index, image in enumerate(images):
             url = _image_reference_url(image).strip()

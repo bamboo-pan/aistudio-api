@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend/API/static frontend task spec index."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Quality contracts and required JS syntax check for static frontend edits."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verify frontend/API/service boundary consistency."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Verify existing image conversion path is reused."}

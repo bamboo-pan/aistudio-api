@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,6 +16,7 @@ DEFAULT_TEXT_MODEL = os.getenv("AISTUDIO_DEFAULT_TEXT_MODEL", "gemma-4-31b-it")
 DEFAULT_IMAGE_MODEL = os.getenv("AISTUDIO_DEFAULT_IMAGE_MODEL", "gemini-3.1-flash-image-preview")
 DEFAULT_CAMOUFOX_PORT = 9222
 DEFAULT_RUNTIME_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+DEFAULT_TMP_DIR = tempfile.gettempdir()
 
 
 def _proxy_server() -> str | None:
@@ -45,7 +47,7 @@ class Settings:
     port: int = int(os.getenv("AISTUDIO_PORT", "8080"))
     camoufox_port: int = int(os.getenv("AISTUDIO_CAMOUFOX_PORT", DEFAULT_CAMOUFOX_PORT))
     auth_file: str | None = discover_auth_file()
-    tmp_dir: str = os.getenv("AISTUDIO_TMP_DIR", "/tmp")
+    tmp_dir: str = os.getenv("AISTUDIO_TMP_DIR") or DEFAULT_TMP_DIR
     camoufox_headless: bool = os.getenv("AISTUDIO_CAMOUFOX_HEADLESS", "1") not in ("0", "false", "False")
     camoufox_python: str | None = os.getenv("AISTUDIO_CAMOUFOX_PYTHON")
     proxy_server: str | None = _proxy_server()

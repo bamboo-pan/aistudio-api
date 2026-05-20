@@ -356,7 +356,7 @@ curl -X POST http://localhost:8080/rotation/next
 | `AISTUDIO_DEFAULT_IMAGE_MODEL` | `gemini-3.1-flash-image-preview` | 默认图片模型 |
 | `AISTUDIO_AUTH_FILE` | 自动发现 | 兼容遗留单文件 storage state；新账号池优先使用 `data/accounts` |
 | `AISTUDIO_ACCOUNTS_DIR` | `./data/accounts` | 多账号注册表和各账号 `auth.json` 目录 |
-| `AISTUDIO_TMP_DIR` | `/tmp` | 临时图片/文件转换目录 |
+| `AISTUDIO_TMP_DIR` | 系统临时目录 | 临时图片/文件转换目录 |
 | `AISTUDIO_CAMOUFOX_HEADLESS` | `1` | 网关浏览器是否无头运行；登录浏览器始终有头 |
 | `AISTUDIO_CAMOUFOX_PYTHON` | 空 | 指定启动 Camoufox 的 Python 解释器 |
 | `AISTUDIO_PROXY_SERVER` | 空 | Camoufox 浏览器代理，例如 WSL 使用 Windows 代理时可设为 `http://<WSL 网关 IP>:7890` |

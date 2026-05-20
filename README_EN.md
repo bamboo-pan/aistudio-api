@@ -356,7 +356,7 @@ Use environment variables or a `.env` file:
 | `AISTUDIO_DEFAULT_IMAGE_MODEL` | `gemini-3.1-flash-image-preview` | Default image model |
 | `AISTUDIO_AUTH_FILE` | auto-discovered | Legacy single storage-state file; the account pool under `data/accounts` takes priority for normal runs |
 | `AISTUDIO_ACCOUNTS_DIR` | `./data/accounts` | Account registry and per-account `auth.json` directory |
-| `AISTUDIO_TMP_DIR` | `/tmp` | Temporary image/file conversion directory |
+| `AISTUDIO_TMP_DIR` | system temp directory | Temporary image/file conversion directory |
 | `AISTUDIO_CAMOUFOX_HEADLESS` | `1` | Whether the gateway browser runs headless; login browser is always headed |
 | `AISTUDIO_CAMOUFOX_PYTHON` | empty | Python executable used to launch Camoufox |
 | `AISTUDIO_PROXY_SERVER` | empty | Camoufox browser proxy, for example `http://<WSL gateway IP>:7890` when WSL must use a Windows proxy |

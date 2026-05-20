@@ -792,6 +792,28 @@ def test_image_prompt_optimization_returns_three_options_and_forwards_thinking()
     assert call["sanitize_plain_text"] is False
 
 
+def test_image_prompt_optimization_forwards_reference_images_to_optimizer_context():
+    client = FakePromptOptimizerClient()
+    image_data = "data:image/png;base64," + base64.b64encode(b"reference-image").decode("ascii")
+    req = ImagePromptOptimizationRequest(
+        prompt="让产品保持参考图里的玻璃质感",
+        model="gemini-3-flash-preview",
+        style_template="photorealistic",
+        images=[image_data],
+    )
+
+    response = run_with_runtime(handle_image_prompt_optimization(req, client))
+
+    assert response["options"][0]["prompt"] == "优化提示词一"
+    call = client.calls[0]
+    assert len(call["capture_images"]) == 1
+    assert "用户同时提供了 1 张图片素材" in call["capture_prompt"]
+    user_content = call["contents"][-1]
+    assert user_content.role == "user"
+    assert user_content.parts[0].text.startswith("原始提示词")
+    assert user_content.parts[1].inline_data == ("image/png", base64.b64encode(b"reference-image").decode("ascii"))
+
+
 def test_image_prompt_optimization_normalizes_thinking_for_unsupported_model():
     client = FakePromptOptimizerClient()
     req = ImagePromptOptimizationRequest(
@@ -807,6 +829,24 @@ def test_image_prompt_optimization_normalizes_thinking_for_unsupported_model():
     call = client.calls[0]
     assert call["model"] == "gemini-3.1-flash-tts-preview"
     assert call["generation_config_overrides"] is None
+
+
+def test_image_prompt_optimization_rejects_reference_images_for_non_image_input_model():
+    client = FakePromptOptimizerClient()
+    image_data = "data:image/png;base64," + base64.b64encode(b"reference-image").decode("ascii")
+    req = ImagePromptOptimizationRequest(
+        prompt="一张产品海报",
+        model="gemini-3.1-flash-tts-preview",
+        style_template="none",
+        images=[image_data],
+    )
+
+    with pytest.raises(HTTPException) as error:
+        run_with_runtime(handle_image_prompt_optimization(req, client))
+
+    assert error.value.status_code == 400
+    assert "does not support image input" in error.value.detail["message"]
+    assert client.calls == []
 
 
 def test_image_prompt_optimization_rejects_image_model_before_client_call():
