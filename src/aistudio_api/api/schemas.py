@@ -87,6 +87,7 @@ class ImagePromptOptimizationRequest(BaseModel):
     model: str = DEFAULT_TEXT_MODEL
     style_template: str = "none"
     thinking: Optional[str | bool] = "off"
+    images: Optional[list[str | ImageUrl]] = None
 
 
 class ImageMessage(BaseModel):

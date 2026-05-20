@@ -39,3 +39,36 @@ Added an optional per-request image generation timeout field and WebUI control, 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 2: Prompt optimizer reference images
+
+**Date**: 2026-05-20
+**Task**: Prompt optimizer reference images
+**Branch**: `fix-prompt-optimizer-reference-images`
+
+### Summary
+
+Fixed image prompt optimization so selected base/reference images are sent through the optimizer path, added multimodal temp-dir safety, updated docs/specs, and verified with unit tests plus WSL real API/UI smoke.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f628f40` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

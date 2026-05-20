@@ -407,6 +407,7 @@ def test_static_frontend_exposes_image_prompt_templates_and_optimizer():
     assert "/v1/images/prompt-optimizations" in app_js
     assert "style_template:this.imageStyleTemplate" in app_js
     assert "thinking:this.promptOptimizerSupportsThinking?this.imagePromptOptimizerThinking:'off'" in app_js
+    assert "const images=await this.imageRequestImages();if(images.length)body.images=images" in app_js
     assert "imagePromptForRequest(prompt)" in app_js
     assert "Style template:" in app_js
     assert "promptOptionApplied" in app_js

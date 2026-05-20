@@ -11,7 +11,7 @@ from typing import Optional
 
 import httpx
 
-from aistudio_api.config import DEFAULT_IMAGE_MODEL
+from aistudio_api.config import DEFAULT_IMAGE_MODEL, settings
 from aistudio_api.application.validation import validate_number_range
 from aistudio_api.domain.errors import RequestError
 from aistudio_api.domain.model_capabilities import mime_type_supported, require_model_capabilities
@@ -89,11 +89,18 @@ def data_uri_to_inline_data(uri: str, label: str = "file data URI") -> tuple[str
     return _parse_data_uri(uri, label)
 
 
-def data_uri_to_file(uri: str, tmp_dir: str = "/tmp") -> str:
+def _temporary_directory(tmp_dir: str | None = None) -> str:
+    path = tmp_dir or settings.tmp_dir
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def data_uri_to_file(uri: str, tmp_dir: str | None = None) -> str:
     mime, b64 = _parse_data_uri(uri, "image data URI")
     if not _is_image_mime(mime):
         raise ValueError("image data URI must contain an image MIME type")
     ext = mime.split("/")[-1].replace("jpeg", "jpg")
+    tmp_dir = _temporary_directory(tmp_dir)
     path = os.path.join(tmp_dir, f"aistudio_img_{uuid.uuid4().hex[:8]}.{ext}")
     decoded = _decode_base64_data(b64, "image data URI")
     with open(path, "wb") as file:
@@ -101,7 +108,8 @@ def data_uri_to_file(uri: str, tmp_dir: str = "/tmp") -> str:
     return path
 
 
-def url_to_file(url: str, tmp_dir: str = "/tmp") -> str:
+def url_to_file(url: str, tmp_dir: str | None = None) -> str:
+    tmp_dir = _temporary_directory(tmp_dir)
     path = os.path.join(tmp_dir, f"aistudio_img_{uuid.uuid4().hex[:8]}.jpg")
     with httpx.Client(timeout=30) as http:
         resp = http.get(url)
@@ -113,7 +121,7 @@ def url_to_file(url: str, tmp_dir: str = "/tmp") -> str:
     return path
 
 
-def normalize_chat_request(messages, requested_model: str, tmp_dir: str = "/tmp") -> dict:
+def normalize_chat_request(messages, requested_model: str, tmp_dir: str | None = None) -> dict:
     if not messages:
         raise ValueError("messages must contain at least one message")
 
@@ -255,8 +263,9 @@ def cleanup_files(paths: list[str]):
             pass
 
 
-def inline_data_to_file(mime_type: str, data: str, tmp_dir: str = "/tmp") -> str:
+def inline_data_to_file(mime_type: str, data: str, tmp_dir: str | None = None) -> str:
     ext = mime_type.split("/")[-1].replace("jpeg", "jpg")
+    tmp_dir = _temporary_directory(tmp_dir)
     path = os.path.join(tmp_dir, f"aistudio_img_{uuid.uuid4().hex[:8]}.{ext}")
     decoded = _decode_base64_data(data, "inlineData")
     with open(path, "wb") as file:
@@ -366,7 +375,7 @@ def normalize_openai_tools_and_search(tools) -> tuple[list[list] | None, bool]:
     return [[None, [encode_function_declaration_to_wire(decl) for decl in function_declarations]]], uses_search
 
 
-def normalize_gemini_request(req, requested_model: str, tmp_dir: str = "/tmp", *, stream: bool = False) -> dict:
+def normalize_gemini_request(req, requested_model: str, tmp_dir: str | None = None, *, stream: bool = False) -> dict:
     if req.cachedContent:
         raise ValueError("cachedContent is not supported by AI Studio browser replay mode yet")
     if req.safetySettings:

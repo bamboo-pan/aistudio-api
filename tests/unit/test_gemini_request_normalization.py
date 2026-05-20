@@ -174,6 +174,50 @@ def test_normalize_chat_request_cleans_image_file_after_late_validation_error(tm
     assert list(tmp_path.iterdir()) == []
 
 
+def test_normalize_chat_request_default_temp_dir_accepts_inline_image():
+    req = ChatRequest(
+        model="gemini-3-flash-preview",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "describe"},
+                    {"type": "image_url", "image_url": {"url": "data:image/png;base64,aGVsbG8="}},
+                ],
+            }
+        ],
+    )
+
+    normalized = normalize_chat_request(req.messages, req.model)
+
+    assert len(normalized["capture_images"]) == 1
+    chat_service.cleanup_files(normalized["cleanup_paths"])
+
+
+def test_normalize_chat_request_uses_configured_temp_dir_by_default(tmp_path, monkeypatch):
+    configured_tmp = tmp_path / "configured-temp"
+    monkeypatch.setattr(chat_service.settings, "tmp_dir", str(configured_tmp))
+    req = ChatRequest(
+        model="gemini-3-flash-preview",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "describe"},
+                    {"type": "image_url", "image_url": {"url": "data:image/png;base64,aGVsbG8="}},
+                ],
+            }
+        ],
+    )
+
+    normalized = normalize_chat_request(req.messages, req.model)
+
+    assert configured_tmp.is_dir()
+    assert len(normalized["capture_images"]) == 1
+    assert normalized["capture_images"][0].startswith(str(configured_tmp))
+    chat_service.cleanup_files(normalized["cleanup_paths"])
+
+
 def test_normalize_gemini_request_rejects_streaming_for_image_model():
     req = GeminiGenerateContentRequest(
         contents=[GeminiContent(role="user", parts=[GeminiPart(text="hello")])],

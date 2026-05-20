@@ -34,6 +34,93 @@ Questions to answer:
 
 (To be filled by the team)
 
+## Scenario: Image Prompt Optimization With Reference Images
+
+### 1. Scope / Trigger
+
+- Trigger: Code changes `/v1/images/prompt-optimizations`, the image workspace prompt optimizer UI, image reference upload/selection, or multimodal chat request normalization.
+- Use this contract whenever prompt optimization may need the same visual context as the eventual image generation/edit request.
+
+### 2. Signatures
+
+- `POST /v1/images/prompt-optimizations` accepts `{"prompt": str, "model": str, "style_template": str = "none", "thinking": str|bool = "off", "images"?: list[str|{"url": str}]}`.
+- Frontend entry point: `optimizeImagePrompt()` sends `/v1/images/prompt-optimizations` from the image workspace.
+- Frontend material conversion: `imageEditReferences` combines `imageBaseImage` and `imageReferences`; `imageRequestImages()` converts them to request-ready data URLs.
+- Backend schema: `ImagePromptOptimizationRequest.images` uses the same compatible shape as `ImageRequest.images`.
+- Temporary multimodal conversion helpers: `data_uri_to_file(..., tmp_dir=None)`, `url_to_file(..., tmp_dir=None)`, `normalize_chat_request(..., tmp_dir=None)`, and `normalize_gemini_request(..., tmp_dir=None)` default to `settings.tmp_dir`.
+
+### 3. Contracts
+
+- Text-only prompt optimization remains valid and must not include an `images` field when no image materials are selected.
+- When image materials are selected, the WebUI must reuse `imageRequestImages()` before optimizing, not maintain a separate image conversion path.
+- The backend optimizer request must include a text block with the optimization instructions and one `image_url` block per supplied image.
+- The optimizer system/user instructions must explicitly tell the model to use supplied reference images so options do not drift away from the user's materials.
+- Image-bearing optimization requests require a text-output, non-image-output model with `image_input=True`.
+- `AISTUDIO_TMP_DIR` defaults to the platform system temp directory, not a hard-coded `/tmp`; helper functions must create the configured directory before writing temporary files.
+
+### 4. Validation & Error Matrix
+
+- Empty `prompt` -> HTTP 400 `prompt is required`.
+- Unknown `style_template` -> HTTP 400 listing supported style templates.
+- Image-output model used as optimizer -> HTTP 400 `must be a text prompt optimization model`.
+- `images` supplied with a model that lacks image input -> HTTP 400 `does not support image input for prompt optimization` before any upstream client call.
+- Invalid image entry -> HTTP 400 from shared image URL/data URI validation.
+- Optimizer response without exactly three options -> HTTP 502 upstream error.
+
+### 5. Good/Base/Bad Cases
+
+- Good: User uploads a reference image, chooses `gemini-3-flash-preview`, clicks optimize, and the request body contains `images` plus a prompt tied to the reference image.
+- Good: Request logs for a real UI/API call show `client_request.body_json.images` and an upstream request containing reference-image context.
+- Base: User optimizes a text prompt without references; the API returns three JSON options as before.
+- Bad: The WebUI sends only text to the optimizer while image generation later sends selected references.
+- Bad: A Windows run tries to write multimodal temp files under `/tmp` and fails before the upstream call.
+
+### 6. Tests Required
+
+- Unit: `handle_image_prompt_optimization(...)` forwards supplied images into the optimizer chat contents and capture images.
+- Unit: image-bearing optimization rejects a non-image-input optimizer model before calling the client.
+- Unit: default multimodal temp-dir normalization accepts inline images on Windows and cleans created files.
+- Unit/static: `optimizeImagePrompt()` builds a body, awaits `imageRequestImages()`, and sets `body.images` when images exist.
+- Static syntax: when editing `src/aistudio_api/static/app.js`, run `node --check src/aistudio_api/static/app.js`.
+- Real: WSL browser-backed API smoke must send `/v1/images/prompt-optimizations` with an image and verify a 200 response plus request-log `images` preservation.
+- Real: WebUI smoke must upload/select a reference image, click optimize, and verify the network request includes `images` and returns three options.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```javascript
+await this.fetchJson('/v1/images/prompt-optimizations', {
+	method: 'POST',
+	body: JSON.stringify({ prompt, model: this.imagePromptOptimizerModel })
+})
+```
+
+#### Correct
+
+```javascript
+const body = { prompt, model: this.imagePromptOptimizerModel }
+const images = await this.imageRequestImages()
+if (images.length) body.images = images
+await this.fetchJson('/v1/images/prompt-optimizations', { method: 'POST', body: JSON.stringify(body) })
+```
+
+#### Wrong
+
+```python
+def normalize_chat_request(messages, requested_model, tmp_dir="/tmp"):
+		...
+```
+
+#### Correct
+
+```python
+def normalize_chat_request(messages, requested_model, tmp_dir=None):
+		tmp_dir = tmp_dir or settings.tmp_dir
+		os.makedirs(tmp_dir, exist_ok=True)
+		...
+```
+
 ## Scenario: Dynamic Model List Refresh
 
 ### 1. Scope / Trigger
