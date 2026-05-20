@@ -647,3 +647,36 @@ Accepted Responses output_text assistant history blocks at the server compatibil
 ### Next Steps
 
 - None - task complete
+
+
+## Session 20: Fix IDE responses tool calls
+
+**Date**: 2026-05-20
+**Task**: Fix IDE responses tool calls
+**Branch**: `fix/ide-tool-call-handling`
+
+### Summary
+
+Restored Responses tool-call events for IDE payloads and hardened browser template capture.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `05f1bce` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
