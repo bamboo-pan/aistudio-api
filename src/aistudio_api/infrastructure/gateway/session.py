@@ -287,6 +287,78 @@ AI_STUDIO_SELECT_IMAGE_MODEL_JS = r"""(model) => {
     return {selected: false, reason: 'model_card_not_found'};
 }"""
 
+AI_STUDIO_LIST_MODELS_JS = r"""(() => {
+    const values = new Set();
+    const add = (value) => {
+        const text = String(value || '').trim();
+        if (!text) return;
+        for (const match of text.matchAll(/\b(?:models\/)?(?:gemini|gemma|deep-research|learnlm)-[a-z0-9][a-z0-9._-]*\b/gi)) {
+            const model = match[0].replace(/^models\//i, '').toLowerCase();
+            if (model.length <= 80) values.add(model);
+        }
+    };
+    const visit = (value, depth = 0) => {
+        if (depth > 4 || value == null) return;
+        if (typeof value === 'string' || typeof value === 'number') {
+            add(value);
+            return;
+        }
+        if (Array.isArray(value)) {
+            value.slice(0, 200).forEach((item) => visit(item, depth + 1));
+            return;
+        }
+        if (typeof value === 'object') {
+            for (const key of ['name', 'id', 'model', 'modelId', 'displayName', 'value', 'label']) {
+                if (Object.prototype.hasOwnProperty.call(value, key)) visit(value[key], depth + 1);
+            }
+        }
+    };
+    const collectFromWindow = (root, depth = 0, seen = new Set()) => {
+        if (depth > 2 || root == null || seen.has(root)) return;
+        if (typeof root !== 'object' && typeof root !== 'function') return;
+        seen.add(root);
+        for (const key of Object.keys(root).slice(0, 400)) {
+            const lower = key.toLowerCase();
+            if (!/(model|gemini|gemma)/.test(lower)) continue;
+            try { visit(root[key]); } catch (e) {}
+        }
+    };
+    add(document.body?.innerText || '');
+    document.querySelectorAll('[aria-label], [title], [data-value], [data-model], [data-test-id], option').forEach((node) => {
+        add(node.getAttribute('aria-label'));
+        add(node.getAttribute('title'));
+        add(node.getAttribute('data-value'));
+        add(node.getAttribute('data-model'));
+        add(node.getAttribute('data-test-id'));
+        add(node.textContent);
+    });
+    collectFromWindow(window);
+    collectFromWindow(window.default_MakerSuite);
+    return Array.from(values).sort((left, right) => left.localeCompare(right));
+})()"""
+
+AI_STUDIO_OPEN_MODEL_PICKER_JS = r"""(() => {
+    const textOf = (el) => String(el.innerText || el.textContent || el.getAttribute('aria-label') || el.getAttribute('title') || '').replace(/\s+/g, ' ').trim();
+    const visible = (el) => {
+        const rect = el.getBoundingClientRect();
+        const style = window.getComputedStyle(el);
+        return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+    };
+    const isSendControl = (label) => /\b(run|send|generate)\b|运行|发送|生成/.test(label.toLowerCase());
+    const modelish = (label) => /model|模型|gemini|gemma|deep research|nano banana/i.test(label) || /\b(?:models\/)?(?:gemini|gemma|deep-research|learnlm)-[a-z0-9][a-z0-9._-]*\b/i.test(label);
+    const candidates = Array.from(document.querySelectorAll('mat-select, [role="combobox"], button, [role="button"]'));
+    for (const candidate of candidates) {
+        if (!visible(candidate)) continue;
+        if (candidate.disabled || candidate.getAttribute('aria-disabled') === 'true') continue;
+        const label = textOf(candidate);
+        if (!label || isSendControl(label) || !modelish(label)) continue;
+        try { candidate.scrollIntoView({block: 'center', inline: 'center'}); } catch (e) {}
+        candidate.click();
+        return {opened: true, label: label.slice(0, 160)};
+    }
+    return {opened: false, reason: 'model_picker_not_found'};
+})()"""
+
 
 class BrowserSession:
     def __init__(self, port: int):
@@ -325,6 +397,9 @@ class BrowserSession:
 
     async def capture_template(self, model: str) -> dict[str, Any]:
         return await self._run_sync(self._capture_template_sync, model)
+
+    async def list_available_models(self) -> list[str]:
+        return await self._run_sync(self._list_available_models_sync)
 
     async def upload_images(self, image_paths: list[str]) -> list[str]:
         return await self._run_sync(self._upload_images_sync, image_paths)
@@ -1327,6 +1402,31 @@ mw:((hash) => {
         elif isinstance(selected, dict) and selected.get("reason") not in {"already_selected", "not_image_model"}:
             log.info("AI Studio image model not selected: %s", selected.get("reason"))
         return prepared
+
+    def _list_available_models_sync(self) -> list[str]:
+        page = self._ensure_hook_page_sync()
+        try:
+            opened = page.evaluate(AI_STUDIO_OPEN_MODEL_PICKER_JS)
+            if isinstance(opened, dict) and opened.get("opened"):
+                page.wait_for_timeout(800)
+        except Exception as exc:
+            log.debug("AI Studio model picker open failed before extraction: %s", exc)
+        try:
+            models = page.evaluate(AI_STUDIO_LIST_MODELS_JS)
+        except Exception as exc:
+            diagnostics = self._format_chat_runtime_diagnostics_sync(page)
+            raise RuntimeError(f"AI Studio model list extraction failed: {exc}; {diagnostics}") from exc
+        if not isinstance(models, list):
+            return []
+        result: list[str] = []
+        seen: set[str] = set()
+        for model in models:
+            model_id = str(model or "").strip().removeprefix("models/").lower()
+            if not model_id or model_id in seen:
+                continue
+            seen.add(model_id)
+            result.append(model_id)
+        return result
 
     def _install_hooks_sync(self, page) -> None:
         try:

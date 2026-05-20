@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import ValidationError
 
 from aistudio_api.application.api_service import gemini_count_tokens_response, gemini_model_dict, handle_gemini_generate_content, list_gemini_models_response
+from aistudio_api.application.model_service import refresh_model_metadata
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
 
 from .dependencies import get_client
 from .schemas import GeminiGenerateContentRequest
+from .state import runtime_state
 
 router = APIRouter()
 
@@ -19,7 +21,9 @@ def _unsupported(message: str) -> HTTPException:
 
 
 @router.get("/v1beta/models")
-async def list_models():
+async def list_models(refresh: bool = Query(False)):
+    if refresh:
+        await refresh_model_metadata(runtime_state.client)
     return list_gemini_models_response()
 
 

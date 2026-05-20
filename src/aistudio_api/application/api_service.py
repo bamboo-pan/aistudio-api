@@ -31,6 +31,7 @@ from aistudio_api.domain.model_capabilities import (
     IMAGE_RESPONSE_FORMATS,
     IMAGE_UNSUPPORTED_OPENAI_FIELDS,
     get_model_capabilities,
+    list_model_ids,
     plan_image_generation,
     validate_chat_capabilities,
 )
@@ -1644,9 +1645,7 @@ def gemini_model_dict(model_id: str) -> dict[str, Any]:
 
 
 def list_gemini_models_response() -> dict[str, Any]:
-    from aistudio_api.domain.model_capabilities import MODEL_CAPABILITIES
-
-    return {"models": [gemini_model_dict(model_id) for model_id in MODEL_CAPABILITIES]}
+    return {"models": [gemini_model_dict(model_id) for model_id in list_model_ids()]}
 
 
 def _estimate_text_tokens(text: str) -> int:

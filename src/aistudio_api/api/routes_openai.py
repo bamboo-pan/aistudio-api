@@ -4,21 +4,24 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
 from aistudio_api.application.api_service import handle_chat, handle_image_generation, handle_image_prompt_optimization, handle_messages, handle_messages_count_tokens, handle_openai_responses, parse_image_request
+from aistudio_api.application.model_service import refresh_model_metadata
 from aistudio_api.domain.model_capabilities import get_model_metadata, list_model_metadata
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
 
 from .dependencies import get_client
+from .state import runtime_state
 from .schemas import ChatRequest, ImagePromptOptimizationRequest
 
 router = APIRouter()
 
 
 @router.get("/v1/models")
-async def list_models():
-    return {"object": "list", "data": list_model_metadata()}
+async def list_models(refresh: bool = Query(False)):
+    data = await refresh_model_metadata(runtime_state.client) if refresh else list_model_metadata()
+    return {"object": "list", "data": data}
 
 
 @router.get("/v1/models/{model_id:path}")

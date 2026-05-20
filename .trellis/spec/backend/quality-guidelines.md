@@ -34,6 +34,77 @@ Questions to answer:
 
 (To be filled by the team)
 
+## Scenario: Dynamic Model List Refresh
+
+### 1. Scope / Trigger
+
+- Trigger: Code changes model capability metadata, `/v1/models`, `/v1beta/models`, browser-backed model discovery, or static UI model selectors.
+- Use this contract whenever model availability can change independently of the static registry.
+
+### 2. Signatures
+
+- `GET /v1/models?refresh=<bool>` returns OpenAI-compatible `{"object": "list", "data": [...]}` metadata.
+- `GET /v1beta/models?refresh=<bool>` returns Gemini-compatible `{"models": [...]}` metadata.
+- `AIStudioClient.list_available_models() -> list[str]` returns browser-discovered model ids without the `models/` prefix.
+- `BrowserSession.list_available_models() -> list[str]` opens/reads the AI Studio model picker and extracts model ids.
+- `register_dynamic_models(models: Iterable[str]) -> list[ModelCapabilities]` registers discovered ids for strict validation.
+- Frontend model refresh entry point: `refreshModels()` calls `loadModels(true)`.
+
+### 3. Contracts
+
+- Plain list calls (`refresh=false` or absent) must be fast and must not require an initialized browser client.
+- Refresh calls attempt browser-backed model discovery when a runtime client is available; discovery failures log a warning and return the cached/static registry.
+- Dynamically discovered text-like ids are registered with inferred generic text capabilities so strict validation paths can accept them.
+- Static model metadata remains the fallback source of truth for known image models and models with special capabilities.
+- Gemini list responses must be generated from the combined static plus dynamic model id set.
+- Frontend refresh must preserve a selected model when it still exists; otherwise existing default-selection helpers choose a valid text/image/prompt-optimizer model.
+- Frontend model loading must guard against stale responses when interface mode changes during refresh.
+
+### 4. Validation & Error Matrix
+
+- No runtime client + `/v1/models?refresh=true` -> HTTP 200 with cached/static model metadata.
+- Browser discovery failure -> HTTP 200 with cached/static model metadata and a server warning.
+- Duplicate discovered ids or `models/<id>` aliases -> one dynamic registry entry keyed by canonical id.
+- Unknown dynamically discovered text model used in strict validation -> accepted after refresh with generic text capabilities.
+- Unknown image-like dynamic model -> inferred as image-capable, but specialized image size support still depends on registry metadata.
+
+### 5. Good/Base/Bad Cases
+
+- Good: User clicks the WebUI refresh button, `/v1/models?refresh=true` runs, `gemini-3.5-flash` appears in the dropdown, and `gemini-3.5-flash:countTokens` passes strict model validation.
+- Good: User switches from OpenAI-compatible mode to Gemini mode while a refresh is in flight; the stale OpenAI response does not overwrite the Gemini model list.
+- Base: Server starts without browser mode or without a ready client; `/v1/models` still returns static metadata.
+- Bad: The UI shows a dynamically discovered model, but the backend rejects it because only the frontend list was updated.
+- Bad: Model list refresh fails the whole endpoint because AI Studio UI scraping changed.
+
+### 6. Tests Required
+
+- Unit: static registry includes newly known models and exposes expected capabilities.
+- Unit: `register_dynamic_models(...)` makes a discovered text model available to `strict=True` lookup.
+- Unit/API: `/v1/models?refresh=true` and `/v1beta/models?refresh=true` call the runtime model discovery hook and include registered dynamic models.
+- Unit: browser session extraction normalizes `models/` prefixes, lowercases ids, and de-duplicates results.
+- Unit/static: frontend exposes loading state, refresh buttons, `?refresh=true` model URL construction, and stale-response guards.
+- Static syntax: when editing `src/aistudio_api/static/app.js`, run `node --check src/aistudio_api/static/app.js`.
+- Real: WSL browser-backed smoke must call refreshed model APIs and use the refreshed model in at least one strict-validation API route.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+@router.get("/v1/models")
+async def list_models(client: AIStudioClient = Depends(get_client)):
+	return {"object": "list", "data": await client.list_available_models()}
+```
+
+#### Correct
+
+```python
+@router.get("/v1/models")
+async def list_models(refresh: bool = Query(False)):
+	data = await refresh_model_metadata(runtime_state.client) if refresh else list_model_metadata()
+	return {"object": "list", "data": data}
+```
+
 ## Scenario: Correlated API and AI Studio Request Logging
 
 ### 1. Scope / Trigger

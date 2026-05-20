@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "backend spec index for API/model metadata changes"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "quality and static JS validation guidance"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "constant and helper reuse guidance"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "backend/frontend model metadata flow guidance"}

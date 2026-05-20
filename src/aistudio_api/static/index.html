@@ -70,14 +70,19 @@
             <h1>模型调试工作台</h1>
           </div>
           <div class="playground-actions">
-            <div class="cselect cselect-lg playground-model-select" :class="{open:openSelect==='model'}" @click.stop>
-              <div class="cselect-btn" @click="toggleSelect('model',$event)" tabindex="0"><span x-text="model||'选择模型'">选择模型</span><span class="arrow"></span></div>
-              <div class="cselect-menu">
-                <template x-for="m in textModels" :key="m.id">
-                  <div class="cselect-opt" :class="{active:model===m.id}" @click="selectModel(m.id)" x-text="m.id"></div>
-                </template>
-                <div class="cselect-opt" aria-disabled="true" x-show="!textModels.length">暂无文本模型</div>
+            <div class="model-picker-row">
+              <div class="cselect cselect-lg playground-model-select" :class="{open:openSelect==='model'}" @click.stop>
+                <div class="cselect-btn" @click="toggleSelect('model',$event)" tabindex="0"><span x-text="modelsLoading?'加载模型中':model||'选择模型'">选择模型</span><span class="arrow"></span></div>
+                <div class="cselect-menu">
+                  <template x-for="m in textModels" :key="m.id">
+                    <div class="cselect-opt" :class="{active:model===m.id}" @click="selectModel(m.id)" x-text="m.id"></div>
+                  </template>
+                  <div class="cselect-opt" aria-disabled="true" x-show="!textModels.length" x-text="modelsLoading?'模型加载中':'暂无文本模型'"></div>
+                </div>
               </div>
+              <button type="button" class="icon-btn model-refresh-btn" :disabled="modelsLoading" @click="refreshModels()" :title="modelsLoading?'刷新中':'刷新模型列表'" :aria-label="modelsLoading?'刷新中':'刷新模型列表'">
+                <svg viewBox="0 0 24 24" :class="{'spin':modelsLoading}"><path d="M21 12a9 9 0 11-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg>
+              </button>
             </div>
             <span class="playground-status-pill" :class="{'is-live':busy}" x-text="chatStatusText"></span>
             <button class="btn btn-sm" :disabled="busy||!msgs.length" @click="clearChat()">清空会话</button>
@@ -414,12 +419,17 @@
               <div class="image-controls image-studio-controls">
                 <div class="image-control image-model-control">
                   <div class="control-label">模型</div>
-                  <div class="cselect image-select" :class="{open:openSelect==='imageModel'}" @click.stop>
-                    <div class="cselect-btn" @click="toggleSelect('imageModel',$event)" tabindex="0"><span x-text="imageModel||'选择模型'">选择模型</span><span class="arrow"></span></div>
-                    <div class="cselect-menu">
-                      <template x-for="m in imageModels" :key="m.id"><div class="cselect-opt" :class="{active:imageModel===m.id}" @click="selectImageModel(m.id)" x-text="m.id"></div></template>
-                      <div class="cselect-opt" aria-disabled="true" x-show="!imageModels.length">暂无图像模型</div>
+                  <div class="model-picker-row image-model-picker-row">
+                    <div class="cselect image-select" :class="{open:openSelect==='imageModel'}" @click.stop>
+                      <div class="cselect-btn" @click="toggleSelect('imageModel',$event)" tabindex="0"><span x-text="modelsLoading?'加载模型中':imageModel||'选择模型'">选择模型</span><span class="arrow"></span></div>
+                      <div class="cselect-menu">
+                        <template x-for="m in imageModels" :key="m.id"><div class="cselect-opt" :class="{active:imageModel===m.id}" @click="selectImageModel(m.id)" x-text="m.id"></div></template>
+                        <div class="cselect-opt" aria-disabled="true" x-show="!imageModels.length" x-text="modelsLoading?'模型加载中':'暂无图像模型'"></div>
+                      </div>
                     </div>
+                    <button type="button" class="icon-btn model-refresh-btn" :disabled="modelsLoading" @click="refreshModels()" :title="modelsLoading?'刷新中':'刷新模型列表'" :aria-label="modelsLoading?'刷新中':'刷新模型列表'">
+                      <svg viewBox="0 0 24 24" :class="{'spin':modelsLoading}"><path d="M21 12a9 9 0 11-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg>
+                    </button>
                   </div>
                 </div>
                 <div class="image-control">

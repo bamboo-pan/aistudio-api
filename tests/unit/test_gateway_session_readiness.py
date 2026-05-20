@@ -525,6 +525,23 @@ class FakeImageOnboardingPage:
         self.wait_calls.append(timeout_ms)
 
 
+class FakeModelListPage:
+    def __init__(self, models):
+        self.models = models
+        self.open_calls = 0
+        self.wait_calls = []
+
+    def evaluate(self, script: str, *args):
+        if "model_picker_not_found" in script:
+            self.open_calls += 1
+            return {"opened": True, "label": "Gemini 3.5 Flash"}
+        assert "matchAll" in script
+        return self.models
+
+    def wait_for_timeout(self, timeout_ms: int):
+        self.wait_calls.append(timeout_ms)
+
+
 def test_aistudio_onboarding_completion_clicks_required_consent_until_submitted():
     page = FakeOnboardingPage([
         {"needed": True, "checked": True, "submitted": False, "remaining": True},
@@ -573,6 +590,17 @@ def test_text_model_capture_skips_image_onboarding():
 
     assert session._prepare_model_onboarding_sync(page, "gemini-3-flash-preview") is False
     assert page.evaluate_calls == []
+
+
+def test_list_available_models_normalizes_and_deduplicates_page_results():
+    page = FakeModelListPage(["models/Gemini-Dynamic-Preview", "gemini-dynamic-preview", "deep-research-max-preview-04-2026", "", None])
+    session = BrowserSession(port=0)
+    session._hook_page = page
+    session._ensure_hook_page_sync = lambda: page
+
+    assert session._list_available_models_sync() == ["gemini-dynamic-preview", "deep-research-max-preview-04-2026"]
+    assert page.open_calls == 1
+    assert page.wait_calls == [800]
 
 
 class TemplateCaptureImageSessionForTest(TemplateCaptureSessionForTest):

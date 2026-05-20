@@ -37,7 +37,20 @@ def test_static_frontend_exposes_configurable_api_interfaces():
     assert "id:'responses',label:'OpenAI Responses'" in app_js
     assert "id:'gemini',label:'Gemini'" in app_js
     assert "id:'claude',label:'Claude'" in app_js
-    assert "modelListEndpoint(){return this.interfaceMode==='gemini'?'/v1beta/models':'/v1/models'}" in app_js
+    assert "modelListEndpoint(mode=this.interfaceMode){return mode==='gemini'?'/v1beta/models':'/v1/models'}" in app_js
+    assert "modelsLoading:false" in app_js
+    assert "modelLoadSeq:0" in app_js
+    assert "modelListUrl(refresh=false,mode=this.interfaceMode)" in app_js
+    assert "const seq=++this.modelLoadSeq" in app_js
+    assert "seq!==this.modelLoadSeq||mode!==this.interfaceMode" in app_js
+    assert "refresh?'?refresh=true':''" in app_js
+    assert "refreshModels(){return this.loadModels(true)}" in app_js
+    assert "modelsLoading?'加载模型中'" in index_html
+    assert "@click=\"refreshModels()\"" in index_html
+    assert "刷新模型列表" in index_html
+    assert ".model-picker-row" in style_css
+    assert ".model-refresh-btn" in style_css
+    assert "@keyframes spin" in style_css
     assert "normalizeGeminiModel(item)" in app_js
     assert "selectInterfaceMode(value)" in app_js
     assert "geminiChatRequestBody()" in app_js
