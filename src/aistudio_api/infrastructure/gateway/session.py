@@ -871,6 +871,12 @@ class BrowserSession:
     def _is_template_capture_request(self, *, url: str, body: str | None, model_marker: str, allow_text_markers: bool = False) -> bool:
         if not body or len(body) <= 100:
             return False
+        try:
+            parsed_body = json.loads(body)
+        except json.JSONDecodeError:
+            return False
+        if not isinstance(parsed_body, list):
+            return False
         lower_url = (url or "").lower()
         if "counttokens" in lower_url or "count" in lower_url:
             return False

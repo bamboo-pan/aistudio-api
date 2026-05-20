@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend spec index and pre-development checklist for API compatibility work."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Client-compatible Chat/Responses/Messages Gateway contract covers Responses tool history and streaming event behavior."}

@@ -333,7 +333,7 @@ def test_openai_responses_accepts_web_search_tool_and_outputs_search_call():
 
 
 def test_openai_responses_streaming_emits_responses_events():
-    client = FakeStreamClient(events=[("body", "hello"), ("usage", {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3})])
+    client = FakeStreamClient(events=[("body", "hel"), ("body", "lo"), ("usage", {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3})])
 
     response = request_with_client(
         client,
@@ -345,7 +345,8 @@ def test_openai_responses_streaming_emits_responses_events():
     assert response.status_code == 200
     assert "event: response.created" in response.text
     assert "event: response.output_text.delta" in response.text
-    assert '"delta": "hello"' in response.text
+    assert '"delta": "hel"' in response.text
+    assert '"delta": "lo"' in response.text
     assert "event: response.completed" in response.text
 
 
@@ -364,6 +365,67 @@ def test_openai_responses_streaming_emits_reasoning_events():
     assert '"delta": "plan"' in response.text
     assert "event: response.reasoning.done" in response.text
     assert '"thinking": "plan"' in response.text
+
+
+def test_openai_responses_restores_text_tool_request_to_function_call_item():
+    client = FakeTextClient(text='Tool call requested: Shell {"command":"python debug_list_page.py"}')
+
+    response = request_with_client(
+        client,
+        "POST",
+        "/v1/responses",
+        json={
+            "model": "gemini-3-flash-preview",
+            "input": "run it",
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "Shell",
+                    "description": "Run a shell command",
+                    "parameters": {"type": "object", "properties": {"command": {"type": "string"}}},
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["output_text"] == ""
+    function_call = body["output"][0]
+    assert function_call["type"] == "function_call"
+    assert function_call["name"] == "Shell"
+    assert json.loads(function_call["arguments"]) == {"command": "python debug_list_page.py"}
+
+
+def test_openai_responses_streaming_restores_text_tool_request_to_function_call_events():
+    client = FakeStreamClient(events=[("body", 'Tool call requested: Shell {"command":"python debug_list_page.py"}')])
+
+    response = request_with_client(
+        client,
+        "POST",
+        "/v1/responses",
+        json={
+            "model": "gemini-3-flash-preview",
+            "input": "run it",
+            "stream": True,
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "Shell",
+                    "description": "Run a shell command",
+                    "parameters": {"type": "object", "properties": {"command": {"type": "string"}}},
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert "event: response.output_text.delta" not in response.text
+    assert "event: response.function_call_arguments.delta" in response.text
+    assert "event: response.function_call_arguments.done" in response.text
+    assert '"type": "function_call"' in response.text
+    assert '"name": "Shell"' in response.text
+    assert '"output_text": ""' in response.text
 
 
 def test_messages_accepts_anthropic_tools_and_returns_tool_use_blocks():
