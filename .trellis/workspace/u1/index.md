@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 20
+- **Total Sessions**: 21
 - **Last Active**: 2026-05-20
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~682 | Active |
+| `journal-1.md` | ~715 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 21 | 2026-05-20 | Fix Responses tool call argument streaming | `97704f2` | `fix-duplicated-tool-call-arguments` |
 | 20 | 2026-05-20 | Fix IDE responses tool calls | `05f1bce` | `fix/ide-tool-call-handling` |
 | 19 | 2026-05-19 | Fix Responses output_text history input | `bea40e3` | `fix/responses-output-text-input` |
 | 18 | 2026-05-19 | Fix request log real UI BotGuard capture | `2cd6bb2` | `fix/real-ui-request-log-botguard` |
