@@ -34,6 +34,75 @@ Questions to answer:
 
 (To be filled by the team)
 
+## Scenario: Static Image Workflow Subpages
+
+### 1. Scope / Trigger
+
+- Trigger: Code adds or changes a WebUI subpage that creates, edits, optimizes, or previews generated images.
+- Use this contract for prompt-builder pages, alternate image-workbench views, and any image UI that sends `/v1/images/*` requests.
+
+### 2. Signatures
+
+- Static route/hash: add the view id to `applyRouteHash()` and `go(...)`, then render the page with `:class="{active:view==='...'}`.
+- Shared generation state: `imagePrompt`, `imageModel`, `imageSize`, `imageCount`, `imageTimeout`, `imageReferences`, `imageBaseImage`, `imageResults`, `imagePromptOptions`.
+- Shared actions: `imageRequestImages()`, `optimizeImagePrompt()`, `generateImage()`, `saveCurrentImageSession(...)`, `loadImageSessions(...)`.
+- API endpoints must stay centralized through `imageGenerationEndpoint()` and `/v1/images/prompt-optimizations`.
+
+### 3. Contracts
+
+- A new image subpage may maintain its own prompt-builder draft fields, but the final request prompt must flow through `imagePrompt`.
+- Prompt optimization must call the existing `optimizeImagePrompt()` so selected reference images still go through `imageRequestImages()`.
+- Image generation must call the existing `generateImage()` so response persistence, history, base-image promotion, request logs, stats, and session saving stay consistent.
+- Model, size, count, response format, and optimizer-model controls must use `/v1/models` capability metadata through existing `imageModels`, `imageSizes`, and `textModels` getters.
+- Do not add browser-side external API keys or alternate backend runtimes for static image pages.
+
+### 4. Validation & Error Matrix
+
+- Unknown hash route -> ignore/fall back to the current default view.
+- No image model available -> generation button disabled via `imageCanSubmit` and existing `imageSubmitHint` messaging.
+- Empty prompt-builder draft -> compose button disabled; direct prompt editing remains possible through `imagePrompt`.
+- Reference-image read failure -> existing `imageReferenceError` and `imageRequestImages()` error path.
+- Optimizer request with references -> body must include `images` from `imageRequestImages()`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: A prompt-builder page composes labeled prompt sections into `imagePrompt`, then calls `generateImage()`; generated files appear in results, local history, request logs, and image sessions.
+- Good: A page exposes prompt optimization by calling `optimizeImagePrompt()` and rendering `imagePromptOptions` without a second request-building path.
+- Base: A simple image page reuses existing model/size selectors and only changes presentation.
+- Bad: A subpage posts directly to `/v1/images/generations` with its own fetch code, bypassing `imageRequestImages()` and session/history updates.
+- Bad: A subpage hard-codes OpenAI-only image sizes instead of using current model metadata.
+
+### 6. Tests Required
+
+- Static/unit: route id appears in navigation, `applyRouteHash()`, `go(...)`, and page visibility binding.
+- Static/unit: prompt composition writes into `imagePrompt` and generation/optimization controls call existing shared actions.
+- Static/unit: request construction still contains `const images=await this.imageRequestImages();if(images.length)body.images=images`.
+- Static syntax: run `node --check src/aistudio_api/static/app.js` after editing `app.js`.
+- Real API: WSL browser-backed `/v1/images/generations` smoke returns at least one persisted image URL/path.
+- Real WebUI: browser test opens the new hash route, composes a prompt, generates an image, and verifies the network request body and rendered result.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```javascript
+async runCustomImagePage() {
+	await fetch('/v1/images/generations', { body: JSON.stringify(this.customImageBody) })
+}
+```
+
+#### Correct
+
+```javascript
+composeCustomPrompt() {
+	this.imagePrompt = sections.filter(Boolean).join('\n')
+}
+
+async runCustomImagePage() {
+	await this.generateImage()
+}
+```
+
 ## Scenario: Image Prompt Optimization With Reference Images
 
 ### 1. Scope / Trigger

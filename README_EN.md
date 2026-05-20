@@ -63,6 +63,7 @@ The service root redirects to `/static/index.html`.
 
 - `#chat`: model Playground with capability-aware controls, attachments, streaming, Search, Thinking, and structured-output tests
 - `#images`: image generation/editing studio with size/count controls, reference images, material history, and saved sessions
+- `#gpt-image`: GPT image prompt workbench that structures use case, subject, scene, composition, text, and edit constraints using OpenAI image-prompting practices while reusing the existing image generation/optimization APIs
 - `#accounts`: account management with login, switching, health checks, tier labels, rotation modes, runtime stats, and credential import/export
 
 ## Authentication And Accounts
