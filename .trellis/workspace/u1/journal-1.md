@@ -713,3 +713,37 @@ Fixed Responses streaming function-call events so clients reconstruct tool argum
 ### Next Steps
 
 - None - task complete
+
+
+## Session 22: Add GPT image prompt subpage
+
+**Date**: 2026-05-21
+**Task**: Add GPT image prompt subpage
+**Branch**: `feature/gpt-image-subpage`
+
+### Summary
+
+Added a GPT image prompt workbench subpage that reuses existing image generation and prompt optimization flows; documented the task and verified local plus WSL real API/WebUI generation and optimization.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c2e84b8` | (see git log) |
+| `ac5b8e7` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

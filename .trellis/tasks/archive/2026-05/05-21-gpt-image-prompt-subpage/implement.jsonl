@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend/static app spec index for this single-repo task."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Image prompt optimization and static JS verification contracts relevant to this UI."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"The implementation should reuse existing image page methods and avoid duplicating backend flows."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"The new subpage spans navigation, frontend state, API requests, storage, and tests."}
+{"file":".trellis/tasks/05-21-gpt-image-prompt-subpage/research/source-tool-and-openai-guide.md","reason":"Source tool inventory and OpenAI prompting guide mapping for the new subpage."}
