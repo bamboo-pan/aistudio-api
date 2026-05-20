@@ -901,6 +901,7 @@ def _coerce_openai_content_blocks(content: Any) -> str | list[dict[str, Any]]:
 
 def _messages_from_responses_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
     messages: list[dict[str, Any]] = []
+    function_names_by_call_id: dict[str, str] = {}
     instructions = payload.get("instructions")
     if isinstance(instructions, str) and instructions.strip():
         messages.append({"role": "system", "content": instructions})
@@ -931,12 +932,42 @@ def _messages_from_responses_payload(payload: dict[str, Any]) -> list[dict[str, 
             messages.append({"role": "user", "content": _coerce_openai_content_blocks([item])})
         elif item_type in ("input_file", "file"):
             messages.append({"role": "user", "content": _coerce_openai_content_blocks([item])})
+        elif item_type == "function_call":
+            name = item.get("name")
+            if not isinstance(name, str) or not name:
+                raise ValueError("function_call items require name")
+            arguments = item.get("arguments") if item.get("arguments") is not None else {}
+            call_id = item.get("call_id")
+            if isinstance(call_id, str) and call_id:
+                function_names_by_call_id[call_id] = name
+            messages.append({"role": "assistant", "content": _responses_function_call_text(name, _parse_tool_arguments(arguments))})
         elif item_type in ("function_call_output", "tool_result", "input_tool_result"):
             output = item.get("output") if "output" in item else item.get("content", "")
-            messages.append({"role": "tool", "content": str(output)})
+            call_id = item.get("call_id")
+            name = item.get("name") if isinstance(item.get("name"), str) else None
+            if name is None and isinstance(call_id, str):
+                name = function_names_by_call_id.get(call_id)
+            messages.append({"role": "tool", "content": _responses_function_output_text(output, name=name)})
+        elif item_type == "reasoning":
+            continue
         else:
             raise ValueError(f"unsupported input item type: {item_type}")
     return messages
+
+
+def _responses_function_call_text(name: str, arguments: Any) -> str:
+    return f"Tool call requested: {name} {_json_text(arguments)}"
+
+
+def _responses_function_output_text(output: Any, *, name: str | None) -> str:
+    prefix = f"Tool result for {name}:" if name else "Tool result:"
+    return f"{prefix} {_json_text(output)}"
+
+
+def _json_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False)
 
 
 def _chat_text(chat_response: dict[str, Any]) -> str:

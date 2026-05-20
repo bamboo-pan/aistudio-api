@@ -240,6 +240,11 @@ store.save(body=modified_body, headers=captured.replay_headers, captured_headers
 - `/v1/chat/completions`, `/v1/responses`, and `/v1/messages` must share the same function-tool and search-tool normalization behavior.
 - `/v1/responses` must forward `thinking` values through the shared chat request path: `off` disables thinking, while `low`/`medium`/`high` set AI Studio thinking config overrides and keep `enable_thinking=True`.
 - `/v1/responses` input history must accept text-like content block types `text`, `input_text`, and `output_text`; `output_text` commonly appears when clients copy prior Responses assistant output back into the next request.
+- `/v1/responses` input history must accept top-level Responses tool-continuation items emitted by prior turns: `function_call`, `function_call_output`, `tool_result`, and `input_tool_result`.
+- Top-level Responses `function_call` history requires a non-empty string `name`; preserve `call_id -> name` while converting it to assistant text history shaped like `Tool call requested: <name> <arguments>`.
+- Top-level Responses `function_call_output`/tool-result history must be converted to tool-result text history shaped like `Tool result for <name>: <output>` when the name can be recovered from the prior `call_id`, or `Tool result: <output>` otherwise.
+- Top-level Responses `reasoning` history items are metadata and must be accepted and skipped rather than sent downstream or rejected with HTTP 400.
+- Do not encode Responses follow-up tool results as structured AI Studio `functionResponse` wire parts unless a real browser-backed test proves the exact wire shape. The current real endpoint rejects the attempted structured `functionResponse` replay with `Unexpected list for single non-message field`; text history is the supported compatibility path here.
 - `/v1/responses` non-streaming output must preserve returned thinking as a Responses `reasoning` output item and as a top-level `thinking` convenience field for the built-in UI.
 - `/v1/responses` with `stream: true` must translate chat thinking deltas into Responses SSE events `response.reasoning.delta` and `response.reasoning.done`, and the final `response.completed` payload must include accumulated `thinking`.
 - `/v1/responses` with `stream: true` must return SSE events including `response.created`, `response.in_progress`, text deltas, text done, output item done, `response.completed`, and final `data: [DONE]`.
@@ -257,6 +262,8 @@ store.save(body=modified_body, headers=captured.replay_headers, captured_headers
 - Responses `thinking: "high"` -> outbound AI Studio generation config includes thinking config `[1, null, null, 3]` and request flag `1`.
 - Responses upstream thinking text -> client receives a reasoning output item/top-level thinking in non-streaming mode, or reasoning delta/done SSE events in streaming mode.
 - Responses assistant history containing `content: [{"type":"output_text","text":"..."}]` -> normalize as ordinary text history, not a local HTTP 400.
+- Responses history containing top-level `function_call`, optional `reasoning`, and matching `function_call_output` -> normalize to continuation history, not a local HTTP 400.
+- Responses `function_call` item missing a non-empty `name` -> HTTP 400 with `function_call items require name`.
 - Messages `stream: true` -> translate existing Chat SSE into Messages SSE; upstream stream errors become `error` before `[DONE]`.
 - Empty or unsupported message content blocks -> preserve best-effort text while avoiding local crashes.
 
@@ -265,10 +272,12 @@ store.save(body=modified_body, headers=captured.replay_headers, captured_headers
 - Good: CherryStudio sends `tools: [{"type":"web_search"}]` to `/v1/chat/completions`; the request uses Google Search and returns an OpenAI-compatible chat response.
 - Good: Codex/Responses-style client sends `stream: true`; it receives Responses event names and a completed response containing accumulated output text.
 - Good: A Responses client replays the previous assistant message with `output_text` content in the next `input`; the proxy sends it downstream as model text history.
+- Good: A Responses client sends a prior `function_call`, a `reasoning` item, and a `function_call_output`; the proxy converts the tool call/result into text history and the model continues.
 - Good: Claude-compatible client sends `stream: true` to `/v1/messages`; it receives Anthropic event names and token usage deltas when available.
 - Base: A request with only function tools behaves as it did before search-tool support.
 - Bad: `/v1/chat/completions` accepts `web_search`, but `/v1/responses` rejects the same tool because it has a separate validator.
 - Bad: `/v1/responses` emits `output_text` in one response, then rejects the same `output_text` block when the client sends it back as assistant history.
+- Bad: `/v1/responses` forwards attempted structured `functionResponse` wire based only on fake-client tests, then real AI Studio rejects the request body before continuation.
 - Bad: Streaming wrappers emit text deltas but never emit done/completed events, leaving clients waiting.
 
 ### 6. Tests Required
@@ -278,6 +287,7 @@ store.save(body=modified_body, headers=captured.replay_headers, captured_headers
 - Unit: unknown tool types still fail with a clear validation error.
 - Unit: Responses non-streaming output includes `web_search_call` when search was requested.
 - Unit: Responses accepts assistant history content blocks with `type: "output_text"` and normalizes them to ordinary text/model history.
+- Unit: Responses accepts top-level `function_call`, `reasoning`, and `function_call_output` input history and normalizes tool call/result text in downstream contents.
 - Unit: Responses `thinking: "high"` forwards thinking config and `thinking: "off"` disables thinking.
 - Unit: Responses non-streaming output includes returned thinking as reasoning output and top-level `thinking`.
 - Unit: Responses streaming includes `response.created`, text delta/done, `response.completed`, and `[DONE]`.
@@ -285,6 +295,7 @@ store.save(body=modified_body, headers=captured.replay_headers, captured_headers
 - Unit: Messages streaming includes `message_start`, text delta, `message_stop`, and `[DONE]`.
 - Unit: `/v1/messages/count_tokens` returns `input_tokens` for system, messages, and tools payloads.
 - Real: WSL browser-backed smoke must cover Chat search, Responses streaming, Messages streaming, and Messages count_tokens for API/gateway changes.
+- Real: WSL browser-backed smoke must replay any captured Responses tool-follow-up payload before claiming structured compatibility; fake-client tests alone are insufficient for AI Studio wire-shape changes.
 
 ### 7. Wrong vs Correct
 
