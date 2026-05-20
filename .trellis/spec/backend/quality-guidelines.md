@@ -332,9 +332,11 @@ store.save(body=modified_body, headers=captured.replay_headers, captured_headers
 - Top-level Responses `function_call_output`/tool-result history must be converted to tool-result text history shaped like `Tool result for <name>: <output>` when the name can be recovered from the prior `call_id`, or `Tool result: <output>` otherwise.
 - Top-level Responses `reasoning` history items are metadata and must be accepted and skipped rather than sent downstream or rejected with HTTP 400.
 - Do not encode Responses follow-up tool results as structured AI Studio `functionResponse` wire parts unless a real browser-backed test proves the exact wire shape. The current real endpoint rejects the attempted structured `functionResponse` replay with `Unexpected list for single non-message field`; text history is the supported compatibility path here.
+- When AI Studio returns a plain text response exactly shaped like `Tool call requested: <name> <json-arguments>` and `<name>` is one of the current Responses request's declared tools, `/v1/responses` must restore that text to a Responses `function_call` output item/event instead of exposing it as assistant text. This fallback is required because real browser-backed tool requests can come back as compatibility text even when the outbound AI Studio wire contains tool declarations.
+- Responses streaming must emit `response.function_call_arguments.delta` and `response.function_call_arguments.done` for both structured upstream tool calls and restored text-shaped tool calls.
 - `/v1/responses` non-streaming output must preserve returned thinking as a Responses `reasoning` output item and as a top-level `thinking` convenience field for the built-in UI.
 - `/v1/responses` with `stream: true` must translate chat thinking deltas into Responses SSE events `response.reasoning.delta` and `response.reasoning.done`, and the final `response.completed` payload must include accumulated `thinking`.
-- `/v1/responses` with `stream: true` must return SSE events including `response.created`, `response.in_progress`, text deltas, text done, output item done, `response.completed`, and final `data: [DONE]`.
+- `/v1/responses` with `stream: true` must return SSE events including `response.created`, `response.in_progress`, text deltas, text done, output item done, function-call argument events when tools are requested, `response.completed`, and final `data: [DONE]`.
 - `/v1/messages` with `stream: true` must return Anthropic-compatible SSE events including `message_start`, content block start/delta/stop, `message_delta`, `message_stop`, and final `data: [DONE]`.
 - `/v1/messages/count_tokens` returns `{"input_tokens": <int>}` using the same message/system/tool coercion assumptions as `/v1/messages`.
 - These compatibility endpoints are practical subsets. Do not claim hosted OpenAI/Anthropic parity for background tasks, remote hosted tools, or provider-specific beta fields unless tests cover them.
@@ -348,6 +350,7 @@ store.save(body=modified_body, headers=captured.replay_headers, captured_headers
 - Responses `stream: true` -> translate existing Chat SSE into Responses SSE; upstream stream errors become `response.failed` before `[DONE]`.
 - Responses `thinking: "high"` -> outbound AI Studio generation config includes thinking config `[1, null, null, 3]` and request flag `1`.
 - Responses upstream thinking text -> client receives a reasoning output item/top-level thinking in non-streaming mode, or reasoning delta/done SSE events in streaming mode.
+- Responses upstream text exactly `Tool call requested: <declared-tool-name> <json-arguments>` -> client receives a Responses `function_call` output item/non-text streaming function-call events; malformed JSON, missing declared tool name, or undeclared tool name remains ordinary text.
 - Responses assistant history containing `content: [{"type":"output_text","text":"..."}]` -> normalize as ordinary text history, not a local HTTP 400.
 - Responses history containing top-level `function_call`, optional `reasoning`, and matching `function_call_output` -> normalize to continuation history, not a local HTTP 400.
 - Responses `function_call` item missing a non-empty `name` -> HTTP 400 with `function_call items require name`.
@@ -360,11 +363,13 @@ store.save(body=modified_body, headers=captured.replay_headers, captured_headers
 - Good: Codex/Responses-style client sends `stream: true`; it receives Responses event names and a completed response containing accumulated output text.
 - Good: A Responses client replays the previous assistant message with `output_text` content in the next `input`; the proxy sends it downstream as model text history.
 - Good: A Responses client sends a prior `function_call`, a `reasoning` item, and a `function_call_output`; the proxy converts the tool call/result into text history and the model continues.
+- Good: Cursor sends Responses `tools` and AI Studio streams `Tool call requested: Shell {"command":"..."}` as text; the proxy restores it to Responses function-call events so the IDE can execute the tool.
 - Good: Claude-compatible client sends `stream: true` to `/v1/messages`; it receives Anthropic event names and token usage deltas when available.
 - Base: A request with only function tools behaves as it did before search-tool support.
 - Bad: `/v1/chat/completions` accepts `web_search`, but `/v1/responses` rejects the same tool because it has a separate validator.
 - Bad: `/v1/responses` emits `output_text` in one response, then rejects the same `output_text` block when the client sends it back as assistant history.
 - Bad: `/v1/responses` forwards attempted structured `functionResponse` wire based only on fake-client tests, then real AI Studio rejects the request body before continuation.
+- Bad: `/v1/responses` forwards `Tool call requested: Shell {...}` to the client as assistant text, so an IDE displays the request instead of executing the tool.
 - Bad: Streaming wrappers emit text deltas but never emit done/completed events, leaving clients waiting.
 
 ### 6. Tests Required
@@ -375,6 +380,9 @@ store.save(body=modified_body, headers=captured.replay_headers, captured_headers
 - Unit: Responses non-streaming output includes `web_search_call` when search was requested.
 - Unit: Responses accepts assistant history content blocks with `type: "output_text"` and normalizes them to ordinary text/model history.
 - Unit: Responses accepts top-level `function_call`, `reasoning`, and `function_call_output` input history and normalizes tool call/result text in downstream contents.
+- Unit: Responses restores text-shaped tool requests for declared tools to non-streaming `function_call` output items.
+- Unit: Responses streaming restores text-shaped tool requests for declared tools to `response.function_call_arguments.delta`/`done` events and does not emit assistant text deltas for that request.
+- Unit: Responses streaming still emits ordinary text deltas incrementally when the text is not a possible declared-tool request.
 - Unit: Responses `thinking: "high"` forwards thinking config and `thinking: "off"` disables thinking.
 - Unit: Responses non-streaming output includes returned thinking as reasoning output and top-level `thinking`.
 - Unit: Responses streaming includes `response.created`, text delta/done, `response.completed`, and `[DONE]`.
@@ -545,6 +553,7 @@ return data.models.map(item => this.normalizeGeminiModel(item)).filter(item => i
 
 - Capture is responsible for returning a complete `CapturedRequest` containing the replay URL, original headers, and template body.
 - Capture must accept the current AI Studio RPC endpoint shape as well as older URL shapes. In real AI Studio sessions, text generation may be emitted to `https://alkalimakersuite-pa.clients6.google.com/$rpc/.../MakerSuiteService/GenerateContent`, not only to `aistudio.google.com` or `.../batchexecute/GenerateContent`.
+- Template capture must only accept request bodies that parse as the AI Studio JSON array wire body. Skip empty, form-encoded, object-shaped, or otherwise non-JSON bodies even when the URL contains `GenerateContent`; `CapturedRequest.__post_init__`, snapshot rewriting, and wire-codec logic all require a parseable array template.
 - Browser-session prompt filling must update the UI the same way a user does: focus/click the textarea, fill the text, and dispatch input/change events before clicking the enabled run control. Do not click `aria-disabled="true"` run buttons and treat that as success.
 - Replay and streaming must pass `captured.url` and `captured.replay_headers` into `BrowserSession`; they must not ask the session to rediscover URL/header state from private template caches.
 - `CapturedRequest.replay_headers` must exclude hop/body-length headers that browser XHR should not set manually: `host` and `content-length`.
@@ -556,6 +565,7 @@ return data.models.map(item => this.normalizeGeminiModel(item)).filter(item => i
 - Missing/invalid auth after replay reaches AI Studio -> propagate upstream authentication/authorization status.
 - Empty session template cache with valid `CapturedRequest` -> replay must still send the browser XHR using captured URL/headers.
 - Current `alkalimakersuite-pa.clients6.google.com/.../GenerateContent` template URL -> capture and replay it directly; do not filter it out because the host is not `aistudio.google.com`.
+- `GenerateContent`-looking URL with an empty or non-JSON request body -> ignore it and keep waiting for the real JSON array template body; do not cache it as a template.
 - Filled textarea but run button remains `aria-disabled="true"` -> report trigger failure instead of pretending a click succeeded.
 
 ### 5. Good/Base/Bad Cases
@@ -565,12 +575,14 @@ return data.models.map(item => this.normalizeGeminiModel(item)).filter(item => i
 - Base: A fresh capture returns `CapturedRequest`; replay and streaming both use the same captured URL/header contract.
 - Bad: Account switching clears `BrowserSession._templates`, capture reuses a service-level cached template, and replay fails locally with `no captured URL available for replay`.
 - Bad: Template capture filters only `aistudio.google.com` URLs and times out even though the real page emitted a valid `GenerateContent` request to a Google RPC host.
+- Bad: Template capture stores a `GenerateContent` request with a non-JSON body, and the next `/v1/responses` stream fails locally with `JSONDecodeError` while constructing `CapturedRequest`.
 
 ### 6. Tests Required
 
 - Unit: non-streaming replay with a fake browser session that has no template cache; assert URL, sanitized headers, body, and timeout passed to `send_hooked_request`.
 - Unit: streaming replay with a fake browser session that has no template cache; assert URL and sanitized headers passed to `send_streaming_request`.
 - Unit: template capture accepts current `alkalimakersuite-pa.clients6.google.com/.../GenerateContent` RPC URLs, not only `aistudio.google.com` routes.
+- Unit: template capture ignores `GenerateContent`-looking requests whose body is not a parseable JSON array.
 - Unit: run-button clicking skips `aria-disabled="true"` controls and fills the prompt with input/change events.
 - Integration/real: browser-backed `/v1/chat/completions` request returns an upstream result or upstream auth error, not local `no captured URL available for replay` or `template capture timeout`.
 - Integration/real UI: built-in WebUI enables request logging through the UI, sends a Playground message successfully, opens `#requests`, and verifies the new entry detail contains `Body JSON`, `Body 原文`, and complete JSON.

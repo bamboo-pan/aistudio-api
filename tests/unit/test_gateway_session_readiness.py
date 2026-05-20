@@ -704,6 +704,16 @@ def test_capture_template_accepts_current_generatecontent_rpc_host():
     assert page.routed_requests[0].aborted is True
 
 
+def test_capture_template_ignores_generatecontent_url_with_non_json_body():
+    session = BrowserSession(port=0)
+
+    assert not session._is_template_capture_request(
+        url="https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GenerateContent",
+        body="x" * 160,
+        model_marker="gemini-3-flash-preview",
+    )
+
+
 def test_text_capture_reuses_request_from_botguard_service_capture():
     page = FakePage(url=AI_STUDIO_URL, has_default_makersuite=True, has_textarea=True, botguard_on_send=True)
     session = BrowserSessionForTest(page)

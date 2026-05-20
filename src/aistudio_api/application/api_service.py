@@ -1004,6 +1004,23 @@ def _chat_tool_calls(chat_response: dict[str, Any]) -> list[dict[str, Any]]:
     return tool_calls if isinstance(tool_calls, list) else []
 
 
+def _tool_names_from_payload(tools: Any) -> set[str]:
+    if not isinstance(tools, list):
+        return set()
+    names: set[str] = set()
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        function = tool.get("function")
+        if isinstance(function, dict) and isinstance(function.get("name"), str) and function["name"]:
+            names.add(function["name"])
+            continue
+        name = tool.get("name")
+        if isinstance(name, str) and name:
+            names.add(name)
+    return names
+
+
 def _chat_thinking(chat_response: dict[str, Any]) -> str:
     message = _chat_message(chat_response)
     for key in ("thinking", "reasoning_content", "reasoning"):
@@ -1020,6 +1037,43 @@ def _parse_tool_arguments(arguments: Any) -> Any:
         except json.JSONDecodeError:
             return arguments
     return arguments if arguments is not None else {}
+
+
+def _parse_responses_text_tool_request(text: str, allowed_tool_names: set[str]) -> dict[str, Any] | None:
+    if not allowed_tool_names:
+        return None
+    prefix = "Tool call requested: "
+    if not text.startswith(prefix):
+        return None
+    payload = text[len(prefix) :].strip()
+    if not payload:
+        return None
+    name, separator, arguments = payload.partition(" ")
+    if not separator or name not in allowed_tool_names:
+        return None
+    arguments = arguments.strip()
+    if not arguments:
+        return None
+    try:
+        json.loads(arguments)
+    except json.JSONDecodeError:
+        return None
+    return {"name": name, "arguments": arguments}
+
+
+def _may_be_responses_text_tool_request(text: str, allowed_tool_names: set[str]) -> bool:
+    if not text or not allowed_tool_names:
+        return False
+    prefix = "Tool call requested: "
+    if prefix.startswith(text):
+        return True
+    if not text.startswith(prefix):
+        return False
+    payload = text[len(prefix) :]
+    name, separator, _arguments = payload.partition(" ")
+    if not separator:
+        return any(tool_name.startswith(name) for tool_name in allowed_tool_names)
+    return name in allowed_tool_names
 
 
 def _sse_event(event: str, data: dict[str, Any]) -> str:
@@ -1064,7 +1118,23 @@ def _responses_reasoning_item(thinking: str, *, status: str = "completed") -> di
     }
 
 
-def _responses_output_items(chat_response: dict[str, Any], *, uses_search: bool = False) -> list[dict[str, Any]]:
+def _responses_function_call_item(name: str, arguments: str, *, call_id: str | None = None) -> dict[str, Any]:
+    return {
+        "id": f"fc_{uuid.uuid4().hex[:24]}",
+        "type": "function_call",
+        "status": "completed",
+        "call_id": call_id or f"call_{uuid.uuid4().hex[:24]}",
+        "name": name,
+        "arguments": arguments,
+    }
+
+
+def _responses_output_items(
+    chat_response: dict[str, Any],
+    *,
+    uses_search: bool = False,
+    allowed_tool_names: set[str] | None = None,
+) -> list[dict[str, Any]]:
     output: list[dict[str, Any]] = []
     if uses_search:
         output.append(_responses_web_search_item())
@@ -1072,6 +1142,10 @@ def _responses_output_items(chat_response: dict[str, Any], *, uses_search: bool 
     if thinking:
         output.append(_responses_reasoning_item(thinking))
     text = _chat_text(chat_response)
+    text_tool_request = _parse_responses_text_tool_request(text, allowed_tool_names or set())
+    if text_tool_request:
+        output.append(_responses_function_call_item(text_tool_request["name"], text_tool_request["arguments"]))
+        return output
     if text:
         output.append(
             {
@@ -1086,16 +1160,7 @@ def _responses_output_items(chat_response: dict[str, Any], *, uses_search: bool 
         function = tool_call.get("function") if isinstance(tool_call, dict) else None
         if not isinstance(function, dict):
             continue
-        output.append(
-            {
-                "id": f"fc_{uuid.uuid4().hex[:24]}",
-                "type": "function_call",
-                "status": "completed",
-                "call_id": tool_call.get("id"),
-                "name": function.get("name") or "unknown",
-                "arguments": function.get("arguments") or "{}",
-            }
-        )
+        output.append(_responses_function_call_item(function.get("name") or "unknown", function.get("arguments") or "{}", call_id=tool_call.get("id")))
     if output:
         return output
     return [
@@ -1171,6 +1236,7 @@ def _build_responses_streaming_response(
     client: AIStudioClient,
     *,
     uses_search: bool,
+    allowed_tool_names: set[str],
     request: Request | None = None,
 ) -> StreamingResponse:
     async def stream_response():
@@ -1196,6 +1262,30 @@ def _build_responses_streaming_response(
         output_items: list[dict[str, Any]] = []
         final_usage = None
         next_output_index = 0
+
+        def function_call_events(tool_request: dict[str, Any], output_index: int):
+            item = _responses_function_call_item(tool_request["name"], tool_request["arguments"])
+            output_items.append(item)
+            yield _sse_event("response.output_item.added", {"type": "response.output_item.added", "output_index": output_index, "item": item})
+            yield _sse_event(
+                "response.function_call_arguments.delta",
+                {
+                    "type": "response.function_call_arguments.delta",
+                    "item_id": item["id"],
+                    "output_index": output_index,
+                    "delta": item["arguments"],
+                },
+            )
+            yield _sse_event(
+                "response.function_call_arguments.done",
+                {
+                    "type": "response.function_call_arguments.done",
+                    "item_id": item["id"],
+                    "output_index": output_index,
+                    "arguments": item["arguments"],
+                },
+            )
+            yield _sse_event("response.output_item.done", {"type": "response.output_item.done", "output_index": output_index, "item": item})
 
         try:
             yield _sse_event("response.created", {"type": "response.created", "response": response_base})
@@ -1257,7 +1347,8 @@ def _build_responses_streaming_response(
                 text_delta = delta.get("content")
                 if text_delta:
                     text_accumulator.append(text_delta)
-                    if not text_started:
+                    text_value = "".join(text_accumulator)
+                    if not text_started and not _may_be_responses_text_tool_request(text_value, allowed_tool_names):
                         text_started = True
                         text_output_index = next_output_index
                         next_output_index += 1
@@ -1279,32 +1370,54 @@ def _build_responses_streaming_response(
                                 "part": {"type": "output_text", "text": "", "annotations": []},
                             },
                         )
-                    yield _sse_event(
-                        "response.output_text.delta",
-                        {
-                            "type": "response.output_text.delta",
-                            "item_id": text_item_id,
-                            "output_index": text_output_index,
-                            "content_index": 0,
-                            "delta": text_delta,
-                        },
-                    )
+                        yield _sse_event(
+                            "response.output_text.delta",
+                            {
+                                "type": "response.output_text.delta",
+                                "item_id": text_item_id,
+                                "output_index": text_output_index,
+                                "content_index": 0,
+                                "delta": text_value,
+                            },
+                        )
+                    elif text_started:
+                        yield _sse_event(
+                            "response.output_text.delta",
+                            {
+                                "type": "response.output_text.delta",
+                                "item_id": text_item_id,
+                                "output_index": text_output_index,
+                                "content_index": 0,
+                                "delta": text_delta,
+                            },
+                        )
                 for tool_call in delta.get("tool_calls") or []:
                     function = tool_call.get("function") if isinstance(tool_call, dict) else None
                     if not isinstance(function, dict):
                         continue
-                    item = {
-                        "id": f"fc_{uuid.uuid4().hex[:24]}",
-                        "type": "function_call",
-                        "status": "completed",
-                        "call_id": tool_call.get("id"),
-                        "name": function.get("name") or "unknown",
-                        "arguments": function.get("arguments") or "{}",
-                    }
+                    item = _responses_function_call_item(function.get("name") or "unknown", function.get("arguments") or "{}", call_id=tool_call.get("id"))
                     tool_output_index = next_output_index
                     next_output_index += 1
                     output_items.append(item)
                     yield _sse_event("response.output_item.added", {"type": "response.output_item.added", "output_index": tool_output_index, "item": item})
+                    yield _sse_event(
+                        "response.function_call_arguments.delta",
+                        {
+                            "type": "response.function_call_arguments.delta",
+                            "item_id": item["id"],
+                            "output_index": tool_output_index,
+                            "delta": item["arguments"],
+                        },
+                    )
+                    yield _sse_event(
+                        "response.function_call_arguments.done",
+                        {
+                            "type": "response.function_call_arguments.done",
+                            "item_id": item["id"],
+                            "output_index": tool_output_index,
+                            "arguments": item["arguments"],
+                        },
+                    )
                     yield _sse_event("response.output_item.done", {"type": "response.output_item.done", "output_index": tool_output_index, "item": item})
                 if choice.get("finish_reason") is not None:
                     break
@@ -1337,8 +1450,46 @@ def _build_responses_streaming_response(
                     },
                 )
 
-            if text_started:
-                text_value = "".join(text_accumulator)
+            text_value = "".join(text_accumulator)
+            text_tool_request = _parse_responses_text_tool_request(text_value, allowed_tool_names)
+            if text_tool_request:
+                tool_output_index = next_output_index
+                next_output_index += 1
+                for event in function_call_events(text_tool_request, tool_output_index):
+                    yield event
+            elif text_value:
+                if not text_started:
+                    text_started = True
+                    text_output_index = next_output_index
+                    next_output_index += 1
+                    item = {
+                        "id": text_item_id,
+                        "type": "message",
+                        "status": "in_progress",
+                        "role": "assistant",
+                        "content": [],
+                    }
+                    yield _sse_event("response.output_item.added", {"type": "response.output_item.added", "output_index": text_output_index, "item": item})
+                    yield _sse_event(
+                        "response.content_part.added",
+                        {
+                            "type": "response.content_part.added",
+                            "item_id": text_item_id,
+                            "output_index": text_output_index,
+                            "content_index": 0,
+                            "part": {"type": "output_text", "text": "", "annotations": []},
+                        },
+                    )
+                    yield _sse_event(
+                        "response.output_text.delta",
+                        {
+                            "type": "response.output_text.delta",
+                            "item_id": text_item_id,
+                            "output_index": text_output_index,
+                            "content_index": 0,
+                            "delta": text_value,
+                        },
+                    )
                 text_item = {
                     "id": text_item_id,
                     "type": "message",
@@ -1380,6 +1531,7 @@ def _build_responses_streaming_response(
             completed["usage"] = final_usage
             completed["output"] = output_items
             completed["thinking"] = "".join(thinking_accumulator)
+            completed["output_text"] = "" if text_tool_request else text_value
             yield _sse_event("response.completed", {"type": "response.completed", "response": completed})
             yield "data: [DONE]\n\n"
         except Exception as exc:
@@ -1402,6 +1554,7 @@ async def handle_openai_responses(payload: dict[str, Any], client: AIStudioClien
     if response_format is None and isinstance(text_config, dict):
         response_format = text_config.get("format")
     try:
+        allowed_tool_names = _tool_names_from_payload(payload.get("tools"))
         chat_req = ChatRequest(
             model=str(payload["model"]),
             messages=_messages_from_responses_payload(payload),
@@ -1417,18 +1570,19 @@ async def handle_openai_responses(payload: dict[str, Any], client: AIStudioClien
         raise _bad_request(str(exc), "invalid_request_error") from exc
     if payload.get("stream"):
         chat_req.stream = True
-        return _build_responses_streaming_response(chat_req, client, uses_search=uses_search, request=request)
+        return _build_responses_streaming_response(chat_req, client, uses_search=uses_search, allowed_tool_names=allowed_tool_names, request=request)
     chat_response = await handle_chat(chat_req, client)
     text = _chat_text(chat_response)
     thinking = _chat_thinking(chat_response)
+    text_tool_request = _parse_responses_text_tool_request(text, allowed_tool_names)
     return {
         "id": f"resp_{uuid.uuid4().hex[:24]}",
         "object": "response",
         "created_at": int(time.time()),
         "status": "completed",
         "model": chat_response.get("model", payload["model"]),
-        "output": _responses_output_items(chat_response, uses_search=uses_search),
-        "output_text": text,
+        "output": _responses_output_items(chat_response, uses_search=uses_search, allowed_tool_names=allowed_tool_names),
+        "output_text": "" if text_tool_request else text,
         "thinking": thinking,
         "usage": chat_response.get("usage"),
     }
