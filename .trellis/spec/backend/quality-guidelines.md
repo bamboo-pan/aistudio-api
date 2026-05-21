@@ -34,73 +34,114 @@ Questions to answer:
 
 (To be filled by the team)
 
-## Scenario: Static Image Workflow Subpages
+## Scenario: OpenAI Local Studio API and Image Tool Fallback
 
 ### 1. Scope / Trigger
 
-- Trigger: Code adds or changes a WebUI subpage that creates, edits, optimizes, or previews generated images.
-- Use this contract for prompt-builder pages, alternate image-workbench views, and any image UI that sends `/v1/images/*` requests.
+- Trigger: Code changes `src/aistudio_api/api/routes_local_studio.py`, `src/aistudio_api/infrastructure/local_studio.py`, `AISTUDIO_LOCAL_STUDIO_DIR`, or the static `#studio` OpenAI Local Studio workbench.
+- Use this contract for server-side local conversation persistence, arbitrary OpenAI-compatible `/v1` forwarding, attachment storage, and `gpt-image-2` image-tool behavior.
 
 ### 2. Signatures
 
-- Static route/hash: add the view id to `applyRouteHash()` and `go(...)`, then render the page with `:class="{active:view==='...'}`.
-- Shared generation state: `imagePrompt`, `imageModel`, `imageSize`, `imageCount`, `imageTimeout`, `imageReferences`, `imageBaseImage`, `imageResults`, `imagePromptOptions`.
-- Shared actions: `imageRequestImages()`, `optimizeImagePrompt()`, `generateImage()`, `saveCurrentImageSession(...)`, `loadImageSessions(...)`.
-- API endpoints must stay centralized through `imageGenerationEndpoint()` and `/v1/images/prompt-optimizations`.
+- `AISTUDIO_LOCAL_STUDIO_DIR` defaults to `data/local-studio` and stores `conversations/*.json` plus `files/<yyyymmdd>/<asset-id>.<ext>`.
+- `POST /api/local-studio/models` accepts `{"base_url": str, "api_key"?: str, "timeout"?: int}` and returns OpenAI-compatible `{"object": "list", "data": list[model]}`.
+- `GET/POST/PATCH/DELETE /api/local-studio/conversations` and `POST /api/local-studio/conversations/bulk-delete {"ids": string[]}` manage local JSON conversations.
+- `GET /api/local-studio/assets/{asset_path:path}` serves generated/uploaded local assets after path containment validation.
+- `POST /api/local-studio/chat` accepts connection settings, `model`, optional `conversation_id`, `message`, `files`, `options`, and optional `rerun_from`.
+- Payload helpers: `build_responses_payload(...)`, `build_images_generation_payload(prompt, options)`, `validate_gpt_image_2_size(value)`, and `parse_responses_output(payload)`.
 
 ### 3. Contracts
 
-- A new image subpage may maintain its own prompt-builder draft fields, but the final request prompt must flow through `imagePrompt`.
-- Prompt optimization must call the existing `optimizeImagePrompt()` so selected reference images still go through `imageRequestImages()`.
-- Image generation must call the existing `generateImage()` so response persistence, history, base-image promotion, request logs, stats, and session saving stay consistent.
-- Model, size, count, response format, and optimizer-model controls must use `/v1/models` capability metadata through existing `imageModels`, `imageSizes`, and `textModels` getters.
-- Do not add browser-side external API keys or alternate backend runtimes for static image pages.
+- `base_url` must already point at an OpenAI-compatible `/v1` root; route helpers append `/models`, `/responses`, or `/images/generations`.
+- API tokens are runtime-only request fields. They must not be persisted to conversation files, docs, tests, or task artifacts.
+- Tokens must be a single header line. Reject newline-containing tokens before making any upstream request.
+- `/models` must hide image-only and specialist non-chat ids from the conversation picker: `gpt-image-*`, audio, realtime, TTS, transcription, and embedding models.
+- Chat first builds a Responses request and calls `/responses`. When the `gpt-image-2` image tool is enabled and the Responses image tool fails by HTTP status, transport failure, or no image candidates, call `/images/generations` with the latest user prompt and matching image options.
+- Generated image bytes from `b64_json`, `b64`, `result`, or data URLs must be saved under `AISTUDIO_LOCAL_STUDIO_DIR/files` and returned with `/api/local-studio/assets/...` URLs.
+- Uploaded attachments are accepted as data URLs, saved locally, stripped of heavy inline fields in persisted JSON, and rehydrated as Responses `input_image` or `input_file` blocks when sent upstream.
+- Rerun truncates the conversation to the selected previous user turn before rebuilding the Responses payload.
+- The static UI must keep its settings in `openai.localStudio.settings.v1`; this browser storage may hold the user's runtime token, but server-side storage must not.
 
 ### 4. Validation & Error Matrix
 
-- Unknown hash route -> ignore/fall back to the current default view.
-- No image model available -> generation button disabled via `imageCanSubmit` and existing `imageSubmitHint` messaging.
-- Empty prompt-builder draft -> compose button disabled; direct prompt editing remains possible through `imagePrompt`.
-- Reference-image read failure -> existing `imageReferenceError` and `imageRequestImages()` error path.
-- Optimizer request with references -> body must include `images` from `imageRequestImages()`.
+- Empty/non-HTTP `base_url` -> HTTP 400 `invalid_request_error`.
+- Multiline `api_key`/`token` -> HTTP 400 `API token must be a single line` without echoing the token value.
+- Missing `model` -> HTTP 400 `model is required`.
+- Missing `message` and no files for a non-rerun chat -> HTTP 400 `message or files are required`.
+- Invalid conversation id/path traversal asset path -> HTTP 400; missing conversation/asset -> HTTP 404.
+- Upstream 4xx -> mirror the 4xx status with `upstream_error`; upstream 5xx/524 -> HTTP 502 with the upstream status embedded in the message.
+- Upstream timeout -> HTTP 504 and persist an assistant error message.
+- `gpt-image-2` size not `auto` or `WIDTHxHEIGHT` -> HTTP 400 before upstream call.
+- `gpt-image-2` edges not multiples of 16, longest edge `>=3840`, ratio `>3:1`, pixels `<655,360`, or pixels `>8,294,400` -> HTTP 400 before upstream call.
 
 ### 5. Good/Base/Bad Cases
 
-- Good: A prompt-builder page composes labeled prompt sections into `imagePrompt`, then calls `generateImage()`; generated files appear in results, local history, request logs, and image sessions.
-- Good: A page exposes prompt optimization by calling `optimizeImagePrompt()` and rendering `imagePromptOptions` without a second request-building path.
-- Base: A simple image page reuses existing model/size selectors and only changes presentation.
-- Bad: A subpage posts directly to `/v1/images/generations` with its own fetch code, bypassing `imageRequestImages()` and session/history updates.
-- Bad: A subpage hard-codes OpenAI-only image sizes instead of using current model metadata.
+- Good: Real compatible endpoint returns models including `gpt-image-2` and audio ids; Local Studio returns chat-capable ids only and defaults to a text/chat model.
+- Good: Responses image tool returns `image_generation_call.result`; the image is saved locally and rendered in the UI.
+- Good: Responses image tool fails or returns no image candidate; `/images/generations` succeeds and the generated image is saved locally.
+- Good: User enters custom `3824x2144`; local validation accepts it as near-4K under the `<3840` edge rule.
+- Base: Text-only Responses chat stores assistant text and usage without calling image fallback.
+- Bad: A key file containing both base URL and token is passed as a single Authorization header value.
+- Bad: The UI advertises `3840x2160`, which violates the strict max-edge rule.
 
 ### 6. Tests Required
 
-- Static/unit: route id appears in navigation, `applyRouteHash()`, `go(...)`, and page visibility binding.
-- Static/unit: prompt composition writes into `imagePrompt` and generation/optimization controls call existing shared actions.
-- Static/unit: request construction still contains `const images=await this.imageRequestImages();if(images.length)body.images=images`.
-- Static syntax: run `node --check src/aistudio_api/static/app.js` after editing `app.js`.
-- Real API: WSL browser-backed `/v1/images/generations` smoke returns at least one persisted image URL/path.
-- Real WebUI: browser test opens the new hash route, composes a prompt, generates an image, and verifies the network request body and rendered result.
+- Unit: model filtering excludes `gpt-image-*` and specialist non-chat ids.
+- Unit: conversation CRUD, bulk delete, asset path containment, and rerun truncation.
+- Unit: Responses payload construction includes attachment blocks, reasoning, and image-generation tool options.
+- Unit: `gpt-image-2` official size options and invalid custom sizes.
+- Unit: chat persists assistant errors for upstream 524/timeouts and rejects multiline tokens without leaking secrets.
+- Unit: fallback to `/images/generations` for Responses HTTP failures, transport failures, and no image candidates.
+- Static: `#studio` route/sidebar, Local Studio controls, official size list, custom size, and no `3840x2160` option.
+- Static syntax: when editing `src/aistudio_api/static/app.js`, run `node --check src/aistudio_api/static/app.js`.
+- Real: WSL API smoke with a runtime-only key file must load models, reject `3840x2160`, generate a `1536x864` image, persist it, and retrieve the local asset.
+- Real: Browser UI smoke must open `#studio`, load models, send an image-tool request, and verify the rendered image has non-zero natural dimensions.
 
 ### 7. Wrong vs Correct
 
 #### Wrong
 
-```javascript
-async runCustomImagePage() {
-	await fetch('/v1/images/generations', { body: JSON.stringify(this.customImageBody) })
-}
+```python
+token = Path(key_file).read_text()
+headers = {"Authorization": f"Bearer {token}"}
 ```
 
 #### Correct
 
-```javascript
-composeCustomPrompt() {
-	this.imagePrompt = sections.filter(Boolean).join('\n')
-}
+```python
+token = str(payload.get("api_key") or "").strip()
+if "\n" in token or "\r" in token:
+	raise HTTPException(status_code=400, detail={"message": "API token must be a single line"})
+```
 
-async runCustomImagePage() {
-	await this.generateImage()
-}
+#### Wrong
+
+```python
+tool = {"type": "image_generation", "model": "gpt-image-2", "size": "3840x2160"}
+```
+
+#### Correct
+
+```python
+tool = {"type": "image_generation", "model": "gpt-image-2", "size": validate_gpt_image_2_size("3824x2144")}
+```
+
+#### Wrong
+
+```python
+response = await client.post(upstream_url(base_url, "/responses"), json=request_body)
+response.raise_for_status()
+```
+
+#### Correct
+
+```python
+try:
+	response = await client.post(upstream_url(base_url, "/responses"), json=request_body)
+	response.raise_for_status()
+except httpx.HTTPError:
+	if image_tool_enabled:
+		fallback = await client.post(upstream_url(base_url, "/images/generations"), json=image_payload)
 ```
 
 ## Scenario: Image Prompt Optimization With Reference Images

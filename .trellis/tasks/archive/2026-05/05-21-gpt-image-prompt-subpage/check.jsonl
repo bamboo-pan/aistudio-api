@@ -1,5 +1,0 @@
-{"file":".trellis/spec/backend/index.md","reason":"Spec index for final compliance review."}
-{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Required static JS and image prompt optimization checks."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Check for unnecessary duplicate image generation logic."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check new frontend/API flow boundaries and request payload shape."}
-{"file":".trellis/tasks/05-21-gpt-image-prompt-subpage/research/source-tool-and-openai-guide.md","reason":"Verify implemented scope matches source-tool and OpenAI-guide findings."}

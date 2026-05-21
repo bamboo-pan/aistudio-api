@@ -715,15 +715,15 @@ Fixed Responses streaming function-call events so clients reconstruct tool argum
 - None - task complete
 
 
-## Session 22: Add GPT image prompt subpage
+## Session 22: Reimplement OpenAI Local Studio
 
 **Date**: 2026-05-21
-**Task**: Add GPT image prompt subpage
-**Branch**: `feature/gpt-image-subpage`
+**Task**: Reimplement OpenAI Local Studio
+**Branch**: `feature/reimplement-openai-local-studio`
 
 ### Summary
 
-Added a GPT image prompt workbench subpage that reuses existing image generation and prompt optimization flows; documented the task and verified local plus WSL real API/WebUI generation and optimization.
+Reverted the incorrect GPT image prompt workbench commit and rebuilt OpenAI Local Studio with Responses chat, local persistence, official gpt-image-2 size validation, Images API fallback, docs, tests, and real-key API/UI smoke verification.
 
 ### Main Changes
 
@@ -733,8 +733,7 @@ Added a GPT image prompt workbench subpage that reuses existing image generation
 
 | Hash | Message |
 |------|---------|
-| `c2e84b8` | (see git log) |
-| `ac5b8e7` | (see git log) |
+| `7a0ff6e` | (see git log) |
 
 ### Testing
 
