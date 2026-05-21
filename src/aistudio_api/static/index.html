@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>AI Studio Proxy</title>
+<title>OpenAI Local Studio</title>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body x-data="app()" x-init="init()" :class="{'sidebar-collapsed':sidebarCollapsed}">
@@ -22,6 +22,10 @@
     <button class="nav-item" :class="{active:view==='chat'}" @click="go('chat')" title="Playground" aria-label="Playground">
       <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
       <span class="nav-label">Playground</span>
+    </button>
+    <button class="nav-item" :class="{active:view==='studio'}" @click="go('studio')" title="OpenAI Local Studio" aria-label="OpenAI Local Studio">
+      <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10"/><path d="M7 12h5"/><path d="M14 15l2 2 4-5"/></svg>
+      <span class="nav-label">Local Studio</span>
     </button>
     <button class="nav-item" :class="{active:view==='images'}" @click="go('images')" title="图片生成" aria-label="图片生成">
       <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
@@ -278,6 +282,164 @@
             <div class="runtime-toggle" x-show="controlAvailable('safety')"><span>Safety</span><button type="button" :class="{active:cfg.safety==='on'}" @click="cfg.safety=cfg.safety==='on'?'off':'on';saveCurrentChatSession()" x-text="cfg.safety==='on'?'开启':'关闭'"></button></div>
             <div class="runtime-toggle" x-show="controlAvailable('thinking')"><span>Thinking</span><div class="cselect" :class="{open:openSelect==='thinking'}" @click.stop><div class="cselect-btn" @click="toggleSelect('thinking',$event)" tabindex="0"><span x-text="cfg.thinking==='off'?'关闭':cfg.thinking==='low'?'低':cfg.thinking==='medium'?'中':cfg.thinking==='high'?'高':cfg.thinking"></span><span class="arrow"></span></div><div class="cselect-menu"><template x-for="v in ['off','low','medium','high']"><div class="cselect-opt" :class="{active:cfg.thinking===v}" @click="cfg.thinking=v;openSelect=null;saveCurrentChatSession()" x-text="v==='off'?'关闭':v==='low'?'低':v==='medium'?'中':v==='high'?'高':v"></div></template></div></div></div>
           </div>
+        </section>
+      </aside>
+    </div>
+  </div>
+
+  <!-- OpenAI Local Studio -->
+  <div id="studio-page" class="page-wrap local-studio-page" :class="{active:view==='studio'}">
+    <div class="local-studio-shell">
+      <aside class="local-studio-history">
+        <div class="local-studio-pane-head">
+          <div>
+            <div class="local-studio-kicker">Conversations</div>
+            <h2>历史会话</h2>
+          </div>
+          <button class="btn btn-sm" :disabled="localStudioBusy" @click="createLocalStudioConversation()">新建</button>
+        </div>
+        <div class="local-studio-history-actions" x-show="localStudioConversations.length" x-cloak>
+          <button class="btn btn-sm" @click="localStudioAllSelected?clearLocalStudioSelection():selectAllLocalStudioConversations()" x-text="localStudioAllSelected?'清除':'全选'"></button>
+          <button class="btn btn-sm btn-danger-outline" :disabled="!localStudioSelectedCount||localStudioBusy" @click="deleteSelectedLocalStudioConversations()">批量删除</button>
+        </div>
+        <div class="notice notice-error" x-show="localStudioError" x-text="localStudioError" x-cloak></div>
+        <div class="local-studio-conversation-list" x-show="localStudioConversations.length" x-cloak>
+          <template x-for="conversation in localStudioConversations" :key="conversation.id">
+            <div class="local-studio-conversation" :class="{active:localStudioConversation&&localStudioConversation.id===conversation.id,selected:localStudioSelection[conversation.id]}">
+              <label class="local-studio-check" @click.stop>
+                <input type="checkbox" :checked="!!localStudioSelection[conversation.id]" @change="toggleLocalStudioSelection(conversation,$event)">
+                <span></span>
+              </label>
+              <button type="button" class="local-studio-conversation-main" :disabled="localStudioBusy" @click="restoreLocalStudioConversation(conversation)">
+                <strong x-text="conversation.title"></strong>
+                <span x-text="localStudioPreview(conversation)"></span>
+                <small x-text="localStudioMeta(conversation)"></small>
+              </button>
+              <div class="local-studio-row-actions">
+                <button type="button" class="msg-tool" :disabled="localStudioBusy" @click.stop="beginLocalStudioRename(conversation)" title="重命名" aria-label="重命名"><svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg></button>
+                <button type="button" class="msg-tool danger" :disabled="localStudioBusy" @click.stop="deleteLocalStudioConversation(conversation)" title="删除" aria-label="删除"><svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg></button>
+              </div>
+              <div class="local-studio-rename" x-show="localStudioRenameId===conversation.id" x-cloak @click.stop>
+                <input class="inline-input" x-model="localStudioRenameDraft" @keydown.enter.prevent="renameLocalStudioConversation(conversation)">
+                <div class="local-studio-rename-actions">
+                  <button class="btn btn-sm" @click="cancelLocalStudioRename()">取消</button>
+                  <button class="btn btn-sm btn-primary" @click="renameLocalStudioConversation(conversation)">保存</button>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+        <div class="local-studio-empty" x-show="!localStudioConversations.length&&!localStudioConversationLoading">暂无会话</div>
+      </aside>
+
+      <section class="local-studio-chat-panel">
+        <div class="local-studio-hero">
+          <div>
+            <div class="local-studio-kicker">OpenAI Responses API</div>
+            <h1>OpenAI Local Studio</h1>
+          </div>
+          <div class="local-studio-status">
+            <span x-text="localStudioCanConnect()?'已配置接口':'等待接口'"></span>
+            <span x-text="localStudioModel||'未选择模型'"></span>
+            <span x-text="localStudioRunSummary"></span>
+          </div>
+        </div>
+        <div class="notice notice-error" x-show="localStudioModelError" x-text="localStudioModelError" x-cloak></div>
+        <div id="local-studio-scroll" class="local-studio-transcript">
+          <template x-for="(message,index) in localStudioActiveMessages" :key="message.id||index">
+            <div class="local-studio-message" :class="message.role==='user'?'is-user':'is-assistant'">
+              <div class="avatar" :class="message.role==='user'?'avatar-user':'avatar-ai'" x-text="message.role==='user'?'U':'AI'"></div>
+              <div class="local-studio-message-body">
+                <div class="msg-meta">
+                  <span x-text="message.role==='user'?'User':'Assistant'"></span>
+                  <button type="button" class="msg-tool" :disabled="localStudioBusy" @click="rerunLocalStudioMessage(index)" title="从此处重跑" aria-label="从此处重跑"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 11-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg></button>
+                </div>
+                <template x-if="message.thinking">
+                  <div class="think-block" @click="message.showThinking=!message.showThinking">
+                    <div class="think-toggle"><span class="think-icon">TH</span><span>Reasoning summary</span><span class="think-arrow" :class="{open:message.showThinking}">›</span></div>
+                    <div class="think-body" x-show="message.showThinking" x-text="message.thinking"></div>
+                  </div>
+                </template>
+                <div class="msg-body" :class="{error:message.error,'markdown-body':message.role!=='user'&&!message.error}" x-show="localStudioMessageText(message)" x-html="message.error?plainTextHtml(message.error):(message.role==='user'?plainTextHtml(message.content):markdownToHtml(message.content||''))"></div>
+                <div class="local-studio-attachments" x-show="localStudioAttachments(message).length" x-cloak>
+                  <template x-for="file in localStudioAttachments(message)" :key="file.id||file.url">
+                    <a class="local-studio-file" :href="file.url" target="_blank" rel="noopener noreferrer"><span class="file-icon">FILE</span><span x-text="file.name"></span><small x-text="file.mime"></small></a>
+                  </template>
+                </div>
+                <div class="local-studio-images" x-show="localStudioMessageImages(message).length" x-cloak>
+                  <template x-for="image in localStudioMessageImages(message)" :key="image.id||image.url">
+                    <a :href="localStudioImageUrl(image)" target="_blank" rel="noopener noreferrer"><img :src="localStudioImageUrl(image)" :alt="image.name||'generated image'"></a>
+                  </template>
+                </div>
+                <div class="msg-usage" x-show="hasUsage(message)" x-cloak>
+                  <template x-for="item in messageUsageRows(message)" :key="item.label"><span><b x-text="item.label"></b><strong x-text="item.value"></strong></span></template>
+                </div>
+              </div>
+            </div>
+          </template>
+          <div class="local-studio-empty local-studio-empty-chat" x-show="!localStudioActiveMessages.length">连接兼容 OpenAI 的 /v1 地址后开始对话</div>
+        </div>
+        <div class="local-studio-composer">
+          <div class="local-studio-file-strip" x-show="localStudioFiles.length" x-cloak>
+            <template x-for="(file,index) in localStudioFiles" :key="file.url">
+              <div class="chat-attachment">
+                <img x-show="file.isImage" :src="file.url" :alt="file.name">
+                <div class="chat-file-chip" x-show="!file.isImage"><span class="file-icon">FILE</span><span class="file-name" x-text="file.name"></span><span class="file-meta" x-text="fileSizeLabel(file.size)"></span></div>
+                <button class="thumb-remove" @click="removeLocalStudioFile(index)" title="移除文件">×</button>
+              </div>
+            </template>
+          </div>
+          <div class="notice notice-error" x-show="localStudioFileError" x-text="localStudioFileError" x-cloak></div>
+          <div class="local-studio-compose-row">
+            <input x-ref="localStudioFileInput" type="file" :accept="localStudioFileAccept()" multiple hidden @change="attachLocalStudioFiles($event)">
+            <button class="attach-btn" :disabled="localStudioBusy" @click="$refs.localStudioFileInput.click()" title="上传附件"><svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg></button>
+            <textarea x-model="localStudioDraft" rows="1" placeholder="向 OpenAI Local Studio 发送消息、图片或文件..." @keydown.enter.prevent="if(!$event.shiftKey)sendLocalStudioMessage()"></textarea>
+            <button class="send" :disabled="!localStudioCanSend" @click="sendLocalStudioMessage()" title="发送"><svg viewBox="0 0 24 24"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg></button>
+          </div>
+        </div>
+      </section>
+
+      <aside class="local-studio-settings">
+        <section class="local-studio-panel">
+          <div class="local-studio-pane-head">
+            <div>
+              <div class="local-studio-kicker">Connection</div>
+              <h2>接口</h2>
+            </div>
+            <button class="btn btn-sm btn-primary" :disabled="localStudioModelsLoading||!localStudioCanConnect()" @click="loadLocalStudioModels()" x-text="localStudioModelsLoading?'加载中':'加载模型'"></button>
+          </div>
+          <label class="local-studio-field"><span>Base URL</span><input type="url" x-model="localStudioSettings.baseUrl" @change="saveLocalStudioSettings()" placeholder="https://api.openai.com/v1"></label>
+          <label class="local-studio-field"><span>API Token</span><input type="password" x-model="localStudioSettings.apiKey" @change="saveLocalStudioSettings()" placeholder="sk-... 或兼容服务 token"></label>
+          <label class="local-studio-field"><span>Timeout</span><input type="number" min="1" max="600" step="1" x-model.number="localStudioSettings.timeout" @change="saveLocalStudioSettings()"></label>
+          <div class="local-studio-field">
+            <span>Conversation Model</span>
+            <div class="cselect local-studio-select" :class="{open:openSelect==='localStudioModel'}" @click.stop>
+              <div class="cselect-btn" @click="toggleSelect('localStudioModel',$event)" tabindex="0"><span x-text="localStudioModelsLoading?'加载中':localStudioModel||'选择模型'"></span><span class="arrow"></span></div>
+              <div class="cselect-menu">
+                <template x-for="model in localStudioModelOptions" :key="model.id"><div class="cselect-opt" :class="{active:localStudioModel===model.id}" @click="localStudioModel=model.id;openSelect=null;saveLocalStudioSettings()" x-text="model.id"></div></template>
+                <div class="cselect-opt" aria-disabled="true" x-show="!localStudioModelOptions.length" x-text="localStudioModelsLoading?'模型加载中':'暂无对话模型'"></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="local-studio-panel">
+          <div class="local-studio-pane-head"><div><div class="local-studio-kicker">Reasoning</div><h2>推理</h2></div></div>
+          <label class="local-studio-field"><span>Effort</span><select class="sel" x-model="localStudioReasoningEffort" @change="saveLocalStudioSettings()"><option value="off">off</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></label>
+          <label class="local-studio-field"><span>Summary</span><select class="sel" x-model="localStudioReasoningSummary" @change="saveLocalStudioSettings()"><option value="auto">auto</option><option value="concise">concise</option><option value="detailed">detailed</option><option value="none">none</option></select></label>
+        </section>
+
+        <section class="local-studio-panel">
+          <div class="local-studio-pane-head"><div><div class="local-studio-kicker">Image Tool</div><h2>gpt-image-2</h2></div><button type="button" class="request-switch" :class="{active:localStudioImageToolEnabled}" @click="localStudioImageToolEnabled=!localStudioImageToolEnabled;saveLocalStudioSettings()"><span class="request-switch-track"><span class="request-switch-knob"></span></span><strong x-text="localStudioImageToolEnabled?'开启':'关闭'"></strong></button></div>
+          <div class="local-studio-grid-controls">
+            <label class="local-studio-field"><span>Size</span><select class="sel" x-model="localStudioImageSize" @change="saveLocalStudioSettings()"><template x-for="option in localStudioSizeOptions" :key="option.size"><option :value="option.size" x-text="option.label+' · '+option.size"></option></template></select></label>
+            <label class="local-studio-field" x-show="localStudioImageSize==='custom'" x-cloak><span>Custom Size</span><input type="text" x-model="localStudioImageCustomSize" @change="saveLocalStudioSettings()" placeholder="2048x1152"></label>
+            <label class="local-studio-field"><span>Quality</span><select class="sel" x-model="localStudioImageQuality" @change="saveLocalStudioSettings()"><option>auto</option><option>low</option><option>medium</option><option>high</option></select></label>
+            <label class="local-studio-field"><span>Background</span><select class="sel" x-model="localStudioImageBackground" @change="saveLocalStudioSettings()"><option>auto</option><option>transparent</option><option>opaque</option></select></label>
+            <label class="local-studio-field"><span>Format</span><select class="sel" x-model="localStudioImageFormat" @change="saveLocalStudioSettings()"><option>png</option><option>jpeg</option><option>webp</option></select></label>
+            <label class="local-studio-field"><span>Compression</span><input type="number" min="0" max="100" step="1" x-model.number="localStudioImageCompression" @change="saveLocalStudioSettings()"></label>
+          </div>
+          <div class="local-studio-size-note">gpt-image-2 accepts multiples of 16 below 3840px per edge; outputs above 2560x1440 are experimental.</div>
         </section>
       </aside>
     </div>

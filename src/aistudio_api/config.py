@@ -66,6 +66,7 @@ class Settings:
     request_logs_dir: str = os.getenv("AISTUDIO_REQUEST_LOGS_DIR", str(DEFAULT_RUNTIME_DATA_DIR / "request-logs"))
     generated_images_dir: str = os.getenv("AISTUDIO_GENERATED_IMAGES_DIR", str(DEFAULT_RUNTIME_DATA_DIR / "generated-images"))
     image_sessions_dir: str = os.getenv("AISTUDIO_IMAGE_SESSIONS_DIR", str(DEFAULT_RUNTIME_DATA_DIR / "image-sessions"))
+    local_studio_dir: str = os.getenv("AISTUDIO_LOCAL_STUDIO_DIR", str(DEFAULT_RUNTIME_DATA_DIR / "local-studio"))
     generated_images_route: str = os.getenv("AISTUDIO_GENERATED_IMAGES_ROUTE", "/generated-images")
     accounts_dir: str = os.getenv("AISTUDIO_ACCOUNTS_DIR", "")
     login_camoufox_port: int = int(os.getenv("AISTUDIO_LOGIN_CAMOUFOX_PORT", "9223"))

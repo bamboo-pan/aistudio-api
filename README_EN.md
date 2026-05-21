@@ -8,7 +8,7 @@ A local API proxy for Google AI Studio. It exposes browser-backed AI Studio acce
 
 - **OpenAI-compatible API**: `/v1/chat/completions`, `/v1/responses`, `/v1/messages`, `/v1/models`, `/v1/images/generations`
 - **Gemini-native API**: `/v1beta/models`, `:generateContent`, `:streamGenerateContent`, `:countTokens`
-- **WebUI**: built-in Playground, image studio, account management, and runtime stats
+- **WebUI**: built-in Playground, OpenAI Local Studio, image studio, account management, and runtime stats
 - **Streaming**: SSE for chat completions, Responses-compatible streams, Messages-compatible streams, and Gemini `streamGenerateContent`
 - **Multimodal input**: image input plus local inline files when model capabilities allow them
 - **Tools**: Google Search, common OpenAI/Anthropic search-tool aliases, Code Execution, function declarations, and tool-call mapping
@@ -62,8 +62,14 @@ The local root wrapper `python main.py ...` and the installed `aistudio-api ...`
 The service root redirects to `/static/index.html`.
 
 - `#chat`: model Playground with capability-aware controls, attachments, streaming, Search, Thinking, and structured-output tests
+- `#studio`: OpenAI Local Studio for OpenAI or compatible `/v1` endpoints, Responses API chat, attachments, local conversations, and the `gpt-image-2` image tool
 - `#images`: image generation/editing studio with size/count controls, reference images, material history, and saved sessions
+- `#requests`: request logs with complete lifecycle viewing, export, and bulk deletion
 - `#accounts`: account management with login, switching, health checks, tier labels, rotation modes, runtime stats, and credential import/export
+
+### OpenAI Local Studio Image Tool
+
+The `#studio` conversation model list hides specialist models such as `gpt-image-*`, audio, realtime, TTS, transcription, and embedding models so the default choice stays chat-oriented. The image tool uses fixed model `gpt-image-2`. Its size options follow the OpenAI prompting guide constraints: `1024x1024`, `1024x1536`, `1536x1024`, `1536x864`, `2560x1440`, and `3824x2144`, plus a custom `WIDTHxHEIGHT` field. The server validates custom sizes before sending them upstream: both edges must be multiples of 16, the longest edge must be less than `3840px`, the long-to-short-edge ratio must be at most `3:1`, and total pixels must be between `655,360` and `8,294,400`. Outputs above `2560x1440` are treated as experimental.
 
 ## Authentication And Accounts
 
@@ -369,6 +375,7 @@ Use environment variables or a `.env` file:
 | `AISTUDIO_DUMP_RAW_RESPONSE_DIR` | `/tmp` | Raw exchange dump directory |
 | `AISTUDIO_GENERATED_IMAGES_DIR` | `./data/generated-images` | Directory for persisted generated images |
 | `AISTUDIO_IMAGE_SESSIONS_DIR` | `./data/image-sessions` | Image-session history directory |
+| `AISTUDIO_LOCAL_STUDIO_DIR` | `./data/local-studio` | OpenAI Local Studio conversations, attachments, and generated image assets |
 | `AISTUDIO_GENERATED_IMAGES_ROUTE` | `/generated-images` | Static serving and deletion route prefix for generated images |
 | `AISTUDIO_ACCOUNT_ROTATION_MODE` | `round_robin` | Default account rotation mode; `round_robin` means balanced mode |
 | `AISTUDIO_ACCOUNT_COOLDOWN_SECONDS` | `60` | Cooldown after rate limit |
