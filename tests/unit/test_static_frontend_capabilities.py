@@ -86,34 +86,6 @@ def test_static_frontend_exposes_configurable_api_interfaces():
     assert "selectModel(m.id)" in index_html
 
 
-def test_static_frontend_exposes_gpt_image_prompt_workbench():
-    app_js = (ROOT / "src" / "aistudio_api" / "static" / "app.js").read_text(encoding="utf-8")
-    index_html = (ROOT / "src" / "aistudio_api" / "static" / "index.html").read_text(encoding="utf-8")
-    style_css = (ROOT / "src" / "aistudio_api" / "static" / "style.css").read_text(encoding="utf-8")
-
-    assert "view==='gpt-image'" in index_html
-    assert "GPT 图片工坊" in index_html
-    assert "gptImageWorkflow:'photorealistic'" in app_js
-    assert "gptImageWorkflows" in app_js
-    assert "selectGptImageWorkflow(id)" in app_js
-    assert "composeGptImagePrompt()" in app_js
-    assert "resetGptImageWorkbench()" in app_js
-    assert "Use case: ${workflow.label}." in app_js
-    assert "Reference handling: Use the supplied images as visual context" in app_js
-    assert "this.imagePrompt=lines.filter(Boolean).join('\\n')" in app_js
-    assert "optimizeImagePrompt()" in index_html
-    assert "generateImage()" in index_html
-    assert "attachImageReferences($event)" in index_html
-    assert "selectImageModel(m.id)" in index_html
-    assert "selectPromptOptimizerModel(m.id)" in index_html
-    assert "imageGenerationEndpoint(){return'/v1/images/generations'}" in app_js
-    assert "const images=await this.imageRequestImages();if(images.length)body.images=images" in app_js
-    assert ".gpt-image-workspace" in style_css
-    assert ".gpt-workflow-card.active" in style_css
-    assert ".gpt-field-grid" in style_css
-    assert ".gpt-prompt-output" in style_css
-
-
 def test_static_frontend_request_logs_show_chain_phases_and_responses():
     app_js = (ROOT / "src" / "aistudio_api" / "static" / "app.js").read_text(encoding="utf-8")
     index_html = (ROOT / "src" / "aistudio_api" / "static" / "index.html").read_text(encoding="utf-8")

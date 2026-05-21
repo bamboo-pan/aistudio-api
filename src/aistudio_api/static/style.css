@@ -560,36 +560,6 @@ select.sel:focus,.sel:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(
 .image-preview-close{position:absolute;top:18px;right:18px;width:38px;height:38px;border:1px solid rgba(255,255,255,.32);border-radius:8px;background:rgba(255,255,255,.12);color:#fff;cursor:pointer;font-size:26px;line-height:1;display:flex;align-items:center;justify-content:center}
 .image-preview-close:hover{background:rgba(255,255,255,.2)}
 
-/* GPT image prompt workbench */
-.gpt-image-pad{max-width:none;padding-top:24px;background:linear-gradient(180deg,#f7fbfa 0,#fff 230px)}
-.gpt-image-hero{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin-bottom:12px}
-.gpt-image-hero h1{font-size:28px;font-weight:760;line-height:1.15;letter-spacing:0}
-.gpt-image-hero p{font-size:13px;color:var(--muted);margin-top:5px;line-height:1.45;word-break:break-word}
-.gpt-image-hero-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
-.gpt-image-status-strip{justify-content:flex-start;margin-bottom:18px}
-.gpt-image-workspace{display:grid;grid-template-columns:minmax(380px,520px) minmax(380px,1fr);gap:18px;align-items:start}
-.gpt-builder-panel{grid-row:span 2;overflow:visible}
-.gpt-builder-body,.gpt-prompt-shell,.gpt-control-body{padding:16px 18px;display:flex;flex-direction:column;gap:14px}
-.gpt-workflow-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
-.gpt-workflow-card{min-height:68px;border:1px solid var(--border);border-radius:8px;background:#fff;text-align:left;padding:10px 11px;cursor:pointer;font-family:inherit;display:flex;flex-direction:column;justify-content:center;gap:4px;transition:border-color .15s,background .15s,box-shadow .15s}
-.gpt-workflow-card:hover{border-color:#cbd5e1;background:#fbfcfd}
-.gpt-workflow-card.active{border-color:var(--green);background:var(--green-bg);box-shadow:0 0 0 2px rgba(16,163,127,.1)}
-.gpt-workflow-card span{font-size:13px;font-weight:740;line-height:1.25;color:var(--text)}
-.gpt-workflow-card small{font-size:12px;color:var(--muted);line-height:1.35}
-.gpt-field-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
-.gpt-field{display:flex;flex-direction:column;gap:6px;min-width:0}
-.gpt-field-wide{grid-column:1 / -1}
-.gpt-field span{font-size:12px;color:var(--muted);font-weight:650}
-.gpt-field textarea{width:100%;border:1px solid var(--border);border-radius:8px;background:#fff;resize:vertical;min-height:78px;padding:10px 11px;font-family:inherit;font-size:14px;line-height:1.45;outline:none}
-.gpt-field textarea:focus,.gpt-prompt-output:focus{border-color:var(--green);box-shadow:0 0 0 3px rgba(16,163,127,.12)}
-.gpt-compose-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-top:2px}
-.gpt-output-panel,.gpt-controls-panel,.gpt-results-panel{min-width:0}
-.gpt-prompt-output{min-height:310px;resize:vertical}
-.gpt-control-body .image-studio-controls{grid-template-columns:repeat(2,minmax(0,1fr))}
-.gpt-reference-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;border:1px dashed #cbd5e1;border-radius:8px;background:#f8fafc;padding:10px}
-.gpt-reference-tools span{font-size:12px;color:var(--muted);font-weight:650}
-.gpt-image-error{margin:0 18px 18px}
-
 /* Toast */
 .toast{position:fixed;bottom:16px;right:16px;background:#1e1e1e;color:#fff;padding:10px 16px;border-radius:8px;font-size:14px;z-index:200;opacity:0;transition:opacity .3s;pointer-events:none}
 .toast.show{opacity:1}
@@ -599,11 +569,6 @@ select.sel:focus,.sel:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(
   .account-control-row{grid-template-columns:minmax(0,2.2fr) minmax(340px,.9fr)}
   .rotation-options{grid-template-columns:repeat(4,minmax(180px,1fr))}
   .image-workspace{grid-template-columns:minmax(380px,460px) minmax(520px,1.45fr) minmax(300px,.75fr);grid-auto-flow:dense}
-  .gpt-image-workspace{grid-template-columns:minmax(420px,560px) minmax(540px,1fr) minmax(320px,.65fr)}
-  .gpt-builder-panel{grid-column:1;grid-row:1 / span 2}
-  .gpt-output-panel{grid-column:2;grid-row:1}
-  .gpt-controls-panel{grid-column:3;grid-row:1}
-  .gpt-results-panel{grid-column:2 / 4;grid-row:2}
   .image-form-panel{grid-column:1;grid-row:1}
   .image-main-column{grid-column:2;grid-row:1}
   .image-side-column{grid-column:3;grid-row:1}
@@ -614,7 +579,6 @@ select.sel:focus,.sel:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(
 @media(min-width:1840px){
   .page-pad{padding-left:clamp(28px,3vw,64px);padding-right:clamp(28px,3vw,64px)}
   .image-workspace{grid-template-columns:minmax(400px,480px) minmax(680px,1.7fr) minmax(360px,.85fr)}
-  .gpt-image-workspace{grid-template-columns:minmax(460px,620px) minmax(680px,1.55fr) minmax(360px,.75fr)}
   .image-result-gallery{grid-template-columns:repeat(auto-fit,minmax(440px,1fr))}
   .history-gallery{grid-template-columns:repeat(auto-fill,minmax(210px,1fr))}
 }
@@ -633,8 +597,6 @@ select.sel:focus,.sel:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(
   .playground-side.is-collapsed .playground-section-label{font-size:12px;line-height:normal;margin-bottom:3px}
   .playground-side.is-collapsed .playground-panel-head h2{font-size:15px;line-height:1.25;writing-mode:horizontal-tb;max-height:none;color:var(--text)}
   .image-workspace{grid-template-columns:1fr}
-  .gpt-image-workspace{grid-template-columns:1fr}
-  .gpt-builder-panel,.gpt-output-panel,.gpt-controls-panel,.gpt-results-panel{grid-column:auto;grid-row:auto}
   .image-form-panel,.image-main-column,.image-side-column{grid-column:auto;grid-row:auto}
   .image-results-panel{min-height:auto}
   .account-metrics{grid-template-columns:repeat(3,minmax(0,1fr))}
@@ -684,19 +646,14 @@ select.sel:focus,.sel:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(
   .preset-row{grid-template-columns:1fr}
   .account-pad{padding:20px 14px 64px}
   .request-pad{padding:20px 14px 64px}
-  .gpt-image-pad{padding:20px 14px 64px}
   .account-hero{align-items:flex-start;flex-direction:column}
   .request-hero{align-items:flex-start;flex-direction:column}
-  .gpt-image-hero{align-items:flex-start;flex-direction:column}
   .account-hero h1{font-size:24px}
   .request-hero h1{font-size:24px}
-  .gpt-image-hero h1{font-size:24px}
   .account-hero-actions{width:100%;justify-content:flex-start}
   .request-hero-actions{width:100%;justify-content:flex-start}
-  .gpt-image-hero-actions{width:100%;justify-content:flex-start}
   .account-hero-actions .btn{flex:1;justify-content:center;min-width:130px}
   .request-hero-actions .btn,.request-switch{flex:1;justify-content:center;min-width:130px}
-  .gpt-image-hero-actions .btn,.gpt-compose-actions .btn{flex:1;justify-content:center;min-width:130px}
   .request-panel-actions{width:100%;justify-content:flex-start}
   .request-panel-actions .btn{flex:1;justify-content:center;min-width:112px}
   .account-metrics{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
@@ -731,9 +688,6 @@ select.sel:focus,.sel:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(
   .studio-step-index{width:26px;height:26px}
   .image-studio-controls{grid-template-columns:1fr}
   .optimizer-controls{grid-template-columns:1fr}
-  .gpt-workflow-grid,.gpt-field-grid,.gpt-control-body .image-studio-controls{grid-template-columns:1fr}
-  .gpt-builder-body,.gpt-prompt-shell,.gpt-control-body{padding:14px}
-  .gpt-prompt-output{min-height:260px}
   .image-submit-row .btn{width:100%;justify-content:center}
   .image-gallery{grid-template-columns:repeat(auto-fill,minmax(140px,1fr));padding:14px}
   .image-result-gallery{grid-template-columns:1fr}
