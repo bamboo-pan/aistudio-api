@@ -713,3 +713,36 @@ Fixed Responses streaming function-call events so clients reconstruct tool argum
 ### Next Steps
 
 - None - task complete
+
+
+## Session 22: Reimplement OpenAI Local Studio
+
+**Date**: 2026-05-21
+**Task**: Reimplement OpenAI Local Studio
+**Branch**: `feature/reimplement-openai-local-studio`
+
+### Summary
+
+Reverted the incorrect GPT image prompt workbench commit and rebuilt OpenAI Local Studio with Responses chat, local persistence, official gpt-image-2 size validation, Images API fallback, docs, tests, and real-key API/UI smoke verification.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7a0ff6e` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
