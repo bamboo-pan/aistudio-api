@@ -335,7 +335,7 @@
       <section class="local-studio-chat-panel">
         <div class="local-studio-hero">
           <div>
-            <div class="local-studio-kicker">OpenAI Responses API</div>
+            <div class="local-studio-kicker" x-text="localStudioInterfaceModeLabel">OpenAI Responses</div>
             <h1>OpenAI Local Studio</h1>
           </div>
           <div class="local-studio-status">
@@ -412,6 +412,15 @@
           <label class="local-studio-field"><span>API Token</span><input type="password" x-model="localStudioSettings.apiKey" @change="saveLocalStudioSettings()" placeholder="sk-... 或兼容服务 token"></label>
           <label class="local-studio-field"><span>Timeout</span><input type="number" min="1" max="600" step="1" x-model.number="localStudioSettings.timeout" @change="saveLocalStudioSettings()"></label>
           <div class="local-studio-field">
+            <span>Interface</span>
+            <div class="cselect local-studio-select" :class="{open:openSelect==='localStudioInterfaceMode'}" @click.stop>
+              <div class="cselect-btn" @click="toggleSelect('localStudioInterfaceMode',$event)" tabindex="0"><span x-text="localStudioInterfaceModeLabel"></span><span class="arrow"></span></div>
+              <div class="cselect-menu">
+                <template x-for="option in interfaceModeOptions" :key="option.id"><div class="cselect-opt" :class="{active:localStudioInterfaceMode===option.id}" @click="selectLocalStudioInterfaceMode(option.id)" x-text="option.label"></div></template>
+              </div>
+            </div>
+          </div>
+          <div class="local-studio-field">
             <span>Conversation Model</span>
             <div class="cselect local-studio-select" :class="{open:openSelect==='localStudioModel'}" @click.stop>
               <div class="cselect-btn" @click="toggleSelect('localStudioModel',$event)" tabindex="0"><span x-text="localStudioModelsLoading?'加载中':localStudioModel||'选择模型'"></span><span class="arrow"></span></div>
@@ -424,12 +433,22 @@
         </section>
 
         <section class="local-studio-panel">
-          <div class="local-studio-pane-head"><div><div class="local-studio-kicker">Reasoning</div><h2>推理</h2></div></div>
-          <label class="local-studio-field"><span>Effort</span><select class="sel" x-model="localStudioReasoningEffort" @change="saveLocalStudioSettings()"><option value="off">off</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></label>
-          <label class="local-studio-field"><span>Summary</span><select class="sel" x-model="localStudioReasoningSummary" @change="saveLocalStudioSettings()"><option value="auto">auto</option><option value="concise">concise</option><option value="detailed">detailed</option><option value="none">none</option></select></label>
+          <div class="local-studio-pane-head"><div><div class="local-studio-kicker">Runtime</div><h2>运行</h2></div></div>
+          <div class="runtime-toggle" x-show="localStudioControlAvailable('stream')"><span>Stream</span><button type="button" :class="{active:localStudioStream==='on'}" @click="localStudioStream=localStudioStream==='on'?'off':'on';saveLocalStudioSettings()" x-text="localStudioStream==='on'?'开启':'关闭'"></button></div>
+          <div class="capability-grid local-studio-capabilities">
+            <template x-for="item in [{key:'text',label:'文本',available:localStudioSelectedCaps.text_output!==false},{key:'files',label:'文件',available:localStudioControlAvailable('files')},{key:'thinking',label:'推理',available:localStudioControlAvailable('thinking')},{key:'stream',label:'流式',available:localStudioControlAvailable('stream')},{key:'tools',label:'工具',available:localStudioSelectedCaps.tools!==false},{key:'structured',label:'结构化',available:localStudioSelectedCaps.structured_output!==false}]" :key="item.key">
+              <div class="capability-chip" :class="{available:item.available}"><span x-text="item.label"></span><strong x-text="item.available?'可用':'不可用'"></strong></div>
+            </template>
+          </div>
         </section>
 
         <section class="local-studio-panel">
+          <div class="local-studio-pane-head"><div><div class="local-studio-kicker">Reasoning</div><h2>推理</h2></div></div>
+          <label class="local-studio-field"><span>Effort</span><select class="sel" x-model="localStudioReasoningEffort" :disabled="!localStudioControlAvailable('thinking')" @change="saveLocalStudioSettings()"><option value="off">off</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option></select></label>
+          <label class="local-studio-field"><span>Summary</span><select class="sel" x-model="localStudioReasoningSummary" :disabled="!localStudioControlAvailable('thinking')" @change="saveLocalStudioSettings()"><option value="auto">auto</option><option value="concise">concise</option><option value="detailed">detailed</option><option value="none">none</option></select></label>
+        </section>
+
+        <section class="local-studio-panel" x-show="localStudioInterfaceMode==='responses'" x-cloak>
           <div class="local-studio-pane-head"><div><div class="local-studio-kicker">Image Tool</div><h2>gpt-image-2</h2></div><button type="button" class="request-switch" :class="{active:localStudioImageToolEnabled}" @click="localStudioImageToolEnabled=!localStudioImageToolEnabled;saveLocalStudioSettings()"><span class="request-switch-track"><span class="request-switch-knob"></span></span><strong x-text="localStudioImageToolEnabled?'开启':'关闭'"></strong></button></div>
           <div class="local-studio-grid-controls">
             <label class="local-studio-field"><span>Size</span><select class="sel" x-model="localStudioImageSize" @change="saveLocalStudioSettings()"><template x-for="option in localStudioSizeOptions" :key="option.size"><option :value="option.size" x-text="option.label+' · '+option.size"></option></template></select></label>

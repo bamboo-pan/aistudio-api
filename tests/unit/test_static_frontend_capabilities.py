@@ -235,8 +235,22 @@ def test_static_frontend_exposes_openai_local_studio_workbench():
     assert "'/api/local-studio/conversations/bulk-delete'" in app_js
     assert "'/api/local-studio/chat'" in app_js
     assert "localStudioModelOptions" in app_js
+    assert "localStudioInterfaceMode:'responses'" in app_js
+    assert "interfaceMode:this.localStudioInterfaceMode" in app_js
+    assert "selectLocalStudioInterfaceMode(value)" in app_js
+    assert "localStudioStream:'on'" in app_js
+    assert "localStudioControlAvailable('stream')" in app_js
+    assert "sendLocalStudioStream(body)" in app_js
+    assert "local_studio.delta" in app_js
+    assert "this.localStudioDraft=''" in app_js
+    assert "this.localStudioInterfaceMode=this.validInterfaceMode(this.localStudioConversation.interface_mode)" in app_js
     assert "startsWith('gpt-image-')" in app_js
     assert "gpt-image-2" in index_html
+    assert "localStudioInterfaceModeLabel" in index_html
+    assert "selectLocalStudioInterfaceMode(option.id)" in index_html
+    assert "localStudioStream==='on'" in index_html
+    assert "localStudioSelectedCaps" in index_html
+    assert "localStudioInterfaceMode==='responses'" in index_html
     assert "localStudioSizeOptions" in app_js
     assert "size:'2560x1440'" in app_js
     assert "size:'3824x2144'" in app_js
@@ -246,8 +260,8 @@ def test_static_frontend_exposes_openai_local_studio_workbench():
     assert "x-for=\"option in localStudioSizeOptions\"" in index_html
     assert "Custom Size" in index_html
     assert "below 3840px" in index_html
-    assert "reasoning_effort:this.localStudioReasoningEffort" in app_js
-    assert "image_tool_enabled:this.localStudioImageToolEnabled" in app_js
+    assert "reasoning_effort:this.localStudioControlAvailable('thinking')?this.localStudioReasoningEffort:'off'" in app_js
+    assert "image_tool_enabled:this.localStudioInterfaceMode==='responses'&&this.localStudioImageToolEnabled" in app_js
     assert "rerunLocalStudioMessage(index)" in app_js
     assert "attachLocalStudioFiles" in app_js
     assert "localStudioMessageImages(message)" in index_html
