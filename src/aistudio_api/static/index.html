@@ -341,6 +341,7 @@
           <div class="local-studio-status">
             <span x-text="localStudioCanConnect()?'已配置接口':'等待接口'"></span>
             <span x-text="localStudioModel||'未选择模型'"></span>
+            <span :class="{'is-live':localStudioBusy}" x-text="localStudioStatusText"></span>
             <span x-text="localStudioRunSummary"></span>
           </div>
         </div>
@@ -360,7 +361,8 @@
                     <div class="think-body" x-show="message.showThinking" x-text="message.thinking"></div>
                   </div>
                 </template>
-                <div class="msg-body" :class="{error:message.error,'markdown-body':message.role!=='user'&&!message.error}" x-show="localStudioMessageText(message)" x-html="message.error?plainTextHtml(message.error):(message.role==='user'?plainTextHtml(message.content):markdownToHtml(message.content||''))"></div>
+                <div class="msg-body" :class="{'markdown-body':message.role!=='user'}" x-show="localStudioMessageContent(message)" x-html="message.role==='user'?plainTextHtml(message.content):markdownToHtml(localStudioMessageContent(message))"></div>
+                <div class="msg-body error" x-show="localStudioMessageError(message)" x-text="localStudioMessageError(message)"></div>
                 <div class="local-studio-attachments" x-show="localStudioAttachments(message).length" x-cloak>
                   <template x-for="file in localStudioAttachments(message)" :key="file.id||file.url">
                     <a class="local-studio-file" :href="file.url" target="_blank" rel="noopener noreferrer"><span class="file-icon">FILE</span><span x-text="file.name"></span><small x-text="file.mime"></small></a>
@@ -377,6 +379,13 @@
               </div>
             </div>
           </template>
+          <div class="local-studio-message is-assistant is-pending" x-show="localStudioBusy" x-cloak>
+            <div class="avatar avatar-ai">AI</div>
+            <div class="local-studio-message-body">
+              <div class="msg-meta"><span>Assistant</span></div>
+              <div class="local-studio-waiting"><span class="local-studio-spinner"></span><div><strong x-text="localStudioPendingTitle"></strong><small x-text="localStudioPendingDetail"></small></div></div>
+            </div>
+          </div>
           <div class="local-studio-empty local-studio-empty-chat" x-show="!localStudioActiveMessages.length">连接兼容 OpenAI 的 /v1 地址后开始对话</div>
         </div>
         <div class="local-studio-composer">

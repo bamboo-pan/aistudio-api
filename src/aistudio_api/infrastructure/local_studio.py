@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
 import time
@@ -555,17 +556,30 @@ class LocalStudioStore:
 
     def save_response_images(self, candidates: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
         images: list[dict[str, Any]] = []
-        for index, candidate in enumerate(candidates, start=1):
+        seen: set[tuple[str, str]] = set()
+        for candidate in candidates:
             try:
                 if candidate.get("data_url"):
                     data, mime_type = decode_data_uri(str(candidate["data_url"]), fallback_mime=str(candidate.get("mime") or "image/png"))
-                    saved = self.save_binary_asset(data, mime_type, filename=f"generated-{index}", source="generated")
-                elif candidate.get("b64_json") or candidate.get("b64") or candidate.get("result"):
-                    encoded = str(candidate.get("b64_json") or candidate.get("b64") or candidate.get("result") or "")
+                    signature = ("bytes", hashlib.sha256(data).hexdigest())
+                    if signature in seen:
+                        continue
+                    seen.add(signature)
+                    saved = self.save_binary_asset(data, mime_type, filename=f"generated-{len(images) + 1}", source="generated")
+                elif candidate.get("b64_json") or candidate.get("b64") or candidate.get("result") or candidate.get("partial_image"):
+                    encoded = str(candidate.get("b64_json") or candidate.get("b64") or candidate.get("result") or candidate.get("partial_image") or "")
                     data = base64.b64decode(encoded)
-                    saved = self.save_binary_asset(data, str(candidate.get("mime") or "image/png"), filename=f"generated-{index}", source="generated")
+                    signature = ("bytes", hashlib.sha256(data).hexdigest())
+                    if signature in seen:
+                        continue
+                    seen.add(signature)
+                    saved = self.save_binary_asset(data, str(candidate.get("mime") or "image/png"), filename=f"generated-{len(images) + 1}", source="generated")
                 elif candidate.get("url"):
-                    saved = {"id": uuid.uuid4().hex, "url": str(candidate["url"]), "name": f"generated-{index}", "mime": str(candidate.get("mime") or "image/png"), "source": "generated"}
+                    signature = ("url", str(candidate["url"]))
+                    if signature in seen:
+                        continue
+                    seen.add(signature)
+                    saved = {"id": uuid.uuid4().hex, "url": str(candidate["url"]), "name": f"generated-{len(images) + 1}", "mime": str(candidate.get("mime") or "image/png"), "source": "generated"}
                 else:
                     continue
             except (ValueError, OSError):
@@ -942,12 +956,27 @@ def parse_responses_stream_event(payload: Mapping[str, Any]) -> dict[str, Any]:
         thinking = parsed["thinking"]
         usage = parsed["usage"]
         image_candidates.extend(parsed["image_candidates"])
-    for key in ("item", "output_item"):
+    if event_type == "response.image_generation_call.partial_image":
+        image_candidates.extend(_image_candidates_from_mapping(payload))
+    for key in ("item", "output_item", "partial_image"):
         item = payload.get(key)
         if isinstance(item, Mapping):
             image_candidates.extend(_image_candidates_from_mapping(item))
     image_candidates.extend(_image_candidates_from_mapping(payload))
-    return {"content": content, "thinking": thinking, "usage": usage, "image_candidates": image_candidates}
+    return {"content": content, "thinking": thinking, "usage": usage, "image_candidates": _dedupe_image_candidates(image_candidates)}
+
+
+def _dedupe_image_candidates(candidates: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    seen: set[tuple[tuple[str, str], ...]] = set()
+    for candidate in candidates:
+        item = dict(candidate)
+        signature = tuple(sorted((str(key), str(value)) for key, value in item.items()))
+        if signature in seen:
+            continue
+        seen.add(signature)
+        result.append(item)
+    return result
 
 
 def parse_gemini_output(payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -1051,7 +1080,7 @@ def _normalize_gemini_usage(usage: Mapping[str, Any] | None) -> dict[str, int] |
 
 def _image_candidates_from_mapping(value: Mapping[str, Any]) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
-    for key in ("b64_json", "b64", "result"):
+    for key in ("b64_json", "b64", "result", "partial_image"):
         item = value.get(key)
         if isinstance(item, str) and item:
             candidates.append({key: item, "mime": value.get("mime") or value.get("mime_type") or "image/png"})

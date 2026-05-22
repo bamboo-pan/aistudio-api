@@ -812,3 +812,36 @@ Fixed Local Studio optimistic user-message rendering, persisted Responses image-
 ### Next Steps
 
 - None - task complete
+
+
+## Session 25: Fix Local Studio stream image handling
+
+**Date**: 2026-05-22
+**Task**: Fix Local Studio stream image handling
+**Branch**: `fix/local-studio-error-waiting-state`
+
+### Summary
+
+Handled Local Studio Responses stream interruption, partial/final image handling, duplicate image prevention, and visible waiting state; verified with unit, WSL API, and browser UI smoke tests.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1000bf7` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

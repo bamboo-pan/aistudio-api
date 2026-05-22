@@ -546,6 +546,226 @@ def test_stream_chat_image_tool_without_candidates_does_not_call_images_api(tmp_
     assert completed["conversation"]["messages"][-1]["images"] == []
 
 
+def test_responses_partial_image_stream_event_extracts_image_candidate():
+    parsed = parse_local_studio_stream_event(
+        "responses",
+        {
+            "type": "response.image_generation_call.partial_image",
+            "partial_image": "ZmFrZQ==",
+        },
+    )
+
+    assert parsed["image_candidates"] == [{"partial_image": "ZmFrZQ==", "mime": "image/png"}]
+
+
+def test_local_studio_store_deduplicates_equivalent_response_images(tmp_path):
+    store = LocalStudioStore(tmp_path)
+
+    images = store.save_response_images(
+        [
+            {"partial_image": "ZmFrZQ==", "mime": "image/png"},
+            {"result": "ZmFrZQ==", "mime": "image/png"},
+            {"data_url": "data:image/png;base64,ZmFrZQ=="},
+        ]
+    )
+
+    assert len(images) == 1
+    assert images[0]["url"].startswith("/api/local-studio/assets/")
+
+
+def test_stream_chat_image_tool_deduplicates_partial_and_final_candidates(tmp_path, monkeypatch):
+    app, old_dir = local_studio_app(tmp_path)
+
+    class FakeStreamResponse:
+        status_code = 200
+        headers = {"content-type": "text/event-stream"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        async def aiter_lines(self):
+            yield 'data: {"type":"response.image_generation_call.partial_image","partial_image":"cGFydGlhbA=="}'
+            yield ""
+            yield 'data: {"type":"response.completed","response":{"output":[{"type":"image_generation_call","result":"ZmluYWw="}],"usage":{"input_tokens":3,"output_tokens":4,"total_tokens":7}}}'
+            yield ""
+
+    class FakeClient:
+        def __init__(self, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        def stream(self, method, url, headers, json):
+            return FakeStreamResponse()
+
+    monkeypatch.setattr(routes_local_studio, "_new_http_client", FakeClient)
+    try:
+        response = request_app(
+            app,
+            "POST",
+            "/api/local-studio/chat",
+            json={
+                "base_url": "http://compat.example/v1",
+                "model": "gpt-5.4-mini",
+                "message": "make a cat image",
+                "options": {"stream": True, "image_tool_enabled": True},
+            },
+        )
+    finally:
+        settings.local_studio_dir = old_dir
+
+    completed = [
+        json.loads(line[6:])
+        for line in response.text.splitlines()
+        if line.startswith("data: ") and json.loads(line[6:]).get("type") == "local_studio.completed"
+    ][0]
+    assistant = completed["conversation"]["messages"][-1]
+
+    assert response.status_code == 200
+    assert assistant["content"] == "Generated image"
+    assert len(assistant["images"]) == 1
+    assert assistant["images"][0]["url"].startswith("/api/local-studio/assets/")
+    assert (tmp_path / "files" / assistant["images"][0]["path"]).read_bytes() == b"final"
+
+
+def test_stream_chat_transport_error_persists_partial_image_candidate(tmp_path, monkeypatch):
+    app, old_dir = local_studio_app(tmp_path)
+
+    class FakeStreamResponse:
+        status_code = 200
+        headers = {"content-type": "text/event-stream"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        async def aiter_lines(self):
+            yield 'data: {"type":"response.output_text.delta","delta":"draft"}'
+            yield ""
+            yield 'data: {"type":"response.image_generation_call.partial_image","partial_image":"ZmFrZQ=="}'
+            yield ""
+            raise httpx.ReadError("peer closed connection without sending complete message body")
+
+    class FakeClient:
+        def __init__(self, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        def stream(self, method, url, headers, json):
+            return FakeStreamResponse()
+
+    monkeypatch.setattr(routes_local_studio, "_new_http_client", FakeClient)
+    try:
+        response = request_app(
+            app,
+            "POST",
+            "/api/local-studio/chat",
+            json={
+                "base_url": "http://compat.example/v1",
+                "model": "gpt-5.4-mini",
+                "message": "make a cat image",
+                "options": {"stream": True, "image_tool_enabled": True},
+            },
+        )
+    finally:
+        settings.local_studio_dir = old_dir
+
+    completed = [
+        json.loads(line[6:])
+        for line in response.text.splitlines()
+        if line.startswith("data: ") and json.loads(line[6:]).get("type") == "local_studio.completed"
+    ][0]
+    assistant = completed["conversation"]["messages"][-1]
+
+    assert response.status_code == 200
+    assert assistant["content"] == "draft"
+    assert assistant["images"][0]["url"].startswith("/api/local-studio/assets/")
+    assert "Partial response saved" in assistant["error"]
+    assert "peer closed connection" in assistant["error"]
+
+
+def test_stream_chat_transport_error_without_partial_output_persists_error(tmp_path, monkeypatch):
+    app, old_dir = local_studio_app(tmp_path)
+
+    class FakeStreamResponse:
+        status_code = 200
+        headers = {"content-type": "text/event-stream"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        async def aiter_lines(self):
+            raise httpx.ReadError("peer closed connection without sending complete message body")
+            yield ""
+
+    class FakeClient:
+        def __init__(self, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        def stream(self, method, url, headers, json):
+            return FakeStreamResponse()
+
+    monkeypatch.setattr(routes_local_studio, "_new_http_client", FakeClient)
+    try:
+        response = request_app(
+            app,
+            "POST",
+            "/api/local-studio/chat",
+            json={
+                "base_url": "http://compat.example/v1",
+                "model": "gpt-5.4-mini",
+                "message": "make a cat image",
+                "options": {"stream": True, "image_tool_enabled": True},
+            },
+        )
+    finally:
+        settings.local_studio_dir = old_dir
+
+    completed = [
+        json.loads(line[6:])
+        for line in response.text.splitlines()
+        if line.startswith("data: ") and json.loads(line[6:]).get("type") == "local_studio.completed"
+    ][0]
+    assistant = completed["conversation"]["messages"][-1]
+
+    assert response.status_code == 200
+    assert assistant["content"] == ""
+    assert assistant["images"] == []
+    assert "peer closed connection" in assistant["error"]
+
+
 def test_chat_route_surfaces_http_524_and_records_error(tmp_path, monkeypatch):
     app, old_dir = local_studio_app(tmp_path)
     store = LocalStudioStore(tmp_path)
