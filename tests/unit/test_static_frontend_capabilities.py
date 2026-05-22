@@ -242,6 +242,11 @@ def test_static_frontend_exposes_openai_local_studio_workbench():
     assert "localStudioControlAvailable('stream')" in app_js
     assert "sendLocalStudioStream(body)" in app_js
     assert "local_studio.delta" in app_js
+    assert "localStudioPendingTitle" in app_js
+    assert "localStudioBusyTimer" in app_js
+    assert "Local Studio 流式响应中断，已保存结果" in app_js
+    assert "localStudioMessageContent(message)" in app_js
+    assert "localStudioMessageError(message)" in app_js
     assert "this.localStudioDraft=''" in app_js
     assert "appendLocalStudioMessage" in app_js
     assert "localStudioOptimisticFiles(files)" in app_js
@@ -253,6 +258,9 @@ def test_static_frontend_exposes_openai_local_studio_workbench():
     assert "selectLocalStudioInterfaceMode(option.id)" in index_html
     assert "localStudioStream==='on'" in index_html
     assert "localStudioSelectedCaps" in index_html
+    assert "local-studio-waiting" in index_html
+    assert "localStudioStatusText" in index_html
+    assert "localStudioMessageError(message)" in index_html
     assert "localStudioInterfaceMode==='responses'" in index_html
     assert "localStudioSizeOptions" in app_js
     assert "size:'2560x1440'" in app_js
@@ -274,6 +282,8 @@ def test_static_frontend_exposes_openai_local_studio_workbench():
     assert ".local-studio-shell" in style_css
     assert "grid-template-columns:300px minmax(0,1fr) 340px" in style_css
     assert ".local-studio-transcript" in style_css
+    assert ".local-studio-waiting" in style_css
+    assert ".local-studio-spinner" in style_css
     assert ".local-studio-grid-controls" in style_css
     assert ".chat-usage-grid" in style_css
     assert ".msg-usage" in style_css

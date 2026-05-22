@@ -422,6 +422,7 @@ async def _stream_local_studio_chat(
     content_parts: list[str] = []
     thinking_parts: list[str] = []
     image_candidates: list[dict[str, Any]] = []
+    partial_image_candidates: list[dict[str, Any]] = []
     usage: dict[str, Any] | None = None
     error_message = ""
     status_code = 0
@@ -446,8 +447,9 @@ async def _stream_local_studio_chat(
                             event = json.loads(data_text)
                         except json.JSONDecodeError:
                             continue
+                        event_type = str(event.get("type") or "") if isinstance(event, dict) else ""
                         parsed = parse_local_studio_stream_event(mode, event if isinstance(event, dict) else {})
-                        is_completed_event = event.get("type") == "response.completed" if isinstance(event, dict) else False
+                        is_completed_event = event_type == "response.completed"
                         had_content_parts = bool(content_parts)
                         if parsed.get("error"):
                             error_message = str(parsed["error"])
@@ -456,7 +458,11 @@ async def _stream_local_studio_chat(
                         if parsed.get("thinking"):
                             thinking_parts.append(str(parsed["thinking"]))
                         if isinstance(parsed.get("image_candidates"), list):
-                            image_candidates.extend(candidate for candidate in parsed["image_candidates"] if isinstance(candidate, dict))
+                            parsed_candidates = [candidate for candidate in parsed["image_candidates"] if isinstance(candidate, dict)]
+                            if event_type == "response.image_generation_call.partial_image":
+                                partial_image_candidates.extend(parsed_candidates)
+                            else:
+                                image_candidates.extend(parsed_candidates)
                         if isinstance(parsed.get("usage"), dict):
                             usage = dict(parsed["usage"])
                         delta_content = "" if is_completed_event and had_content_parts else parsed.get("content") or ""
@@ -485,13 +491,18 @@ async def _stream_local_studio_chat(
         response_body = b"".join(response_chunks)
         _record_upstream_response(entry=entry, kind=kind, model=model, method="POST", url=url, headers=headers, status_code=status_code or 200, response_headers=response_headers, response_body=response_body, elapsed_ms=elapsed_ms)
         images: list[dict[str, Any]] = []
-        if not error_message:
-            images = store.save_response_images(image_candidates)
-        if error_message:
+        save_candidates = image_candidates or partial_image_candidates
+        if not error_message or save_candidates:
+            images = store.save_response_images(save_candidates)
+        content = "".join(content_parts).strip()
+        thinking = "\n".join(part for part in thinking_parts if part).strip()
+        if error_message and (content or thinking or images or usage):
+            partial_note = f"Partial response saved before upstream stream ended: {error_message}"
+            store.add_assistant_message(conversation, content=content or ("Generated image" if images else ""), thinking=thinking, usage=usage, images=images, error=partial_note)
+        elif error_message:
             store.add_assistant_message(conversation, error=error_message)
         else:
-            content = "".join(content_parts).strip() or ("Generated image" if images else "(no response content)")
-            store.add_assistant_message(conversation, content=content, thinking="\n".join(part for part in thinking_parts if part).strip(), usage=usage, images=images)
+            store.add_assistant_message(conversation, content=content or ("Generated image" if images else "(no response content)"), thinking=thinking, usage=usage, images=images)
         saved = store.save(conversation)
         done = {"type": "local_studio.completed", "conversation": saved, "elapsed_ms": elapsed_ms, "interface_mode": mode}
         yield f"data: {json.dumps(done, ensure_ascii=False)}\n\n".encode("utf-8")

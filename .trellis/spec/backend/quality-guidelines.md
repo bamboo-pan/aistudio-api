@@ -66,6 +66,8 @@ Questions to answer:
 - The static UI must clear an accepted Local Studio draft immediately after send, restore it on non-rerun failure, and keep stream/non-stream, interface mode, reasoning, model, and image settings in `openai.localStudio.settings.v1`.
 - The `gpt-image-2` image tool is Responses-mode only. When enabled, Local Studio must send the `image_generation` tool through `/responses` and must not fall back to `/images/generations`; HTTP/transport failures surface as upstream errors, and no-candidate completions remain image-less.
 - Generated image bytes from `b64_json`, `b64`, `result`, or data URLs must be saved under `AISTUDIO_LOCAL_STUDIO_DIR/files` and returned with `/api/local-studio/assets/...` URLs.
+- Responses stream `response.image_generation_call.partial_image` data is a usable partial image candidate. If the upstream stream later fails after text, thinking, usage, or image candidates have arrived, persist the partial assistant result, save any candidate images, and keep a visible assistant `error` note explaining the stream ended before completion.
+- Successful Responses streams that include both `response.image_generation_call.partial_image` progress data and final `image_generation_call.result` data must prefer final image candidates. Equivalent generated image payloads must be deduplicated before saving so the UI renders one image per unique output.
 - Uploaded attachments are accepted as data URLs, saved locally, stripped of heavy inline fields in persisted JSON, and rehydrated as Responses `input_image` or `input_file` blocks when sent upstream.
 - Rerun truncates the conversation to the selected previous user turn before rebuilding the Responses payload.
 - The static UI must keep its settings in `openai.localStudio.settings.v1`; this browser storage may hold the user's runtime token, but server-side storage must not.
@@ -90,6 +92,8 @@ Questions to answer:
 - Good: Responses stream emits provider chunks; backend emits incremental `local_studio.delta`, frontend renders the assistant placeholder while streaming, and final persistence arrives via `local_studio.completed`.
 - Good: Request logs enabled; a Local Studio chat group contains client request, upstream request, upstream response, and client response phases without API token leakage.
 - Good: Responses image tool returns `image_generation_call.result`; the image is saved locally and rendered in the UI.
+- Good: Responses image tool emits `response.image_generation_call.partial_image`, then the transport raises an incomplete chunked read; Local Studio saves the partial image, preserves any text/usage already received, and shows the upstream interruption as an error note beside the partial result.
+- Good: Responses image tool emits a partial image, then completes with a final image for the same output; Local Studio saves/renders only one final image instead of showing duplicate thumbnails.
 - Good: Responses image tool returns no image candidate; Local Studio saves the completed conversation without generated images and does not call `/images/generations`.
 - Good: User enters custom `3824x2144`; local validation accepts it as near-4K under the `<3840` edge rule.
 - Base: Text-only Responses chat stores assistant text and usage without calling an image-generation endpoint.
@@ -105,6 +109,8 @@ Questions to answer:
 - Unit: `gpt-image-2` official size options and invalid custom sizes.
 - Unit: chat persists assistant errors for upstream 524/timeouts and rejects multiline tokens without leaking secrets.
 - Unit: Responses image-tool HTTP failures, transport failures, and no-candidate completions do not call `/images/generations`.
+- Unit: Responses stream partial-image events are parsed as image candidates, and transport failures after partial output persist a partial assistant message with images plus an incomplete-stream error note.
+- Unit: Responses stream partial-image plus final-image events persist only one generated image candidate.
 - Unit: request-log middleware records Local Studio client/upstream/client response phases and redacts client tokens plus upstream Authorization headers.
 - Static: `#studio` route/sidebar, Local Studio interface selector, stream toggle, capability grid, immediate draft clearing, official size list, custom size, Responses-only image panel, and no `3840x2160` option.
 - Static syntax: when editing `src/aistudio_api/static/app.js`, run `node --check src/aistudio_api/static/app.js`.
