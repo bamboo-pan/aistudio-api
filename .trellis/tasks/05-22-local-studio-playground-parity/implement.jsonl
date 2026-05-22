@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend spec index and pre-development checklist for API/static backend work."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Local Studio API, image fallback, static syntax, and real-test contracts to preserve while extending parity."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"API error response conventions for Local Studio route changes."}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Request logging and secret handling guidance for request-log integration."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Task spans UI, API routes, persistence, logging, and real validation."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse existing playground protocol builders/parsers where possible."}
+{"file":".trellis/tasks/05-22-local-studio-playground-parity/research/request-log-analysis.md","reason":"Captured user log findings and request-log integration implications."}

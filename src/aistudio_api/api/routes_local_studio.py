@@ -2,22 +2,31 @@
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any
 
 import httpx
 from fastapi import APIRouter, Body, HTTPException
+from fastapi.responses import StreamingResponse
 from fastapi.responses import FileResponse
 
 from aistudio_api.infrastructure.local_studio import (
     LocalStudioStore,
+    build_local_studio_chat_payload,
     build_images_generation_payload,
-    build_responses_payload,
     filter_chat_models,
+    local_studio_chat_path,
+    local_studio_models_path,
+    normalize_interface_mode,
     normalize_openai_base_url,
+    parse_local_studio_output,
+    parse_local_studio_stream_event,
     parse_responses_output,
     upstream_url,
 )
+
+from .state import runtime_state
 
 
 router = APIRouter(prefix="/api/local-studio")
@@ -40,6 +49,20 @@ def _settings_from_payload(payload: dict[str, Any]) -> tuple[str, str, int]:
     return base_url, token, timeout
 
 
+def _mode_from_payload(payload: dict[str, Any], *, default: str = "responses") -> str:
+    try:
+        return normalize_interface_mode(str(payload.get("interface_mode") or payload.get("mode") or default), default=default)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=_error_detail(str(exc), "invalid_request_error")) from exc
+
+
+def _options_from_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    options = dict(payload.get("options") or {}) if isinstance(payload.get("options"), dict) else {}
+    if "stream" in payload and "stream" not in options:
+        options["stream"] = bool(payload.get("stream"))
+    return options
+
+
 def _auth_headers(token: str) -> dict[str, str]:
     headers = {"Content-Type": "application/json"}
     if token:
@@ -49,6 +72,84 @@ def _auth_headers(token: str) -> dict[str, str]:
 
 def _new_http_client(timeout: int) -> httpx.AsyncClient:
     return httpx.AsyncClient(timeout=timeout)
+
+
+def _json_body(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _redacted_headers(headers: dict[str, str]) -> dict[str, str]:
+    redacted: dict[str, str] = {}
+    for key, value in headers.items():
+        redacted[key] = "Bearer ***" if key.lower() == "authorization" and value else value
+    return redacted
+
+
+def _record_upstream_request(*, kind: str, model: str, method: str, url: str, headers: dict[str, str], body: Any) -> dict[str, Any] | None:
+    store = runtime_state.request_log_store
+    if store is None:
+        return None
+    try:
+        return store.save(
+            kind=kind,
+            model=model,
+            method=method,
+            url=url,
+            headers=_redacted_headers(headers),
+            captured_headers=_redacted_headers(headers),
+            body=_json_body(body),
+            transport="local_studio_http",
+            direction="outbound",
+            phase="upstream_request",
+        )
+    except Exception:
+        return None
+
+
+def _record_upstream_response(
+    *,
+    entry: dict[str, Any] | None,
+    kind: str,
+    model: str,
+    method: str,
+    url: str,
+    headers: dict[str, str] | None,
+    status_code: int,
+    response_headers: dict[str, str] | None,
+    response_body: bytes | str,
+    elapsed_ms: float,
+) -> None:
+    store = runtime_state.request_log_store
+    if store is None:
+        return
+    chain_id = entry.get("chain_id") if isinstance(entry, dict) else None
+    try:
+        if isinstance(entry, dict) and entry.get("id"):
+            store.attach_response(
+                str(entry["id"]),
+                status_code=status_code,
+                response_headers=response_headers,
+                response_body=response_body,
+                elapsed_ms=elapsed_ms,
+            )
+        store.save(
+            kind=kind,
+            model=model,
+            method=method,
+            url=url,
+            headers=_redacted_headers(headers or {}),
+            body="",
+            transport="local_studio_http",
+            chain_id=chain_id,
+            direction="inbound",
+            phase="upstream_response",
+            status_code=status_code,
+            response_headers=response_headers,
+            response_body=response_body,
+            elapsed_ms=elapsed_ms,
+        )
+    except Exception:
+        return
 
 
 def _upstream_error(exc: httpx.HTTPStatusError) -> HTTPException:
@@ -93,8 +194,23 @@ async def _call_images_generation_fallback(
     if not prompt:
         return None
     payload = build_images_generation_payload(prompt, options)
-    response = await client.post(upstream_url(base_url, "/images/generations"), headers=_auth_headers(token), json=payload)
-    response.raise_for_status()
+    url = upstream_url(base_url, "/images/generations")
+    headers = _auth_headers(token)
+    entry = _record_upstream_request(kind="local_studio_image_fallback", model="gpt-image-2", method="POST", url=url, headers=headers, body=payload)
+    started = time.perf_counter()
+    try:
+        response = await client.post(url, headers=headers, json=payload)
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        _record_upstream_response(entry=entry, kind="local_studio_image_fallback", model="gpt-image-2", method="POST", url=url, headers=headers, status_code=exc.response.status_code, response_headers=dict(exc.response.headers), response_body=exc.response.content, elapsed_ms=(time.perf_counter() - started) * 1000)
+        raise
+    except httpx.TimeoutException:
+        _record_upstream_response(entry=entry, kind="local_studio_image_fallback", model="gpt-image-2", method="POST", url=url, headers=headers, status_code=504, response_headers={}, response_body="image fallback request timed out", elapsed_ms=(time.perf_counter() - started) * 1000)
+        raise
+    except httpx.HTTPError as exc:
+        _record_upstream_response(entry=entry, kind="local_studio_image_fallback", model="gpt-image-2", method="POST", url=url, headers=headers, status_code=502, response_headers={}, response_body=str(exc), elapsed_ms=(time.perf_counter() - started) * 1000)
+        raise
+    _record_upstream_response(entry=entry, kind="local_studio_image_fallback", model="gpt-image-2", method="POST", url=url, headers=headers, status_code=response.status_code, response_headers=dict(response.headers), response_body=response.content, elapsed_ms=(time.perf_counter() - started) * 1000)
     data = response.json()
     return data if isinstance(data, dict) else None
 
@@ -109,20 +225,29 @@ async def health() -> dict[str, Any]:
 @router.post("/models")
 async def list_models(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     base_url, token, timeout = _settings_from_payload(payload)
+    mode = _mode_from_payload(payload)
+    url = upstream_url(base_url, local_studio_models_path(mode))
+    headers = _auth_headers(token)
+    entry = _record_upstream_request(kind=f"local_studio_models_{mode}", model="", method="GET", url=url, headers=headers, body={"interface_mode": mode})
+    started = time.perf_counter()
     try:
         async with _new_http_client(timeout) as client:
-            response = await client.get(upstream_url(base_url, "/models"), headers=_auth_headers(token))
+            response = await client.get(url, headers=headers)
             response.raise_for_status()
     except httpx.HTTPStatusError as exc:
+        _record_upstream_response(entry=entry, kind=f"local_studio_models_{mode}", model="", method="GET", url=url, headers=headers, status_code=exc.response.status_code, response_headers=dict(exc.response.headers), response_body=exc.response.content, elapsed_ms=(time.perf_counter() - started) * 1000)
         raise _upstream_error(exc) from exc
     except httpx.TimeoutException as exc:
+        _record_upstream_response(entry=entry, kind=f"local_studio_models_{mode}", model="", method="GET", url=url, headers=headers, status_code=504, response_headers={}, response_body=f"Model list request timed out after {timeout}s", elapsed_ms=(time.perf_counter() - started) * 1000)
         raise HTTPException(status_code=504, detail=_error_detail("Model list request timed out", "upstream_timeout")) from exc
     except httpx.HTTPError as exc:
+        _record_upstream_response(entry=entry, kind=f"local_studio_models_{mode}", model="", method="GET", url=url, headers=headers, status_code=502, response_headers={}, response_body=str(exc), elapsed_ms=(time.perf_counter() - started) * 1000)
         raise HTTPException(status_code=502, detail=_error_detail(str(exc), "upstream_error")) from exc
 
+    _record_upstream_response(entry=entry, kind=f"local_studio_models_{mode}", model="", method="GET", url=url, headers=headers, status_code=response.status_code, response_headers=dict(response.headers), response_body=response.content, elapsed_ms=(time.perf_counter() - started) * 1000)
     data = response.json()
-    models = data.get("data") if isinstance(data, dict) else []
-    return {"object": "list", "data": filter_chat_models(models if isinstance(models, list) else [])}
+    models = data.get("models") if mode == "gemini" and isinstance(data, dict) else data.get("data") if isinstance(data, dict) else []
+    return {"object": "list", "data": filter_chat_models(models if isinstance(models, list) else [], mode=mode), "interface_mode": mode}
 
 
 @router.get("/conversations")
@@ -194,16 +319,18 @@ async def get_asset(asset_path: str) -> FileResponse:
 
 
 @router.post("/chat")
-async def chat(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+async def chat(payload: dict[str, Any] = Body(...)):
     store = LocalStudioStore()
     base_url, token, timeout = _settings_from_payload(payload)
+    mode = _mode_from_payload(payload)
+    options = _options_from_payload(payload)
     model = str(payload.get("model") or "").strip()
     if not model:
         raise HTTPException(status_code=400, detail=_error_detail("model is required", "invalid_request_error"))
 
     conversation_id = str(payload.get("conversation_id") or "").strip()
     try:
-        conversation = store.get(conversation_id) if conversation_id else store.create({"model": model, "settings": payload.get("options") or {}})
+        conversation = store.get(conversation_id) if conversation_id else store.create({"model": model, "interface_mode": mode, "settings": options})
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=_error_detail("conversation not found", "not_found")) from exc
     except ValueError as exc:
@@ -223,56 +350,106 @@ async def chat(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         store.add_user_message(conversation, content, files)
 
     conversation["model"] = model
-    if isinstance(payload.get("options"), dict):
-        conversation["settings"] = dict(payload["options"])
+    conversation["interface_mode"] = mode
+    conversation["settings"] = dict(options)
 
     try:
-        request_body = build_responses_payload(
+        request_body = build_local_studio_chat_payload(
+            mode=mode,
             model=model,
             messages=conversation.get("messages", []),
-            options=payload.get("options") if isinstance(payload.get("options"), dict) else {},
+            options=options,
             asset_resolver=store.asset_to_data_url,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=_error_detail(str(exc), "invalid_request_error")) from exc
 
+    if options.get("stream"):
+        return StreamingResponse(
+            _stream_local_studio_chat(
+                store=store,
+                conversation=conversation,
+                base_url=base_url,
+                token=token,
+                timeout=timeout,
+                mode=mode,
+                model=model,
+                request_body=request_body,
+            ),
+            media_type="text/event-stream",
+        )
+
+    return await _complete_local_studio_chat(
+        store=store,
+        conversation=conversation,
+        base_url=base_url,
+        token=token,
+        timeout=timeout,
+        mode=mode,
+        model=model,
+        options=options,
+        request_body=request_body,
+    )
+
+
+async def _complete_local_studio_chat(
+    *,
+    store: LocalStudioStore,
+    conversation: dict[str, Any],
+    base_url: str,
+    token: str,
+    timeout: int,
+    mode: str,
+    model: str,
+    options: dict[str, Any],
+    request_body: dict[str, Any],
+) -> dict[str, Any]:
+    path = local_studio_chat_path(mode, model, stream=False)
+    url = upstream_url(base_url, path)
+    headers = _auth_headers(token)
+    kind = f"local_studio_{mode}"
+    entry = _record_upstream_request(kind=kind, model=model, method="POST", url=url, headers=headers, body=request_body)
+
     started = time.perf_counter()
-    options = payload.get("options") if isinstance(payload.get("options"), dict) else {}
     fallback_data: dict[str, Any] | None = None
     response_data: dict[str, Any] = {}
     try:
         async with _new_http_client(timeout) as client:
             try:
-                response = await client.post(upstream_url(base_url, "/responses"), headers=_auth_headers(token), json=request_body)
+                response = await client.post(url, headers=headers, json=request_body)
                 response.raise_for_status()
+                _record_upstream_response(entry=entry, kind=kind, model=model, method="POST", url=url, headers=headers, status_code=response.status_code, response_headers=dict(response.headers), response_body=response.content, elapsed_ms=(time.perf_counter() - started) * 1000)
                 raw_response_data = response.json()
                 response_data = raw_response_data if isinstance(raw_response_data, dict) else {}
             except httpx.HTTPError:
-                if not options.get("image_tool_enabled"):
+                if mode != "responses" or not options.get("image_tool_enabled"):
                     raise
                 fallback_data = await _call_images_generation_fallback(client=client, base_url=base_url, token=token, conversation=conversation, options=options)
                 if fallback_data is None:
                     raise
     except httpx.HTTPStatusError as exc:
+        _record_upstream_response(entry=entry, kind=kind, model=model, method="POST", url=url, headers=headers, status_code=exc.response.status_code, response_headers=dict(exc.response.headers), response_body=exc.response.content, elapsed_ms=(time.perf_counter() - started) * 1000)
         error = _upstream_error(exc)
         store.add_assistant_message(conversation, error=error.detail["message"] if isinstance(error.detail, dict) else str(error.detail))
         store.save(conversation)
         raise error
     except httpx.TimeoutException as exc:
         message = f"HTTP 504: upstream request timed out after {timeout}s"
+        _record_upstream_response(entry=entry, kind=kind, model=model, method="POST", url=url, headers=headers, status_code=504, response_headers={}, response_body=message, elapsed_ms=(time.perf_counter() - started) * 1000)
         store.add_assistant_message(conversation, error=message)
         store.save(conversation)
         raise HTTPException(status_code=504, detail=_error_detail(message, "upstream_timeout")) from exc
     except httpx.HTTPError as exc:
         message = str(exc)
+        _record_upstream_response(entry=entry, kind=kind, model=model, method="POST", url=url, headers=headers, status_code=502, response_headers={}, response_body=message, elapsed_ms=(time.perf_counter() - started) * 1000)
         store.add_assistant_message(conversation, error=message)
         store.save(conversation)
         raise HTTPException(status_code=502, detail=_error_detail(message, "upstream_error")) from exc
 
     data = fallback_data if fallback_data is not None else response_data
-    parsed = parse_responses_output(data if isinstance(data, dict) else {})
+    parsed = parse_responses_output(data if isinstance(data, dict) else {}) if fallback_data is not None else parse_local_studio_output(mode, data if isinstance(data, dict) else {})
     images = store.save_response_images(parsed["image_candidates"])
-    if not images and fallback_data is None and options.get("image_tool_enabled"):
+    if mode == "responses" and not images and fallback_data is None and options.get("image_tool_enabled"):
         try:
             async with _new_http_client(timeout) as client:
                 fallback_data = await _call_images_generation_fallback(client=client, base_url=base_url, token=token, conversation=conversation, options=options)
@@ -299,4 +476,90 @@ async def chat(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     content = parsed["content"] or ("Generated image" if images else "")
     store.add_assistant_message(conversation, content=content or "(no response content)", thinking=parsed["thinking"], usage=parsed["usage"], images=images)
     saved = store.save(conversation)
-    return {"conversation": saved, "request": request_body, "elapsed_ms": elapsed_ms, "upstream_id": data.get("id") if isinstance(data, dict) else None}
+    return {"conversation": saved, "request": request_body, "elapsed_ms": elapsed_ms, "upstream_id": data.get("id") if isinstance(data, dict) else None, "interface_mode": mode}
+
+
+async def _stream_local_studio_chat(
+    *,
+    store: LocalStudioStore,
+    conversation: dict[str, Any],
+    base_url: str,
+    token: str,
+    timeout: int,
+    mode: str,
+    model: str,
+    request_body: dict[str, Any],
+):
+    path = local_studio_chat_path(mode, model, stream=True)
+    url = upstream_url(base_url, path)
+    headers = _auth_headers(token)
+    kind = f"local_studio_{mode}_stream"
+    entry = _record_upstream_request(kind=kind, model=model, method="POST", url=url, headers=headers, body=request_body)
+    started = time.perf_counter()
+    response_chunks: list[bytes] = []
+    content_parts: list[str] = []
+    thinking_parts: list[str] = []
+    usage: dict[str, Any] | None = None
+    error_message = ""
+    status_code = 0
+    response_headers: dict[str, str] = {}
+
+    try:
+        async with _new_http_client(timeout) as client:
+            async with client.stream("POST", url, headers=headers, json=request_body) as response:
+                status_code = response.status_code
+                response_headers = dict(response.headers)
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    raw = (line + "\n").encode("utf-8")
+                    response_chunks.append(raw)
+                    if not line:
+                        continue
+                    if line.startswith("data: "):
+                        data_text = line[6:].strip()
+                        if data_text == "[DONE]":
+                            continue
+                        try:
+                            event = json.loads(data_text)
+                        except json.JSONDecodeError:
+                            continue
+                        parsed = parse_local_studio_stream_event(mode, event if isinstance(event, dict) else {})
+                        if parsed.get("error"):
+                            error_message = str(parsed["error"])
+                        if parsed.get("content"):
+                            content_parts.append(str(parsed["content"]))
+                        if parsed.get("thinking"):
+                            thinking_parts.append(str(parsed["thinking"]))
+                        if isinstance(parsed.get("usage"), dict):
+                            usage = dict(parsed["usage"])
+                        delta = {"type": "local_studio.delta", "content": parsed.get("content") or "", "thinking": parsed.get("thinking") or "", "usage": parsed.get("usage") or None, "error": parsed.get("error") or ""}
+                        if delta["content"] or delta["thinking"] or delta["usage"] or delta["error"]:
+                            yield f"data: {json.dumps(delta, ensure_ascii=False)}\n\n".encode("utf-8")
+    except httpx.HTTPStatusError as exc:
+        status_code = exc.response.status_code
+        response_headers = dict(exc.response.headers)
+        response_chunks.append(exc.response.content)
+        error = _upstream_error(exc)
+        error_message = error.detail["message"] if isinstance(error.detail, dict) else str(error.detail)
+        yield f"data: {json.dumps({'type':'error','error':{'message':error_message}}, ensure_ascii=False)}\n\n".encode("utf-8")
+    except httpx.TimeoutException:
+        status_code = 504
+        error_message = f"HTTP 504: upstream request timed out after {timeout}s"
+        response_chunks.append(error_message.encode("utf-8"))
+        yield f"data: {json.dumps({'type':'error','error':{'message':error_message}}, ensure_ascii=False)}\n\n".encode("utf-8")
+    except httpx.HTTPError as exc:
+        status_code = 502
+        error_message = str(exc)
+        response_chunks.append(error_message.encode("utf-8"))
+        yield f"data: {json.dumps({'type':'error','error':{'message':error_message}}, ensure_ascii=False)}\n\n".encode("utf-8")
+    finally:
+        elapsed_ms = round((time.perf_counter() - started) * 1000)
+        response_body = b"".join(response_chunks)
+        _record_upstream_response(entry=entry, kind=kind, model=model, method="POST", url=url, headers=headers, status_code=status_code or 200, response_headers=response_headers, response_body=response_body, elapsed_ms=elapsed_ms)
+        if error_message:
+            store.add_assistant_message(conversation, error=error_message)
+        else:
+            store.add_assistant_message(conversation, content="".join(content_parts).strip() or "(no response content)", thinking="\n".join(part for part in thinking_parts if part).strip(), usage=usage)
+        saved = store.save(conversation)
+        done = {"type": "local_studio.completed", "conversation": saved, "elapsed_ms": elapsed_ms, "interface_mode": mode}
+        yield f"data: {json.dumps(done, ensure_ascii=False)}\n\n".encode("utf-8")

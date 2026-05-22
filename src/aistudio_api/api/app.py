@@ -128,7 +128,23 @@ app = FastAPI(title="AI Studio API", lifespan=lifespan)
 
 def _should_log_api_exchange(request: Request) -> bool:
     path = request.url.path
-    return path == "/v1" or path.startswith("/v1/") or path.startswith("/v1beta/")
+    return path == "/v1" or path.startswith("/v1/") or path.startswith("/v1beta/") or path in {"/api/local-studio/models", "/api/local-studio/chat"}
+
+
+def _redact_logged_request_body(path: str, body: bytes) -> bytes:
+    if not path.startswith("/api/local-studio/"):
+        return body
+    try:
+        payload = json.loads(body.decode("utf-8")) if body else None
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return body
+    if not isinstance(payload, dict):
+        return body
+    redacted = dict(payload)
+    for key in ("api_key", "apiKey", "token"):
+        if redacted.get(key):
+            redacted[key] = "***"
+    return json.dumps(redacted, ensure_ascii=False).encode("utf-8")
 
 
 def _request_model_from_body(request: Request, body: bytes) -> str:
@@ -163,6 +179,7 @@ async def request_log_exchange_middleware(request: Request, call_next):
         return await call_next(request)
 
     request_body = await request.body()
+    logged_request_body = _redact_logged_request_body(request.url.path, request_body)
     request_sent = False
 
     async def receive_logged_body():
@@ -185,7 +202,7 @@ async def request_log_exchange_middleware(request: Request, call_next):
                 method=request.method,
                 url=str(request.url),
                 headers=request.headers,
-                body=request_body,
+                body=logged_request_body,
                 transport="http",
                 chain_id=chain_id,
                 direction="inbound",

@@ -9,10 +9,13 @@ from aistudio_api.config import settings
 from aistudio_api.infrastructure.local_studio import (
     GPT_IMAGE_2_SIZE_OPTIONS,
     LocalStudioStore,
+    build_local_studio_chat_payload,
     build_images_generation_payload,
     build_responses_payload,
     filter_chat_models,
+    local_studio_chat_path,
     normalize_openai_base_url,
+    parse_local_studio_output,
     validate_gpt_image_2_size,
 )
 
@@ -49,10 +52,40 @@ def test_filter_chat_models_excludes_image_only_models():
     assert [model["id"] for model in filtered] == ["gpt-5.4-mini", "compatible-chat"]
 
 
+def test_local_studio_protocol_paths_payloads_and_parsers():
+    messages = [{"role": "user", "content": "hello"}]
+
+    assert local_studio_chat_path("openai", "gpt-test") == "/chat/completions"
+    assert local_studio_chat_path("responses", "gpt-test") == "/responses"
+    assert local_studio_chat_path("gemini", "gemini-test", stream=True) == "/models/gemini-test:streamGenerateContent"
+    assert local_studio_chat_path("claude", "claude-test") == "/messages"
+
+    openai_payload = build_local_studio_chat_payload(mode="openai", model="gpt-test", messages=messages, options={"stream": True, "max_tokens": 12, "reasoning_effort": "low"})
+    responses_payload = build_local_studio_chat_payload(mode="responses", model="gpt-test", messages=messages, options={"stream": True})
+    gemini_payload = build_local_studio_chat_payload(mode="gemini", model="gemini-test", messages=messages, options={"stream": True, "reasoning_effort": "medium"})
+    claude_payload = build_local_studio_chat_payload(mode="claude", model="claude-test", messages=messages, options={"stream": True, "max_tokens": 12, "reasoning_effort": "high"})
+
+    assert openai_payload["messages"] == [{"role": "user", "content": [{"type": "text", "text": "hello"}]}]
+    assert openai_payload["stream"] is True
+    assert openai_payload["thinking"] == "low"
+    assert responses_payload["input"] == [{"role": "user", "content": [{"type": "input_text", "text": "hello"}]}]
+    assert responses_payload["stream"] is True
+    assert gemini_payload["contents"] == [{"role": "user", "parts": [{"text": "hello"}]}]
+    assert gemini_payload["generationConfig"]["thinkingConfig"] == [1, None, None, 2]
+    assert claude_payload["messages"] == [{"role": "user", "content": [{"type": "text", "text": "hello"}]}]
+    assert claude_payload["max_tokens"] == 12
+    assert claude_payload["thinking"] == "high"
+
+    assert parse_local_studio_output("openai", {"choices": [{"message": {"content": "ok"}}], "usage": {"total_tokens": 2}})["content"] == "ok"
+    assert parse_local_studio_output("responses", {"output_text": "ok"})["content"] == "ok"
+    assert parse_local_studio_output("gemini", {"candidates": [{"content": {"parts": [{"text": "ok"}]}}]})["content"] == "ok"
+    assert parse_local_studio_output("claude", {"content": [{"type": "text", "text": "ok"}]})["content"] == "ok"
+
+
 def test_local_studio_conversation_routes_round_trip_and_bulk_delete(tmp_path):
     app, old_dir = local_studio_app(tmp_path)
     try:
-        created = request_app(app, "POST", "/api/local-studio/conversations", json={"title": "Draft", "model": "gpt-5.4-mini"})
+        created = request_app(app, "POST", "/api/local-studio/conversations", json={"title": "Draft", "model": "gpt-5.4-mini", "interface_mode": "claude"})
         assert created.status_code == 200
         conversation = created.json()
 
@@ -63,8 +96,11 @@ def test_local_studio_conversation_routes_round_trip_and_bulk_delete(tmp_path):
         missing = request_app(app, "GET", f"/api/local-studio/conversations/{conversation['id']}")
 
         assert patched.json()["title"] == "Renamed"
+        assert patched.json()["interface_mode"] == "claude"
         assert listed.json()["data"][0]["title"] == "Renamed"
+        assert listed.json()["data"][0]["interface_mode"] == "claude"
         assert fetched.json()["model"] == "gpt-5.4-mini"
+        assert fetched.json()["interface_mode"] == "claude"
         assert deleted.json()["deleted"] == [conversation["id"]]
         assert deleted.json()["missing"] == ["missing"]
         assert missing.status_code == 404
@@ -178,6 +214,10 @@ def test_chat_route_posts_responses_payload_and_persists_reply(tmp_path, monkeyp
     captured = {}
 
     class FakeResponse:
+        status_code = 200
+        headers = {"content-type": "application/json"}
+        content = b'{"id":"resp_1","output_text":"hello from upstream","usage":{"input_tokens":3,"output_tokens":4}}'
+
         def raise_for_status(self):
             return None
 
@@ -228,6 +268,61 @@ def test_chat_route_posts_responses_payload_and_persists_reply(tmp_path, monkeyp
     assert body["conversation"]["messages"][-1]["usage"]["input_tokens"] == 3
 
 
+def test_chat_route_posts_selected_interface_mode_and_timeout(tmp_path, monkeypatch):
+    app, old_dir = local_studio_app(tmp_path)
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"content-type": "application/json"}
+        content = b'{"choices":[{"message":{"content":"hello chat"}}],"usage":{"prompt_tokens":1,"completion_tokens":2}}'
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": "hello chat"}}], "usage": {"prompt_tokens": 1, "completion_tokens": 2}}
+
+    class FakeClient:
+        def __init__(self, timeout):
+            captured["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def post(self, url, headers, json):
+            captured["url"] = url
+            captured["json"] = json
+            return FakeResponse()
+
+    monkeypatch.setattr(routes_local_studio, "_new_http_client", FakeClient)
+    try:
+        response = request_app(
+            app,
+            "POST",
+            "/api/local-studio/chat",
+            json={
+                "base_url": "http://compat.example/v1",
+                "timeout": 7,
+                "interface_mode": "openai",
+                "model": "gpt-5.4-mini",
+                "message": "hello",
+                "options": {"stream": False},
+            },
+        )
+    finally:
+        settings.local_studio_dir = old_dir
+
+    assert response.status_code == 200
+    assert captured["timeout"] == 7
+    assert captured["url"] == "http://compat.example/v1/chat/completions"
+    assert captured["json"]["messages"][0]["content"][0]["text"] == "hello"
+    assert response.json()["conversation"]["messages"][-1]["content"] == "hello chat"
+
+
 def test_chat_route_falls_back_to_images_api_for_image_tool(tmp_path, monkeypatch):
     app, old_dir = local_studio_app(tmp_path)
     captured = []
@@ -235,6 +330,9 @@ def test_chat_route_falls_back_to_images_api_for_image_tool(tmp_path, monkeypatc
     class FakeResponse:
         def __init__(self, payload):
             self.payload = payload
+            self.status_code = 200
+            self.headers = {"content-type": "application/json"}
+            self.content = b'{"created":1,"data":[{"b64_json":"ZmFrZQ=="}]}'
 
         def raise_for_status(self):
             return None
@@ -290,6 +388,10 @@ def test_chat_route_falls_back_to_images_api_for_responses_transport_error(tmp_p
     captured = []
 
     class FakeResponse:
+        status_code = 200
+        headers = {"content-type": "application/json"}
+        content = b'{"data":[{"b64_json":"ZmFrZQ=="}]}'
+
         def raise_for_status(self):
             return None
 

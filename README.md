@@ -62,14 +62,18 @@ aistudio-api-server --port 8080 --camoufox-port 9222
 服务启动后根路径会跳转到 `/static/index.html`。
 
 - `#chat`：模型调试 Playground，支持模型能力感知的参数控制、附件上传、流式输出、搜索、Thinking 和结构化输出测试
-- `#studio`：OpenAI Local Studio，可连接 OpenAI 或兼容 `/v1` 地址，使用 Responses API 对话、附件、本地会话和 `gpt-image-2` 图片工具
+- `#studio`：OpenAI Local Studio，可连接 OpenAI 或兼容 `/v1` 地址，并可在 OpenAI Chat、OpenAI Responses、Gemini、Claude 模式间切换；支持流式输出、token 统计、附件、本地会话和 Responses 模式下的 `gpt-image-2` 图片工具
 - `#images`：图片生成与编辑工作台，支持尺寸/数量选择、参考图、历史素材、会话保存与恢复
 - `#requests`：请求记录，支持保存、查看、导出和批量删除完整请求生命周期
 - `#accounts`：账号管理，支持登录、切换、健康检查、等级标记、轮询模式、运行统计、凭证导入/导出
 
-### OpenAI Local Studio 图片工具
+### OpenAI Local Studio
 
-`#studio` 的对话模型列表会隐藏 `gpt-image-*`、音频、实时、TTS、转写和 embedding 等专用模型，避免误选非聊天入口。图片工具固定使用 `gpt-image-2`，尺寸选项按 OpenAI 官方 prompting guide 约束提供：`1024x1024`、`1024x1536`、`1536x1024`、`1536x864`、`2560x1440`、`3824x2144`，也可输入自定义 `WIDTHxHEIGHT`。本地会在发送前校验两边必须是 16 的倍数、最长边小于 `3840px`、长短边比例不超过 `3:1`、总像素在 `655,360` 到 `8,294,400` 之间。超过 `2560x1440` 的输出按官方说明视为实验性尺寸。
+`#studio` 的接口模式与 Playground 独立，可自由选择 OpenAI Chat Completions、OpenAI Responses、Gemini 或 Claude Messages。模型列表、能力标记、推理/流式开关和 token 统计会按当前模式工作；发送后输入框会立即清空，请求记录开启时也会保存 Local Studio 的客户端请求、上游请求、上游响应和客户端响应阶段，便于排查兼容服务问题。
+
+#### 图片工具
+
+Responses 模式下的对话模型列表会隐藏 `gpt-image-*`、音频、实时、TTS、转写和 embedding 等专用模型，避免误选非聊天入口。图片工具固定使用 `gpt-image-2`，尺寸选项按 OpenAI 官方 prompting guide 约束提供：`1024x1024`、`1024x1536`、`1536x1024`、`1536x864`、`2560x1440`、`3824x2144`，也可输入自定义 `WIDTHxHEIGHT`。本地会在发送前校验两边必须是 16 的倍数、最长边小于 `3840px`、长短边比例不超过 `3:1`、总像素在 `655,360` 到 `8,294,400` 之间。超过 `2560x1440` 的输出按官方说明视为实验性尺寸。
 
 ## 认证与账号
 

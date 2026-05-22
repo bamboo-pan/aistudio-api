@@ -62,14 +62,18 @@ The local root wrapper `python main.py ...` and the installed `aistudio-api ...`
 The service root redirects to `/static/index.html`.
 
 - `#chat`: model Playground with capability-aware controls, attachments, streaming, Search, Thinking, and structured-output tests
-- `#studio`: OpenAI Local Studio for OpenAI or compatible `/v1` endpoints, Responses API chat, attachments, local conversations, and the `gpt-image-2` image tool
+- `#studio`: OpenAI Local Studio for OpenAI or compatible `/v1` endpoints, with selectable OpenAI Chat, OpenAI Responses, Gemini, and Claude modes plus streaming, token usage, attachments, local conversations, and the `gpt-image-2` image tool in Responses mode
 - `#images`: image generation/editing studio with size/count controls, reference images, material history, and saved sessions
 - `#requests`: request logs with complete lifecycle viewing, export, and bulk deletion
 - `#accounts`: account management with login, switching, health checks, tier labels, rotation modes, runtime stats, and credential import/export
 
-### OpenAI Local Studio Image Tool
+### OpenAI Local Studio
 
-The `#studio` conversation model list hides specialist models such as `gpt-image-*`, audio, realtime, TTS, transcription, and embedding models so the default choice stays chat-oriented. The image tool uses fixed model `gpt-image-2`. Its size options follow the OpenAI prompting guide constraints: `1024x1024`, `1024x1536`, `1536x1024`, `1536x864`, `2560x1440`, and `3824x2144`, plus a custom `WIDTHxHEIGHT` field. The server validates custom sizes before sending them upstream: both edges must be multiples of 16, the longest edge must be less than `3840px`, the long-to-short-edge ratio must be at most `3:1`, and total pixels must be between `655,360` and `8,294,400`. Outputs above `2560x1440` are treated as experimental.
+The `#studio` interface mode is independent from the Playground and can be switched between OpenAI Chat Completions, OpenAI Responses, Gemini, and Claude Messages. Model loading, capability badges, reasoning/stream controls, and token usage follow the selected mode. Accepted sends clear the input immediately, and when request logging is enabled the Local Studio client request, upstream request, upstream response, and client response are saved in the same lifecycle view for compatible-service debugging.
+
+#### Image Tool
+
+In Responses mode, the `#studio` conversation model list hides specialist models such as `gpt-image-*`, audio, realtime, TTS, transcription, and embedding models so the default choice stays chat-oriented. The image tool uses fixed model `gpt-image-2`. Its size options follow the OpenAI prompting guide constraints: `1024x1024`, `1024x1536`, `1536x1024`, `1536x864`, `2560x1440`, and `3824x2144`, plus a custom `WIDTHxHEIGHT` field. The server validates custom sizes before sending them upstream: both edges must be multiples of 16, the longest edge must be less than `3840px`, the long-to-short-edge ratio must be at most `3:1`, and total pixels must be between `655,360` and `8,294,400`. Outputs above `2560x1440` are treated as experimental.
 
 ## Authentication And Accounts
 

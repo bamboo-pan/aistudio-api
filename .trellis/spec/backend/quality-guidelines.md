@@ -34,29 +34,37 @@ Questions to answer:
 
 (To be filled by the team)
 
-## Scenario: OpenAI Local Studio API and Image Tool Fallback
+## Scenario: OpenAI Local Studio API, Interface Modes, and Image Tool Fallback
 
 ### 1. Scope / Trigger
 
-- Trigger: Code changes `src/aistudio_api/api/routes_local_studio.py`, `src/aistudio_api/infrastructure/local_studio.py`, `AISTUDIO_LOCAL_STUDIO_DIR`, or the static `#studio` OpenAI Local Studio workbench.
-- Use this contract for server-side local conversation persistence, arbitrary OpenAI-compatible `/v1` forwarding, attachment storage, and `gpt-image-2` image-tool behavior.
+- Trigger: Code changes `src/aistudio_api/api/routes_local_studio.py`, `src/aistudio_api/infrastructure/local_studio.py`, `src/aistudio_api/api/app.py` request-log eligibility, `AISTUDIO_LOCAL_STUDIO_DIR`, or the static `#studio` OpenAI Local Studio workbench.
+- Use this contract for server-side local conversation persistence, arbitrary compatible endpoint forwarding, selectable OpenAI Chat / OpenAI Responses / Gemini / Claude interface modes, attachment storage, request-log capture, and Responses-mode `gpt-image-2` image-tool behavior.
 
 ### 2. Signatures
 
 - `AISTUDIO_LOCAL_STUDIO_DIR` defaults to `data/local-studio` and stores `conversations/*.json` plus `files/<yyyymmdd>/<asset-id>.<ext>`.
-- `POST /api/local-studio/models` accepts `{"base_url": str, "api_key"?: str, "timeout"?: int}` and returns OpenAI-compatible `{"object": "list", "data": list[model]}`.
+- `POST /api/local-studio/models` accepts `{"base_url": str, "api_key"?: str, "timeout"?: int, "interface_mode"?: "openai"|"responses"|"gemini"|"claude"}` and returns `{"object": "list", "data": list[model], "interface_mode": str}`.
 - `GET/POST/PATCH/DELETE /api/local-studio/conversations` and `POST /api/local-studio/conversations/bulk-delete {"ids": string[]}` manage local JSON conversations.
 - `GET /api/local-studio/assets/{asset_path:path}` serves generated/uploaded local assets after path containment validation.
-- `POST /api/local-studio/chat` accepts connection settings, `model`, optional `conversation_id`, `message`, `files`, `options`, and optional `rerun_from`.
-- Payload helpers: `build_responses_payload(...)`, `build_images_generation_payload(prompt, options)`, `validate_gpt_image_2_size(value)`, and `parse_responses_output(payload)`.
+- `POST /api/local-studio/chat` accepts connection settings, `interface_mode`, `model`, optional `conversation_id`, `message`, `files`, `options`, and optional `rerun_from`.
+- Non-stream chat returns `{"conversation": ..., "request": ..., "elapsed_ms": int, "upstream_id"?: str, "interface_mode": str}`. Stream chat returns Server-Sent Events with `local_studio.delta` and final `local_studio.completed` events.
+- Payload helpers: `normalize_interface_mode(...)`, `local_studio_models_path(mode)`, `local_studio_chat_path(mode, model, stream=False)`, `build_local_studio_chat_payload(...)`, `parse_local_studio_output(...)`, `parse_local_studio_stream_event(...)`, `build_responses_payload(...)`, `build_images_generation_payload(prompt, options)`, `validate_gpt_image_2_size(value)`, and `parse_responses_output(payload)`.
 
 ### 3. Contracts
 
-- `base_url` must already point at an OpenAI-compatible `/v1` root; route helpers append `/models`, `/responses`, or `/images/generations`.
+- `base_url` must point at the selected provider root: `/v1` for OpenAI Chat, Responses, and Claude-compatible routes; `/v1beta` or an equivalent Gemini root for Gemini routes. Route helpers append `/models`, `/chat/completions`, `/responses`, `/models/{model}:generateContent`, `/models/{model}:streamGenerateContent`, `/messages`, or `/images/generations` according to `interface_mode`.
+- `interface_mode` defaults to `responses` when omitted and must be one of `openai`, `responses`, `gemini`, or `claude`. Store the selected mode on Local Studio conversations and summaries so restoring a conversation restores its protocol.
 - API tokens are runtime-only request fields. They must not be persisted to conversation files, docs, tests, or task artifacts.
 - Tokens must be a single header line. Reject newline-containing tokens before making any upstream request.
-- `/models` must hide image-only and specialist non-chat ids from the conversation picker: `gpt-image-*`, audio, realtime, TTS, transcription, and embedding models.
-- Chat first builds a Responses request and calls `/responses`. When the `gpt-image-2` image tool is enabled and the Responses image tool fails by HTTP status, transport failure, or no image candidates, call `/images/generations` with the latest user prompt and matching image options.
+- `/models` must hide image-only and specialist non-chat ids from the conversation picker: `gpt-image-*`, audio, realtime, TTS, transcription, and embedding models. Gemini model ids may arrive as `models/{id}` and must be normalized to picker ids without the prefix.
+- Model rows returned to the UI must include capability metadata or have default capabilities inferred for text, files, reasoning, streaming, tools, structured output, and Gemini safety controls.
+- Chat payloads must be mode-specific: OpenAI Chat -> `/chat/completions` `messages`; Responses -> `/responses` `input`; Gemini -> `contents` plus optional `generationConfig`; Claude -> `/messages` `messages` and `max_tokens`.
+- Stream mode must set the provider stream flag when supported and normalize provider SSE chunks to `local_studio.delta` events. The final event must include the saved conversation as `local_studio.completed`.
+- Request logging must include `/api/local-studio/models` and `/api/local-studio/chat` client requests plus manually recorded upstream request/response phases. Client `api_key`, `apiKey`, and `token` body fields and upstream `Authorization` headers must be redacted.
+- The `timeout` setting must be passed into every Local Studio upstream client, including model list, non-stream chat, stream chat, and image fallback.
+- The static UI must clear an accepted Local Studio draft immediately after send, restore it on non-rerun failure, and keep stream/non-stream, interface mode, reasoning, model, and image settings in `openai.localStudio.settings.v1`.
+- The `gpt-image-2` image tool is Responses-mode only. When enabled and the Responses image tool fails by HTTP status, transport failure, or no image candidates, call `/images/generations` with the latest user prompt and matching image options.
 - Generated image bytes from `b64_json`, `b64`, `result`, or data URLs must be saved under `AISTUDIO_LOCAL_STUDIO_DIR/files` and returned with `/api/local-studio/assets/...` URLs.
 - Uploaded attachments are accepted as data URLs, saved locally, stripped of heavy inline fields in persisted JSON, and rehydrated as Responses `input_image` or `input_file` blocks when sent upstream.
 - Rerun truncates the conversation to the selected previous user turn before rebuilding the Responses payload.
@@ -65,6 +73,7 @@ Questions to answer:
 ### 4. Validation & Error Matrix
 
 - Empty/non-HTTP `base_url` -> HTTP 400 `invalid_request_error`.
+- Unknown `interface_mode` -> HTTP 400 `invalid_request_error` listing the allowed values.
 - Multiline `api_key`/`token` -> HTTP 400 `API token must be a single line` without echoing the token value.
 - Missing `model` -> HTTP 400 `model is required`.
 - Missing `message` and no files for a non-rerun chat -> HTTP 400 `message or files are required`.
@@ -76,7 +85,10 @@ Questions to answer:
 
 ### 5. Good/Base/Bad Cases
 
-- Good: Real compatible endpoint returns models including `gpt-image-2` and audio ids; Local Studio returns chat-capable ids only and defaults to a text/chat model.
+- Good: Real compatible endpoint returns models including `gpt-image-2` and audio ids; Local Studio returns chat-capable ids only, includes capability badges, and defaults to a text/chat model for the selected interface mode.
+- Good: User switches `interface_mode` from OpenAI Chat to Gemini; model loading calls the Gemini models route shape, chat calls `:generateContent`, token usage is normalized, and restoring the conversation restores Gemini mode.
+- Good: Responses stream emits provider chunks; backend emits incremental `local_studio.delta`, frontend renders the assistant placeholder while streaming, and final persistence arrives via `local_studio.completed`.
+- Good: Request logs enabled; a Local Studio chat group contains client request, upstream request, upstream response, and client response phases without API token leakage.
 - Good: Responses image tool returns `image_generation_call.result`; the image is saved locally and rendered in the UI.
 - Good: Responses image tool fails or returns no image candidate; `/images/generations` succeeds and the generated image is saved locally.
 - Good: User enters custom `3824x2144`; local validation accepts it as near-4K under the `<3840` edge rule.
@@ -86,32 +98,51 @@ Questions to answer:
 
 ### 6. Tests Required
 
-- Unit: model filtering excludes `gpt-image-*` and specialist non-chat ids.
+- Unit: model filtering excludes `gpt-image-*` and specialist non-chat ids for each interface mode and normalizes Gemini `models/{id}` names.
+- Unit: interface-mode payload routing, upstream paths, response parsers, stream parsers, timeout propagation, and conversation `interface_mode` persistence for OpenAI Chat, Responses, Gemini, and Claude.
 - Unit: conversation CRUD, bulk delete, asset path containment, and rerun truncation.
 - Unit: Responses payload construction includes attachment blocks, reasoning, and image-generation tool options.
 - Unit: `gpt-image-2` official size options and invalid custom sizes.
 - Unit: chat persists assistant errors for upstream 524/timeouts and rejects multiline tokens without leaking secrets.
 - Unit: fallback to `/images/generations` for Responses HTTP failures, transport failures, and no image candidates.
-- Static: `#studio` route/sidebar, Local Studio controls, official size list, custom size, and no `3840x2160` option.
+- Unit: request-log middleware records Local Studio client/upstream/client response phases and redacts client tokens plus upstream Authorization headers.
+- Static: `#studio` route/sidebar, Local Studio interface selector, stream toggle, capability grid, immediate draft clearing, official size list, custom size, Responses-only image panel, and no `3840x2160` option.
 - Static syntax: when editing `src/aistudio_api/static/app.js`, run `node --check src/aistudio_api/static/app.js`.
-- Real: WSL API smoke with a runtime-only key file must load models, reject `3840x2160`, generate a `1536x864` image, persist it, and retrieve the local asset.
-- Real: Browser UI smoke must open `#studio`, load models, send an image-tool request, and verify the rendered image has non-zero natural dimensions.
+- Real: WSL API smoke with real account data must verify original Playground OpenAI Chat, Responses, Gemini, and Claude routes still return text/stream/usage as applicable.
+- Real: WSL API smoke must verify Local Studio OpenAI Chat, Responses, Gemini, Claude, stream mode, timeout settings, request logs, and runtime-only compatible key credentials. If the key file stores `base_url` plus token on separate lines, pass them as separate request fields; never pass the whole file as one Authorization value.
+- Real: Browser UI smoke must open `#chat`, send a Playground message, then open `#studio`, load models, send a streamed Local Studio message, verify the draft clears and token usage renders, and open `#requests` to confirm Local Studio request groups.
+- Real image path: when image-tool code changes, WSL API smoke must reject `3840x2160`, generate a `1536x864` image, persist it, retrieve the local asset, and browser UI must verify the rendered image has non-zero natural dimensions.
 
 ### 7. Wrong vs Correct
 
 #### Wrong
 
 ```python
-token = Path(key_file).read_text()
-headers = {"Authorization": f"Bearer {token}"}
+key_file = Path("key.txt").read_text()
+payload = {"base_url": "https://api.openai.com/v1", "api_key": key_file}
 ```
 
 #### Correct
 
 ```python
+base_url = str(payload.get("base_url") or "").strip()
 token = str(payload.get("api_key") or "").strip()
 if "\n" in token or "\r" in token:
 	raise HTTPException(status_code=400, detail={"message": "API token must be a single line"})
+```
+
+#### Wrong
+
+```python
+response = await client.post(upstream_url(base_url, "/responses"), json=request_body)
+```
+
+#### Correct
+
+```python
+path = local_studio_chat_path(interface_mode, model, stream=stream)
+request_body = build_local_studio_chat_payload(mode=interface_mode, model=model, messages=messages, options=options)
+response = await client.post(upstream_url(base_url, path), json=request_body)
 ```
 
 #### Wrong

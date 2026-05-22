@@ -353,6 +353,68 @@ def test_api_exchange_logging_records_correlated_client_and_upstream_entries(tmp
     assert client_response["response_body_json"]["choices"][0]["message"]["content"] == "ok"
 
 
+def test_api_exchange_logging_records_local_studio_and_redacts_token(tmp_path, monkeypatch):
+    from aistudio_api.api import routes_local_studio
+
+    store = RequestLogStore(tmp_path)
+    store.set_enabled(True)
+    secret = "sk-local-secret"
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"content-type": "application/json"}
+        content = b'{"choices":[{"message":{"content":"ok"}}]}'
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    class FakeClient:
+        def __init__(self, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def post(self, url, headers, json):
+            return FakeResponse()
+
+    async def send() -> httpx.Response:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as http_client:
+            return await http_client.post(
+                "/api/local-studio/chat",
+                json={"base_url": "http://compat.example/v1", "api_key": secret, "interface_mode": "openai", "model": "gpt-test", "message": "hello"},
+            )
+
+    old_store = runtime_state.request_log_store
+    runtime_state.request_log_store = store
+    monkeypatch.setattr(routes_local_studio, "_new_http_client", FakeClient)
+    try:
+        before_ids = {item["id"] for item in store.list()}
+        response = asyncio.run(send())
+    finally:
+        runtime_state.request_log_store = old_store
+
+    assert response.status_code == 200
+    entries = [store.get(item["id"]) for item in store.list() if item["id"] not in before_ids]
+    phases = {entry["phase"] for entry in entries}
+    assert {"client_request", "upstream_request", "upstream_response", "client_response"}.issubset(phases)
+    chain_ids = {entry["chain_id"] for entry in entries}
+    assert len(chain_ids) == 1
+    raw = json.dumps(entries, ensure_ascii=False)
+    assert secret not in raw
+    client_request = next(entry for entry in entries if entry["phase"] == "client_request")
+    upstream_request = next(entry for entry in entries if entry["phase"] == "upstream_request")
+    assert client_request["body_json"]["api_key"] == "***"
+    assert upstream_request["headers"]["Authorization"] == "Bearer ***"
+
+
 async def _collect_stream_events(stream):
     events = []
     async for event in stream:
