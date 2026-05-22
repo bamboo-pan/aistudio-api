@@ -779,3 +779,36 @@ Restored playground regression safety and expanded Local Studio to OpenAI Chat, 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 24: Fix Local Studio inline image rendering
+
+**Date**: 2026-05-22
+**Task**: Fix Local Studio inline image rendering
+**Branch**: `master`
+
+### Summary
+
+Fixed Local Studio optimistic user-message rendering, persisted Responses image-tool stream assets, removed /images/generations fallback, and verified with unit plus WSL API/UI smoke tests.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ae1cc99` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
