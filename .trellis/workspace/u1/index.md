@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 23
+- **Total Sessions**: 24
 - **Last Active**: 2026-05-22
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~781 | Active |
+| `journal-1.md` | ~814 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 24 | 2026-05-22 | Fix Local Studio inline image rendering | `ae1cc99` | `master` |
 | 23 | 2026-05-22 | Fix Local Studio playground parity | `d43e64e` | `fix/local-studio-playground-parity` |
 | 22 | 2026-05-21 | Reimplement OpenAI Local Studio | `7a0ff6e` | `feature/reimplement-openai-local-studio` |
 | 21 | 2026-05-20 | Fix Responses tool call argument streaming | `97704f2` | `fix-duplicated-tool-call-arguments` |
