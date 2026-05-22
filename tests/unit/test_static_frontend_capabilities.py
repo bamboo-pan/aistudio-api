@@ -243,6 +243,9 @@ def test_static_frontend_exposes_openai_local_studio_workbench():
     assert "sendLocalStudioStream(body)" in app_js
     assert "local_studio.delta" in app_js
     assert "this.localStudioDraft=''" in app_js
+    assert "appendLocalStudioMessage" in app_js
+    assert "localStudioOptimisticFiles(files)" in app_js
+    assert "id:`local-user-${Date.now()}" in app_js
     assert "this.localStudioInterfaceMode=this.validInterfaceMode(this.localStudioConversation.interface_mode)" in app_js
     assert "startsWith('gpt-image-')" in app_js
     assert "gpt-image-2" in index_html
@@ -264,6 +267,8 @@ def test_static_frontend_exposes_openai_local_studio_workbench():
     assert "image_tool_enabled:this.localStudioInterfaceMode==='responses'&&this.localStudioImageToolEnabled" in app_js
     assert "rerunLocalStudioMessage(index)" in app_js
     assert "attachLocalStudioFiles" in app_js
+    assert "image.b64_json||image.b64||image.result" in app_js
+    assert "'/api/local-studio/assets/'" in app_js
     assert "localStudioMessageImages(message)" in index_html
     assert "localStudioAttachments(message)" in index_html
     assert ".local-studio-shell" in style_css

@@ -308,22 +308,6 @@ def build_image_generation_tool(options: Mapping[str, Any] | None) -> dict[str, 
     return tool
 
 
-def build_images_generation_payload(prompt: str, options: Mapping[str, Any] | None) -> dict[str, Any]:
-    text = str(prompt or "").strip()
-    if not text:
-        raise ValueError("image fallback prompt is required")
-    options = options or {}
-    payload: dict[str, Any] = {"model": "gpt-image-2", "prompt": text, "n": 1}
-    size = options.get("size")
-    if size not in (None, ""):
-        payload["size"] = validate_gpt_image_2_size(str(size))
-    for key in ("quality", "background", "output_format", "output_compression"):
-        value = options.get(key)
-        if value not in (None, "", "auto"):
-            payload[key] = value
-    return payload
-
-
 def build_responses_payload(
     *,
     model: str,
@@ -944,6 +928,7 @@ def parse_responses_stream_event(payload: Mapping[str, Any]) -> dict[str, Any]:
     content = ""
     thinking = ""
     usage = None
+    image_candidates: list[dict[str, Any]] = []
     if event_type == "response.output_text.delta":
         content = str(payload.get("delta") or "")
     elif event_type == "response.reasoning.delta":
@@ -952,10 +937,17 @@ def parse_responses_stream_event(payload: Mapping[str, Any]) -> dict[str, Any]:
         thinking = str(payload.get("text") or "")
     elif event_type == "response.completed" and isinstance(payload.get("response"), Mapping):
         response = payload["response"]
-        content = _response_output_text(response)
-        thinking = _response_output_thinking(response)
-        usage = response.get("usage") if isinstance(response.get("usage"), Mapping) else None
-    return {"content": content, "thinking": thinking, "usage": usage, "image_candidates": _image_candidates_from_mapping(payload)}
+        parsed = parse_responses_output(response)
+        content = parsed["content"]
+        thinking = parsed["thinking"]
+        usage = parsed["usage"]
+        image_candidates.extend(parsed["image_candidates"])
+    for key in ("item", "output_item"):
+        item = payload.get(key)
+        if isinstance(item, Mapping):
+            image_candidates.extend(_image_candidates_from_mapping(item))
+    image_candidates.extend(_image_candidates_from_mapping(payload))
+    return {"content": content, "thinking": thinking, "usage": usage, "image_candidates": image_candidates}
 
 
 def parse_gemini_output(payload: Mapping[str, Any]) -> dict[str, Any]:
