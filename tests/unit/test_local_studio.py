@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import httpx
 from fastapi import FastAPI
@@ -10,12 +11,12 @@ from aistudio_api.infrastructure.local_studio import (
     GPT_IMAGE_2_SIZE_OPTIONS,
     LocalStudioStore,
     build_local_studio_chat_payload,
-    build_images_generation_payload,
     build_responses_payload,
     filter_chat_models,
     local_studio_chat_path,
     normalize_openai_base_url,
     parse_local_studio_output,
+    parse_local_studio_stream_event,
     validate_gpt_image_2_size,
 )
 
@@ -191,24 +192,6 @@ def test_gpt_image_2_size_validation_rejects_invalid_constraints():
         raise AssertionError(f"expected {size} to be invalid")
 
 
-def test_build_images_generation_payload_uses_validated_gpt_image_2_options():
-    payload = build_images_generation_payload(
-        "make a smoke-test square",
-        {"size": "1536x864", "quality": "low", "background": "opaque", "output_format": "png", "output_compression": 90},
-    )
-
-    assert payload == {
-        "model": "gpt-image-2",
-        "prompt": "make a smoke-test square",
-        "n": 1,
-        "size": "1536x864",
-        "quality": "low",
-        "background": "opaque",
-        "output_format": "png",
-        "output_compression": 90,
-    }
-
-
 def test_chat_route_posts_responses_payload_and_persists_reply(tmp_path, monkeypatch):
     app, old_dir = local_studio_app(tmp_path)
     captured = {}
@@ -323,22 +306,9 @@ def test_chat_route_posts_selected_interface_mode_and_timeout(tmp_path, monkeypa
     assert response.json()["conversation"]["messages"][-1]["content"] == "hello chat"
 
 
-def test_chat_route_falls_back_to_images_api_for_image_tool(tmp_path, monkeypatch):
+def test_chat_route_image_tool_http_error_does_not_call_images_api(tmp_path, monkeypatch):
     app, old_dir = local_studio_app(tmp_path)
     captured = []
-
-    class FakeResponse:
-        def __init__(self, payload):
-            self.payload = payload
-            self.status_code = 200
-            self.headers = {"content-type": "application/json"}
-            self.content = b'{"created":1,"data":[{"b64_json":"ZmFrZQ=="}]}'
-
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return self.payload
 
     class FakeClient:
         def __init__(self, timeout):
@@ -352,11 +322,9 @@ def test_chat_route_falls_back_to_images_api_for_image_tool(tmp_path, monkeypatc
 
         async def post(self, url, headers, json):
             captured.append((url, json))
-            if url.endswith("/responses"):
-                request = httpx.Request("POST", url)
-                response = httpx.Response(502, request=request, text="tool unsupported")
-                raise httpx.HTTPStatusError("bad gateway", request=request, response=response)
-            return FakeResponse({"created": 1, "data": [{"b64_json": "ZmFrZQ=="}]})
+            request = httpx.Request("POST", url)
+            response = httpx.Response(502, request=request, text="tool unsupported")
+            raise httpx.HTTPStatusError("bad gateway", request=request, response=response)
 
     monkeypatch.setattr(routes_local_studio, "_new_http_client", FakeClient)
     try:
@@ -374,29 +342,14 @@ def test_chat_route_falls_back_to_images_api_for_image_tool(tmp_path, monkeypatc
     finally:
         settings.local_studio_dir = old_dir
 
-    body = response.json()
-    assert response.status_code == 200
-    assert [url for url, _ in captured] == ["http://compat.example/v1/responses", "http://compat.example/v1/images/generations"]
-    assert captured[1][1]["model"] == "gpt-image-2"
-    assert captured[1][1]["size"] == "1536x864"
-    assert body["conversation"]["messages"][-1]["content"] == "Generated image"
-    assert body["conversation"]["messages"][-1]["images"][0]["url"].startswith("/api/local-studio/assets/")
+    assert response.status_code == 502
+    assert [url for url, _ in captured] == ["http://compat.example/v1/responses"]
+    assert response.json()["detail"]["message"] == "HTTP 502: tool unsupported"
 
 
-def test_chat_route_falls_back_to_images_api_for_responses_transport_error(tmp_path, monkeypatch):
+def test_chat_route_image_tool_transport_error_does_not_call_images_api(tmp_path, monkeypatch):
     app, old_dir = local_studio_app(tmp_path)
     captured = []
-
-    class FakeResponse:
-        status_code = 200
-        headers = {"content-type": "application/json"}
-        content = b'{"data":[{"b64_json":"ZmFrZQ=="}]}'
-
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {"data": [{"b64_json": "ZmFrZQ=="}]}
 
     class FakeClient:
         def __init__(self, timeout):
@@ -410,9 +363,7 @@ def test_chat_route_falls_back_to_images_api_for_responses_transport_error(tmp_p
 
         async def post(self, url, headers, json):
             captured.append(url)
-            if url.endswith("/responses"):
-                raise httpx.ReadError("peer closed connection without sending complete message body")
-            return FakeResponse()
+            raise httpx.ReadError("peer closed connection without sending complete message body")
 
     monkeypatch.setattr(routes_local_studio, "_new_http_client", FakeClient)
     try:
@@ -430,9 +381,169 @@ def test_chat_route_falls_back_to_images_api_for_responses_transport_error(tmp_p
     finally:
         settings.local_studio_dir = old_dir
 
+    assert response.status_code == 502
+    assert captured == ["http://compat.example/v1/responses"]
+    assert "peer closed connection" in response.json()["detail"]["message"]
+
+
+def test_responses_stream_completed_event_extracts_image_candidates():
+    parsed = parse_local_studio_stream_event(
+        "responses",
+        {
+            "type": "response.completed",
+            "response": {
+                "output": [
+                    {"type": "message", "content": [{"type": "output_text", "text": "done"}]},
+                    {"type": "image_generation_call", "result": "ZmFrZQ=="},
+                ],
+                "usage": {"input_tokens": 1, "output_tokens": 2},
+            },
+        },
+    )
+
+    assert parsed["content"] == "done"
+    assert parsed["usage"] == {"input_tokens": 1, "output_tokens": 2}
+    assert parsed["image_candidates"] == [{"result": "ZmFrZQ==", "mime": "image/png"}]
+
+
+def test_stream_chat_persists_response_image_candidates(tmp_path, monkeypatch):
+    app, old_dir = local_studio_app(tmp_path)
+
+    class FakeStreamResponse:
+        status_code = 200
+        headers = {"content-type": "text/event-stream"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        async def aiter_lines(self):
+            events = [
+                {"type": "response.output_text.delta", "delta": "done"},
+                {
+                    "type": "response.completed",
+                    "response": {
+                        "output": [
+                            {"type": "message", "content": [{"type": "output_text", "text": "done"}]},
+                            {"type": "image_generation_call", "result": "ZmFrZQ=="},
+                        ],
+                        "usage": {"input_tokens": 1, "output_tokens": 2},
+                    },
+                },
+            ]
+            for event in events:
+                yield "data: " + json.dumps(event)
+                yield ""
+
+    class FakeClient:
+        def __init__(self, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        def stream(self, method, url, headers, json):
+            return FakeStreamResponse()
+
+    monkeypatch.setattr(routes_local_studio, "_new_http_client", FakeClient)
+    try:
+        response = request_app(
+            app,
+            "POST",
+            "/api/local-studio/chat",
+            json={
+                "base_url": "http://compat.example/v1",
+                "model": "gpt-5.4-mini",
+                "message": "make a cat image",
+                "options": {"stream": True, "image_tool_enabled": True},
+            },
+        )
+    finally:
+        settings.local_studio_dir = old_dir
+
     assert response.status_code == 200
-    assert captured == ["http://compat.example/v1/responses", "http://compat.example/v1/images/generations"]
-    assert response.json()["conversation"]["messages"][-1]["images"]
+    completed = [
+        json.loads(line[6:])
+        for line in response.text.splitlines()
+        if line.startswith("data: ") and json.loads(line[6:]).get("type") == "local_studio.completed"
+    ][0]
+    assistant = completed["conversation"]["messages"][-1]
+    assert assistant["content"] == "done"
+    assert assistant["images"][0]["url"].startswith("/api/local-studio/assets/")
+
+
+def test_stream_chat_image_tool_without_candidates_does_not_call_images_api(tmp_path, monkeypatch):
+    app, old_dir = local_studio_app(tmp_path)
+    captured_posts = []
+
+    class FakeStreamResponse:
+        status_code = 200
+        headers = {"content-type": "text/event-stream"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        async def aiter_lines(self):
+            yield 'data: {"type":"response.completed","response":{"output":[],"usage":{"input_tokens":1,"output_tokens":1}}}'
+            yield ""
+
+    class FakeClient:
+        def __init__(self, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        def stream(self, method, url, headers, json):
+            return FakeStreamResponse()
+
+        async def post(self, url, headers, json):
+            captured_posts.append((url, json))
+            raise AssertionError("Local Studio Responses image tool must not call /images/generations")
+
+    monkeypatch.setattr(routes_local_studio, "_new_http_client", FakeClient)
+    try:
+        response = request_app(
+            app,
+            "POST",
+            "/api/local-studio/chat",
+            json={
+                "base_url": "http://compat.example/v1",
+                "model": "gpt-5.4-mini",
+                "message": "make a cat image",
+                "options": {"stream": True, "image_tool_enabled": True, "size": "1536x864"},
+            },
+        )
+    finally:
+        settings.local_studio_dir = old_dir
+
+    completed = [
+        json.loads(line[6:])
+        for line in response.text.splitlines()
+        if line.startswith("data: ") and json.loads(line[6:]).get("type") == "local_studio.completed"
+    ][0]
+
+    assert response.status_code == 200
+    assert captured_posts == []
+    assert completed["conversation"]["messages"][-1]["content"] == "(no response content)"
+    assert completed["conversation"]["messages"][-1]["images"] == []
 
 
 def test_chat_route_surfaces_http_524_and_records_error(tmp_path, monkeypatch):

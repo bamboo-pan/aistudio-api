@@ -34,7 +34,7 @@ Questions to answer:
 
 (To be filled by the team)
 
-## Scenario: OpenAI Local Studio API, Interface Modes, and Image Tool Fallback
+## Scenario: OpenAI Local Studio API, Interface Modes, and Image Tool
 
 ### 1. Scope / Trigger
 
@@ -49,11 +49,11 @@ Questions to answer:
 - `GET /api/local-studio/assets/{asset_path:path}` serves generated/uploaded local assets after path containment validation.
 - `POST /api/local-studio/chat` accepts connection settings, `interface_mode`, `model`, optional `conversation_id`, `message`, `files`, `options`, and optional `rerun_from`.
 - Non-stream chat returns `{"conversation": ..., "request": ..., "elapsed_ms": int, "upstream_id"?: str, "interface_mode": str}`. Stream chat returns Server-Sent Events with `local_studio.delta` and final `local_studio.completed` events.
-- Payload helpers: `normalize_interface_mode(...)`, `local_studio_models_path(mode)`, `local_studio_chat_path(mode, model, stream=False)`, `build_local_studio_chat_payload(...)`, `parse_local_studio_output(...)`, `parse_local_studio_stream_event(...)`, `build_responses_payload(...)`, `build_images_generation_payload(prompt, options)`, `validate_gpt_image_2_size(value)`, and `parse_responses_output(payload)`.
+- Payload helpers: `normalize_interface_mode(...)`, `local_studio_models_path(mode)`, `local_studio_chat_path(mode, model, stream=False)`, `build_local_studio_chat_payload(...)`, `parse_local_studio_output(...)`, `parse_local_studio_stream_event(...)`, `build_responses_payload(...)`, `validate_gpt_image_2_size(value)`, and `parse_responses_output(payload)`.
 
 ### 3. Contracts
 
-- `base_url` must point at the selected provider root: `/v1` for OpenAI Chat, Responses, and Claude-compatible routes; `/v1beta` or an equivalent Gemini root for Gemini routes. Route helpers append `/models`, `/chat/completions`, `/responses`, `/models/{model}:generateContent`, `/models/{model}:streamGenerateContent`, `/messages`, or `/images/generations` according to `interface_mode`.
+- `base_url` must point at the selected provider root: `/v1` for OpenAI Chat, Responses, and Claude-compatible routes; `/v1beta` or an equivalent Gemini root for Gemini routes. Route helpers append `/models`, `/chat/completions`, `/responses`, `/models/{model}:generateContent`, `/models/{model}:streamGenerateContent`, or `/messages` according to `interface_mode`.
 - `interface_mode` defaults to `responses` when omitted and must be one of `openai`, `responses`, `gemini`, or `claude`. Store the selected mode on Local Studio conversations and summaries so restoring a conversation restores its protocol.
 - API tokens are runtime-only request fields. They must not be persisted to conversation files, docs, tests, or task artifacts.
 - Tokens must be a single header line. Reject newline-containing tokens before making any upstream request.
@@ -62,9 +62,9 @@ Questions to answer:
 - Chat payloads must be mode-specific: OpenAI Chat -> `/chat/completions` `messages`; Responses -> `/responses` `input`; Gemini -> `contents` plus optional `generationConfig`; Claude -> `/messages` `messages` and `max_tokens`.
 - Stream mode must set the provider stream flag when supported and normalize provider SSE chunks to `local_studio.delta` events. The final event must include the saved conversation as `local_studio.completed`.
 - Request logging must include `/api/local-studio/models` and `/api/local-studio/chat` client requests plus manually recorded upstream request/response phases. Client `api_key`, `apiKey`, and `token` body fields and upstream `Authorization` headers must be redacted.
-- The `timeout` setting must be passed into every Local Studio upstream client, including model list, non-stream chat, stream chat, and image fallback.
+- The `timeout` setting must be passed into every Local Studio upstream client, including model list, non-stream chat, and stream chat.
 - The static UI must clear an accepted Local Studio draft immediately after send, restore it on non-rerun failure, and keep stream/non-stream, interface mode, reasoning, model, and image settings in `openai.localStudio.settings.v1`.
-- The `gpt-image-2` image tool is Responses-mode only. When enabled and the Responses image tool fails by HTTP status, transport failure, or no image candidates, call `/images/generations` with the latest user prompt and matching image options.
+- The `gpt-image-2` image tool is Responses-mode only. When enabled, Local Studio must send the `image_generation` tool through `/responses` and must not fall back to `/images/generations`; HTTP/transport failures surface as upstream errors, and no-candidate completions remain image-less.
 - Generated image bytes from `b64_json`, `b64`, `result`, or data URLs must be saved under `AISTUDIO_LOCAL_STUDIO_DIR/files` and returned with `/api/local-studio/assets/...` URLs.
 - Uploaded attachments are accepted as data URLs, saved locally, stripped of heavy inline fields in persisted JSON, and rehydrated as Responses `input_image` or `input_file` blocks when sent upstream.
 - Rerun truncates the conversation to the selected previous user turn before rebuilding the Responses payload.
@@ -90,9 +90,9 @@ Questions to answer:
 - Good: Responses stream emits provider chunks; backend emits incremental `local_studio.delta`, frontend renders the assistant placeholder while streaming, and final persistence arrives via `local_studio.completed`.
 - Good: Request logs enabled; a Local Studio chat group contains client request, upstream request, upstream response, and client response phases without API token leakage.
 - Good: Responses image tool returns `image_generation_call.result`; the image is saved locally and rendered in the UI.
-- Good: Responses image tool fails or returns no image candidate; `/images/generations` succeeds and the generated image is saved locally.
+- Good: Responses image tool returns no image candidate; Local Studio saves the completed conversation without generated images and does not call `/images/generations`.
 - Good: User enters custom `3824x2144`; local validation accepts it as near-4K under the `<3840` edge rule.
-- Base: Text-only Responses chat stores assistant text and usage without calling image fallback.
+- Base: Text-only Responses chat stores assistant text and usage without calling an image-generation endpoint.
 - Bad: A key file containing both base URL and token is passed as a single Authorization header value.
 - Bad: The UI advertises `3840x2160`, which violates the strict max-edge rule.
 
@@ -104,7 +104,7 @@ Questions to answer:
 - Unit: Responses payload construction includes attachment blocks, reasoning, and image-generation tool options.
 - Unit: `gpt-image-2` official size options and invalid custom sizes.
 - Unit: chat persists assistant errors for upstream 524/timeouts and rejects multiline tokens without leaking secrets.
-- Unit: fallback to `/images/generations` for Responses HTTP failures, transport failures, and no image candidates.
+- Unit: Responses image-tool HTTP failures, transport failures, and no-candidate completions do not call `/images/generations`.
 - Unit: request-log middleware records Local Studio client/upstream/client response phases and redacts client tokens plus upstream Authorization headers.
 - Static: `#studio` route/sidebar, Local Studio interface selector, stream toggle, capability grid, immediate draft clearing, official size list, custom size, Responses-only image panel, and no `3840x2160` option.
 - Static syntax: when editing `src/aistudio_api/static/app.js`, run `node --check src/aistudio_api/static/app.js`.
@@ -171,8 +171,7 @@ try:
 	response = await client.post(upstream_url(base_url, "/responses"), json=request_body)
 	response.raise_for_status()
 except httpx.HTTPError:
-	if image_tool_enabled:
-		fallback = await client.post(upstream_url(base_url, "/images/generations"), json=image_payload)
+	raise
 ```
 
 ## Scenario: Image Prompt Optimization With Reference Images

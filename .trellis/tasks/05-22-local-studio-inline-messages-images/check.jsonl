@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Verification contract for Local Studio static UI and real tests"}
+{"file": ".trellis/tasks/05-22-local-studio-inline-messages-images/research/request-log-image-rendering.md", "reason": "Check expected behavior against analyzed request log"}
