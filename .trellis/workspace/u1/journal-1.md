@@ -746,3 +746,36 @@ Reverted the incorrect GPT image prompt workbench commit and rebuilt OpenAI Loca
 ### Next Steps
 
 - None - task complete
+
+
+## Session 23: Fix Local Studio playground parity
+
+**Date**: 2026-05-22
+**Task**: Fix Local Studio playground parity
+**Branch**: `fix/local-studio-playground-parity`
+
+### Summary
+
+Restored playground regression safety and expanded Local Studio to OpenAI Chat, Responses, Gemini, and Claude modes with streaming, capabilities, token usage, request-log integration, docs, unit tests, WSL API real tests, browser UI smoke, and spec updates.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d43e64e` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
