@@ -845,3 +845,36 @@ Handled Local Studio Responses stream interruption, partial/final image handling
 ### Next Steps
 
 - None - task complete
+
+
+## Session 26: Local Studio provider management
+
+**Date**: 2026-05-23
+**Task**: Local Studio provider management
+**Branch**: `fix/local-studio-provider-management`
+
+### Summary
+
+Verified and completed Local Studio as a provider-backed workspace. Added default Google AI Studio provider without URL/token, custom OpenAI provider validation, always-on Local Studio cache, provider-aware cache keys, Google Responses image-generation tool support including search plus image composition, frontend provider management, backend/static tests, WSL API smoke, WSL browser UI smoke, and real image-tool smoke.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2c48ef6` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
