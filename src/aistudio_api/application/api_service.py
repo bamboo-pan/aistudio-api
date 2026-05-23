@@ -16,7 +16,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
 
-from aistudio_api.config import settings
+from aistudio_api.config import DEFAULT_IMAGE_MODEL, settings
 from aistudio_api.application.chat_service import cleanup_files, encode_schema_to_wire, is_search_tool_type, normalize_chat_request, normalize_gemini_request, normalize_openai_tools_and_search
 from aistudio_api.application.chat_service import data_uri_to_file, url_to_file
 from aistudio_api.application.validation import validate_number_range
@@ -1238,6 +1238,153 @@ def _messages_tools_from_payload(tools: Any) -> Any:
     return converted or None
 
 
+def _responses_image_generation_tool(tools: Any) -> dict[str, Any] | None:
+    if not isinstance(tools, list):
+        return None
+    for tool in tools:
+        if isinstance(tool, dict) and tool.get("type") == "image_generation":
+            return tool
+    return None
+
+
+def _responses_toolless_payload(payload: dict[str, Any], skip_tool_type: str) -> dict[str, Any]:
+    sanitized = dict(payload)
+    tools = payload.get("tools")
+    if isinstance(tools, list):
+        remaining = [tool for tool in tools if not (isinstance(tool, dict) and tool.get("type") == skip_tool_type)]
+        if remaining:
+            sanitized["tools"] = remaining
+        else:
+            sanitized.pop("tools", None)
+    return sanitized
+
+
+def _image_size_for_google_provider(size: Any) -> str:
+    raw_size = str(size or DEFAULT_IMAGE_SIZE).strip().lower()
+    return raw_size if raw_size in {"1024x1024", "1024x1536", "1536x1024"} else DEFAULT_IMAGE_SIZE
+
+
+def _file_path_to_image_data_url(path: str) -> str:
+    mime_type = "image/jpeg"
+    if path.endswith(".png"):
+        mime_type = "image/png"
+    elif path.endswith(".webp"):
+        mime_type = "image/webp"
+    with open(path, "rb") as image_file:
+        encoded = base64.b64encode(image_file.read()).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"
+
+
+def _responses_image_request(payload: dict[str, Any], tool: dict[str, Any], *, prompt_override: str | None = None) -> ImageRequest:
+    image_payload = _responses_toolless_payload(payload, "image_generation")
+    if prompt_override is not None:
+        image_payload = dict(image_payload)
+        image_payload["input"] = prompt_override
+        image_payload.pop("instructions", None)
+        image_payload.pop("tools", None)
+    chat_req = ChatRequest(model=str(payload["model"]), messages=_messages_from_responses_payload(image_payload))
+    normalized = normalize_chat_request(chat_req.messages, chat_req.model)
+    try:
+        images = [_file_path_to_image_data_url(path) for path in normalized["capture_images"]]
+        return ImageRequest(
+            prompt=normalized["capture_prompt"],
+            model=DEFAULT_IMAGE_MODEL,
+            n=1,
+            size=_image_size_for_google_provider(tool.get("size")),
+            response_format="b64_json",
+            images=images or None,
+        )
+    finally:
+        cleanup_files(normalized["cleanup_paths"])
+
+
+def _responses_image_generation_output_items(image_response: dict[str, Any]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for image in image_response.get("data") if isinstance(image_response.get("data"), list) else []:
+        if not isinstance(image, dict):
+            continue
+        item: dict[str, Any] = {
+            "id": f"ig_{uuid.uuid4().hex[:24]}",
+            "type": "image_generation_call",
+            "status": "completed",
+        }
+        for key in ("b64_json", "url", "revised_prompt"):
+            value = image.get(key)
+            if value:
+                item[key if key != "b64_json" else "result"] = value
+        item["mime_type"] = image.get("mime_type") or "image/png"
+        items.append(item)
+    return items
+
+
+async def _handle_responses_image_generation_tool(payload: dict[str, Any], tool: dict[str, Any], client: AIStudioClient) -> dict[str, Any]:
+    image_payload = _responses_toolless_payload(payload, "image_generation")
+    chat_req = ChatRequest(
+        model=str(payload["model"]),
+        messages=_messages_from_responses_payload(image_payload),
+        tools=_messages_tools_from_payload(image_payload.get("tools")),
+        thinking=payload.get("thinking"),
+    )
+    uses_search = _chat_request_uses_search(chat_req)
+    prompt_override = None
+    chat_usage = None
+    if uses_search:
+        chat_response = await handle_chat(chat_req, client)
+        searched_prompt = _chat_text(chat_response).strip()
+        if searched_prompt:
+            prompt_override = searched_prompt
+        chat_usage = chat_response.get("usage")
+    image_response = await handle_image_generation(_responses_image_request(payload, tool, prompt_override=prompt_override), client)
+    image_items = _responses_image_generation_output_items(image_response)
+    if not image_items:
+        raise HTTPException(502, detail={"message": "Image generation returned no image data", "type": "upstream_error"})
+    output_items = []
+    if uses_search:
+        output_items.append(_responses_web_search_item())
+    output_items.extend(image_items)
+    return {
+        "id": f"resp_{uuid.uuid4().hex[:24]}",
+        "object": "response",
+        "created_at": int(time.time()),
+        "status": "completed",
+        "model": payload["model"],
+        "output": output_items,
+        "output_text": "Generated image",
+        "thinking": "",
+        "usage": _merge_usage(dict(chat_usage or {}), image_response.get("usage")) or None,
+    }
+
+
+def _build_responses_image_generation_streaming_response(payload: dict[str, Any], tool: dict[str, Any], client: AIStudioClient) -> StreamingResponse:
+    async def stream_response():
+        try:
+            response = await _handle_responses_image_generation_tool(payload, tool, client)
+            response_base = {key: value for key, value in response.items() if key != "output"}
+            response_base["status"] = "in_progress"
+            response_base["output"] = []
+            yield _sse_event("response.created", {"type": "response.created", "response": response_base})
+            for index, item in enumerate(response["output"]):
+                yield _sse_event("response.output_item.added", {"type": "response.output_item.added", "output_index": index, "item": item})
+                if item.get("result"):
+                    yield _sse_event(
+                        "response.image_generation_call.partial_image",
+                        {"type": "response.image_generation_call.partial_image", "item_id": item["id"], "output_index": index, "partial_image": item["result"]},
+                    )
+                yield _sse_event("response.output_item.done", {"type": "response.output_item.done", "output_index": index, "item": item})
+            yield _sse_event("response.completed", {"type": "response.completed", "response": response})
+            yield "data: [DONE]\n\n"
+        except Exception as exc:
+            message, error_type, code = _openai_stream_error_detail(exc)
+            yield _sse_event("error", {"type": "error", "error": {"message": message, "type": error_type, "code": code}})
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        stream_response(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 def _build_responses_streaming_response(
     chat_req: ChatRequest,
     client: AIStudioClient,
@@ -1562,6 +1709,11 @@ def _build_responses_streaming_response(
 async def handle_openai_responses(payload: dict[str, Any], client: AIStudioClient, request: Request | None = None) -> dict[str, Any] | StreamingResponse:
     if not payload.get("model"):
         raise _bad_request("model is required", "invalid_request_error")
+    image_generation_tool = _responses_image_generation_tool(payload.get("tools"))
+    if image_generation_tool is not None:
+        if payload.get("stream"):
+            return _build_responses_image_generation_streaming_response(payload, image_generation_tool, client)
+        return await _handle_responses_image_generation_tool(payload, image_generation_tool, client)
     response_format = payload.get("response_format")
     text_config = payload.get("text")
     if response_format is None and isinstance(text_config, dict):

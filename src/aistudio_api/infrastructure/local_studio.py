@@ -23,6 +23,9 @@ _HEAVY_FIELDS = {"data", "data_url", "file_data", "b64", "b64_json"}
 _IMAGE_MODEL_PREFIXES = ("gpt-image-",)
 _NON_CHAT_MODEL_MARKERS = ("audio", "realtime", "tts", "transcribe", "embedding")
 LOCAL_STUDIO_INTERFACE_MODES = ("openai", "responses", "gemini", "claude")
+LOCAL_STUDIO_PROVIDER_GOOGLE = "google-ai-studio"
+LOCAL_STUDIO_PROVIDER_OPENAI = "openai"
+LOCAL_STUDIO_PROVIDER_TYPES = (LOCAL_STUDIO_PROVIDER_GOOGLE, LOCAL_STUDIO_PROVIDER_OPENAI)
 GPT_IMAGE_2_SIZE_OPTIONS = [
     {"label": "Square", "size": "1024x1024", "note": "general-purpose default"},
     {"label": "HD portrait", "size": "1024x1536", "note": "standard portrait"},
@@ -70,6 +73,57 @@ def normalize_interface_mode(value: str | None, *, default: str = "responses") -
     if mode not in LOCAL_STUDIO_INTERFACE_MODES:
         raise ValueError(f"interface_mode must be one of: {', '.join(LOCAL_STUDIO_INTERFACE_MODES)}")
     return mode
+
+
+def normalize_provider_kind(value: str | None, *, default: str = LOCAL_STUDIO_PROVIDER_GOOGLE) -> str:
+    kind = str(value or default).strip().lower().replace("_", "-")
+    if kind in {"google", "google-ai", "google-aistudio", "google-ai-studio"}:
+        return LOCAL_STUDIO_PROVIDER_GOOGLE
+    if kind in {"openai", "open-ai"}:
+        return LOCAL_STUDIO_PROVIDER_OPENAI
+    if kind not in LOCAL_STUDIO_PROVIDER_TYPES:
+        raise ValueError(f"provider_type must be one of: {', '.join(LOCAL_STUDIO_PROVIDER_TYPES)}")
+    return kind
+
+
+def default_local_studio_base_url(mode: str) -> str:
+    version = "v1beta" if normalize_interface_mode(mode) == "gemini" else "v1"
+    return f"http://127.0.0.1:{settings.port}/{version}"
+
+
+def infer_provider_kind(
+    value: str | None = None,
+    *,
+    base_url: str | None = None,
+    token: str | None = None,
+) -> str:
+    if value:
+        return normalize_provider_kind(value)
+    if str(base_url or "").strip() or str(token or "").strip():
+        return LOCAL_STUDIO_PROVIDER_OPENAI
+    return LOCAL_STUDIO_PROVIDER_GOOGLE
+
+
+def resolve_local_studio_provider_settings(
+    *,
+    provider_type: str | None = None,
+    base_url: str | None = None,
+    token: str | None = None,
+    mode: str = "responses",
+    internal_base_url: str | None = None,
+) -> tuple[str, str, str]:
+    provider_kind = infer_provider_kind(provider_type, base_url=base_url, token=token)
+    if provider_kind == LOCAL_STUDIO_PROVIDER_GOOGLE:
+        if internal_base_url:
+            return provider_kind, normalize_openai_base_url(internal_base_url), ""
+        return provider_kind, default_local_studio_base_url(mode), ""
+    resolved_base_url = normalize_openai_base_url(str(base_url or ""))
+    resolved_token = str(token or "").strip()
+    if not resolved_token:
+        raise ValueError("API token is required for OpenAI providers")
+    if "\n" in resolved_token or "\r" in resolved_token:
+        raise ValueError("API token must be a single line")
+    return provider_kind, resolved_base_url, resolved_token
 
 
 def filter_chat_models(models: Iterable[Mapping[str, Any]], mode: str = "responses") -> list[dict[str, Any]]:
@@ -529,6 +583,7 @@ class LocalStudioStore:
         mode: str,
         model: str,
         request_body: Mapping[str, Any],
+        provider_type: str = "",
         provider_id: str = "",
         provider_name: str = "",
         namespace: str = "",
@@ -538,6 +593,7 @@ class LocalStudioStore:
             "token_hash": hashlib.sha256(str(token or "").encode("utf-8")).hexdigest() if token else "",
             "mode": normalize_interface_mode(mode),
             "model": str(model or ""),
+            "provider_type": normalize_provider_kind(provider_type) if provider_type else "",
             "provider_id": str(provider_id or "").strip(),
             "provider_name": str(provider_name or "").strip(),
             "namespace": str(namespace or "").strip(),

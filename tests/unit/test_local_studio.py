@@ -12,9 +12,11 @@ from aistudio_api.infrastructure.local_studio import (
     LocalStudioStore,
     build_local_studio_chat_payload,
     build_responses_payload,
+    default_local_studio_base_url,
     filter_chat_models,
     local_studio_chat_path,
     normalize_openai_base_url,
+    resolve_local_studio_provider_settings,
     parse_local_studio_output,
     parse_local_studio_stream_event,
     validate_gpt_image_2_size,
@@ -126,6 +128,217 @@ def test_model_route_rejects_multiline_token_without_leaking_value(tmp_path):
     assert response.status_code == 400
     assert body["detail"]["message"] == "API token must be a single line"
     assert secret not in str(body)
+
+
+def test_google_local_studio_provider_uses_internal_endpoint_without_token(tmp_path, monkeypatch):
+    app, old_dir = local_studio_app(tmp_path)
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"content-type": "application/json"}
+        content = b'{"data":[{"id":"gemini-3-flash-preview"},{"id":"gpt-image-2"}]}'
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": [{"id": "gemini-3-flash-preview"}, {"id": "gpt-image-2"}]}
+
+    class FakeClient:
+        def __init__(self, timeout):
+            captured["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def get(self, url, headers):
+            captured["url"] = url
+            captured["headers"] = headers
+            return FakeResponse()
+
+    monkeypatch.setattr(routes_local_studio, "_new_http_client", FakeClient)
+    try:
+        response = request_app(
+            app,
+            "POST",
+            "/api/local-studio/models",
+            json={"provider_type": "google-ai-studio", "interface_mode": "responses", "timeout": 5},
+        )
+    finally:
+        settings.local_studio_dir = old_dir
+
+    assert response.status_code == 200
+    assert captured["timeout"] == 5
+    assert captured["url"] == "http://testserver/v1/models"
+    assert "Authorization" not in captured["headers"]
+    assert [model["id"] for model in response.json()["data"]] == ["gemini-3-flash-preview"]
+
+
+def test_google_local_studio_provider_chat_uses_internal_image_tool(tmp_path, monkeypatch):
+    app, old_dir = local_studio_app(tmp_path)
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"content-type": "application/json"}
+        content = b'{"id":"resp_image","output":[{"type":"image_generation_call","result":"aW1hZ2U=","mime_type":"image/png"}],"usage":{"input_tokens":1,"output_tokens":1}}'
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "id": "resp_image",
+                "output": [{"type": "image_generation_call", "result": "aW1hZ2U=", "mime_type": "image/png"}],
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            }
+
+    class FakeClient:
+        def __init__(self, timeout):
+            captured["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def post(self, url, headers, json):
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["json"] = json
+            return FakeResponse()
+
+    monkeypatch.setattr(routes_local_studio, "_new_http_client", FakeClient)
+    try:
+        response = request_app(
+            app,
+            "POST",
+            "/api/local-studio/chat",
+            json={
+                "provider_type": "google-ai-studio",
+                "interface_mode": "responses",
+                "model": "gemini-3-flash-preview",
+                "message": "draw a smoke test square",
+                "options": {"search": True, "image_tool_enabled": True, "size": "1536x864", "cache_enabled": True},
+            },
+        )
+    finally:
+        settings.local_studio_dir = old_dir
+
+    assert response.status_code == 200
+    assert captured["url"] == "http://testserver/v1/responses"
+    assert "Authorization" not in captured["headers"]
+    assert captured["json"]["tools"] == [
+        {"type": "web_search_preview"},
+        {"type": "image_generation", "model": "gpt-image-2", "size": "1536x864"},
+    ]
+    assistant = response.json()["conversation"]["messages"][-1]
+    assert assistant["content"] == "Generated image"
+    assert assistant["images"][0]["url"].startswith("/api/local-studio/assets/")
+    assert response.json()["cache"]["hit"] is False
+
+
+def test_custom_provider_display_name_does_not_override_openai_inference(tmp_path, monkeypatch):
+    app, old_dir = local_studio_app(tmp_path)
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"content-type": "application/json"}
+        content = b'{"data":[{"id":"gpt-5.4-mini"}]}'
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": [{"id": "gpt-5.4-mini"}]}
+
+    class FakeClient:
+        def __init__(self, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def get(self, url, headers):
+            captured["url"] = url
+            captured["headers"] = headers
+            return FakeResponse()
+
+    monkeypatch.setattr(routes_local_studio, "_new_http_client", FakeClient)
+    try:
+        response = request_app(
+            app,
+            "POST",
+            "/api/local-studio/models",
+            json={"provider": "My custom provider", "base_url": "http://compat.example/v1", "api_key": "token-1"},
+        )
+    finally:
+        settings.local_studio_dir = old_dir
+
+    assert response.status_code == 200
+    assert captured["url"] == "http://compat.example/v1/models"
+    assert captured["headers"]["Authorization"] == "Bearer token-1"
+
+
+def test_google_provider_settings_default_to_internal_url_without_token():
+    provider_type, base_url, token = resolve_local_studio_provider_settings(provider_type="google-ai-studio", mode="gemini")
+
+    assert provider_type == "google-ai-studio"
+    assert base_url == default_local_studio_base_url("gemini")
+    assert token == ""
+
+
+def test_openai_provider_settings_require_url_and_token():
+    try:
+        resolve_local_studio_provider_settings(provider_type="openai", base_url="https://api.example.test/v1", token="")
+    except ValueError as exc:
+        assert str(exc) == "API token is required for OpenAI providers"
+    else:
+        raise AssertionError("expected token validation to fail")
+
+    provider_type, base_url, token = resolve_local_studio_provider_settings(provider_type="openai", base_url="https://api.example.test/v1", token="token-1")
+    assert provider_type == "openai"
+    assert base_url == "https://api.example.test/v1"
+    assert token == "token-1"
+
+
+def test_request_cache_key_includes_provider_type(tmp_path):
+    store = LocalStudioStore(tmp_path)
+    request_body = {"model": "gpt-5.4-mini", "input": [{"role": "user", "content": "hello"}]}
+
+    google_key = store.request_cache_key(
+        base_url="http://testserver/v1",
+        token="",
+        mode="responses",
+        model="gpt-5.4-mini",
+        request_body=request_body,
+        provider_type="google-ai-studio",
+        provider_id="google-ai-studio",
+        provider_name="Google AI Studio",
+        namespace="unit-cache",
+    )
+    openai_key = store.request_cache_key(
+        base_url="http://testserver/v1",
+        token="",
+        mode="responses",
+        model="gpt-5.4-mini",
+        request_body=request_body,
+        provider_type="openai",
+        provider_id="google-ai-studio",
+        provider_name="Google AI Studio",
+        namespace="unit-cache",
+    )
+
+    assert google_key != openai_key
 
 
 def test_build_responses_payload_includes_attachments_reasoning_and_image_tool():
@@ -300,6 +513,7 @@ def test_chat_route_posts_selected_interface_mode_and_timeout(tmp_path, monkeypa
             "/api/local-studio/chat",
             json={
                 "base_url": "http://compat.example/v1",
+                "api_key": "token-1",
                 "timeout": 7,
                 "interface_mode": "openai",
                 "model": "gpt-5.4-mini",
@@ -414,6 +628,7 @@ def test_stream_chat_reuses_local_request_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(routes_local_studio, "_new_http_client", FakeClient)
     payload = {
         "base_url": "http://compat.example/v1",
+        "api_key": "token-1",
         "provider_id": "google-ai-studio",
         "provider_name": "Google AI Studio",
         "model": "gpt-5.4-mini",
@@ -468,6 +683,7 @@ def test_chat_route_image_tool_http_error_does_not_call_images_api(tmp_path, mon
             "/api/local-studio/chat",
             json={
                 "base_url": "http://compat.example/v1",
+                "api_key": "token-1",
                 "model": "gpt-5.4-mini",
                 "message": "make a smoke-test square",
                 "options": {"image_tool_enabled": True, "size": "1536x864", "quality": "low", "background": "opaque", "output_format": "png"},
@@ -507,6 +723,7 @@ def test_chat_route_image_tool_transport_error_does_not_call_images_api(tmp_path
             "/api/local-studio/chat",
             json={
                 "base_url": "http://compat.example/v1",
+                "api_key": "token-1",
                 "model": "gpt-5.4-mini",
                 "message": "make a smoke-test circle",
                 "options": {"image_tool_enabled": True, "size": "1536x864", "quality": "low"},
@@ -595,6 +812,7 @@ def test_stream_chat_persists_response_image_candidates(tmp_path, monkeypatch):
             "/api/local-studio/chat",
             json={
                 "base_url": "http://compat.example/v1",
+                "api_key": "token-1",
                 "model": "gpt-5.4-mini",
                 "message": "make a cat image",
                 "options": {"stream": True, "image_tool_enabled": True},
@@ -660,6 +878,7 @@ def test_stream_chat_image_tool_without_candidates_does_not_call_images_api(tmp_
             "/api/local-studio/chat",
             json={
                 "base_url": "http://compat.example/v1",
+                "api_key": "token-1",
                 "model": "gpt-5.4-mini",
                 "message": "make a cat image",
                 "options": {"stream": True, "image_tool_enabled": True, "size": "1536x864"},
@@ -750,6 +969,7 @@ def test_stream_chat_image_tool_deduplicates_partial_and_final_candidates(tmp_pa
             "/api/local-studio/chat",
             json={
                 "base_url": "http://compat.example/v1",
+                "api_key": "token-1",
                 "model": "gpt-5.4-mini",
                 "message": "make a cat image",
                 "options": {"stream": True, "image_tool_enabled": True},
@@ -816,6 +1036,7 @@ def test_stream_chat_transport_error_persists_partial_image_candidate(tmp_path, 
             "/api/local-studio/chat",
             json={
                 "base_url": "http://compat.example/v1",
+                "api_key": "token-1",
                 "model": "gpt-5.4-mini",
                 "message": "make a cat image",
                 "options": {"stream": True, "image_tool_enabled": True},
@@ -879,6 +1100,7 @@ def test_stream_chat_transport_error_without_partial_output_persists_error(tmp_p
             "/api/local-studio/chat",
             json={
                 "base_url": "http://compat.example/v1",
+                "api_key": "token-1",
                 "model": "gpt-5.4-mini",
                 "message": "make a cat image",
                 "options": {"stream": True, "image_tool_enabled": True},
@@ -928,6 +1150,7 @@ def test_chat_route_surfaces_http_524_and_records_error(tmp_path, monkeypatch):
             "/api/local-studio/chat",
             json={
                 "base_url": "http://compat.example/v1",
+                "api_key": "token-1",
                 "model": "gpt-5.4-mini",
                 "conversation_id": conversation["id"],
                 "message": "make a cat fishing image",

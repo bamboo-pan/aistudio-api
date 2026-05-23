@@ -231,9 +231,15 @@ def test_static_frontend_exposes_local_studio_workbench():
     assert "go('studio')" in index_html
     assert "openai.localStudio.settings.v1" in app_js
     assert "localStudioProviders:[]" in app_js
+    assert "localStudioProviderType:'google-ai-studio'" in app_js
+    assert "provider_type:providerType" in app_js
+    assert "openai-provider-${index+1}" in app_js
+    assert "rawId&&!rawId.startsWith('google-ai-studio')" in app_js
     assert "provider_id:this.localStudioProviderId" in app_js
     assert "selectLocalStudioProvider(provider.id)" in index_html
     assert "addLocalStudioProvider()" in index_html
+    assert "removeLocalStudioProvider()" in index_html
+    assert "Provider Type" in index_html
     assert "loadLocalStudioModels()" in app_js
     assert "'/api/local-studio/models'" in app_js
     assert "'/api/local-studio/conversations'" in app_js
@@ -247,11 +253,13 @@ def test_static_frontend_exposes_local_studio_workbench():
     assert "localStudioControlAvailable('stream')" in app_js
     assert "localStudioSearch:'off'" in app_js
     assert "search:this.localStudioSearch==='on'" in app_js
-    assert "localStudioCacheEnabled:false" in app_js
-    assert "cache_enabled:!!this.localStudioCacheEnabled" in app_js
+    assert "localStudioCacheEnabled:true" in app_js
+    assert "cacheEnabled:true" in app_js
+    assert "cache_enabled:true" in app_js
     assert "cache_namespace:this.localStudioCacheNamespace" in app_js
-    assert "OpenAI web_search" in index_html
-    assert "Local request cache" in index_html
+    assert "Web search" in index_html
+    assert "Local request cache" not in index_html
+    assert "localStudioCacheEnabled=!localStudioCacheEnabled" not in index_html
     assert "sendLocalStudioStream(body)" in app_js
     assert "local_studio.delta" in app_js
     assert "localStudioPendingTitle" in app_js
