@@ -1,0 +1,6 @@
+{"file":"c:\\Users\\bamboo\\Desktop\\aistudio-api_u1\\.trellis\\spec\\backend\\index.md","reason":"Backend conventions and pre-development checklist for the Local Studio API and persistence changes."}
+{"file":"c:\\Users\\bamboo\\Desktop\\aistudio-api_u1\\.trellis\\spec\\backend\\quality-guidelines.md","reason":"Quality expectations and forbidden patterns for the backend/UI refactor in this task."}
+{"file":"c:\\Users\\bamboo\\Desktop\\aistudio-api_u1\\.trellis\\spec\\guides\\index.md","reason":"Cross-layer and code-reuse guidance for changes spanning frontend, API, and persistence layers."}
+{"file":"c:\\Users\\bamboo\\Desktop\\aistudio-api_u1\\.trellis\\tasks\\05-23-local-studio-cache-provider-and-web-search\\research\\terminology-map.md","reason":"Terminology split between Local Studio, Google AI Studio provider, and the two cache concepts."}
+{"file":"c:\\Users\\bamboo\\Desktop\\aistudio-api_u1\\.trellis\\tasks\\05-23-local-studio-cache-provider-and-web-search\\research\\provider-layering.md","reason":"Provider/profile/capability layering proposal for the Local Studio refactor."}
+{"file":"c:\\Users\\bamboo\\Desktop\\aistudio-api_u1\\.trellis\\tasks\\05-23-local-studio-cache-provider-and-web-search\\research\\cache-boundaries.md","reason":"Cache layer boundaries and naming rules for provider cache versus snapshot cache."}

@@ -1,0 +1,5 @@
+{"file":"c:\\Users\\bamboo\\Desktop\\aistudio-api_u1\\.trellis\\spec\\backend\\quality-guidelines.md","reason":"Check the backend and UI changes against local quality expectations and regression constraints."}
+{"file":"c:\\Users\\bamboo\\Desktop\\aistudio-api_u1\\.trellis\\spec\\guides\\cross-layer-thinking-guide.md","reason":"Verify the provider/cache UI changes still respect cross-layer contracts."}
+{"file":"c:\\Users\\bamboo\\Desktop\\aistudio-api_u1\\.trellis\\spec\\guides\\code-reuse-thinking-guide.md","reason":"Check that the new provider and tool wiring reuse the existing Playground and image capability code paths."}
+{"file":"c:\\Users\\bamboo\\Desktop\\aistudio-api_u1\\.trellis\\tasks\\05-23-local-studio-cache-provider-and-web-search\\research\\terminology-map.md","reason":"Verify naming is consistent after implementation and docs updates."}
+{"file":"c:\\Users\\bamboo\\Desktop\\aistudio-api_u1\\.trellis\\tasks\\05-23-local-studio-cache-provider-and-web-search\\research\\cache-boundaries.md","reason":"Verify cache terms are still separated correctly in the finished code and UI."}

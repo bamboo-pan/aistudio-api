@@ -34,21 +34,22 @@ Questions to answer:
 
 (To be filled by the team)
 
-## Scenario: OpenAI Local Studio API, Interface Modes, and Image Tool
+## Scenario: Local Studio API, Provider Profiles, Request Cache, Interface Modes, and Tools
 
 ### 1. Scope / Trigger
 
-- Trigger: Code changes `src/aistudio_api/api/routes_local_studio.py`, `src/aistudio_api/infrastructure/local_studio.py`, `src/aistudio_api/api/app.py` request-log eligibility, `AISTUDIO_LOCAL_STUDIO_DIR`, or the static `#studio` OpenAI Local Studio workbench.
-- Use this contract for server-side local conversation persistence, arbitrary compatible endpoint forwarding, selectable OpenAI Chat / OpenAI Responses / Gemini / Claude interface modes, attachment storage, request-log capture, and Responses-mode `gpt-image-2` image-tool behavior.
+- Trigger: Code changes `src/aistudio_api/api/routes_local_studio.py`, `src/aistudio_api/infrastructure/local_studio.py`, `src/aistudio_api/api/app.py` request-log eligibility, `AISTUDIO_LOCAL_STUDIO_DIR`, or the static `#studio` Local Studio workbench.
+- Use this contract for server-side local conversation persistence, arbitrary compatible endpoint forwarding, browser-local provider profiles, selectable OpenAI Chat / OpenAI Responses / Gemini / Claude interface modes, Local request cache, attachment storage, request-log capture, and Responses-mode `web_search` / `gpt-image-2` tool behavior.
 
 ### 2. Signatures
 
-- `AISTUDIO_LOCAL_STUDIO_DIR` defaults to `data/local-studio` and stores `conversations/*.json` plus `files/<yyyymmdd>/<asset-id>.<ext>`.
-- `POST /api/local-studio/models` accepts `{"base_url": str, "api_key"?: str, "timeout"?: int, "interface_mode"?: "openai"|"responses"|"gemini"|"claude"}` and returns `{"object": "list", "data": list[model], "interface_mode": str}`.
+- `AISTUDIO_LOCAL_STUDIO_DIR` defaults to `data/local-studio` and stores `conversations/*.json`, `files/<yyyymmdd>/<asset-id>.<ext>`, and Local request cache entries under `cache/requests/<prefix>/<sha256>.json`.
+- `POST /api/local-studio/models` accepts `{"base_url": str, "api_key"?: str, "timeout"?: int, "interface_mode"?: "openai"|"responses"|"gemini"|"claude", "provider_id"?: str, "provider_name"?: str}` and returns `{"object": "list", "data": list[model], "interface_mode": str}`.
 - `GET/POST/PATCH/DELETE /api/local-studio/conversations` and `POST /api/local-studio/conversations/bulk-delete {"ids": string[]}` manage local JSON conversations.
 - `GET /api/local-studio/assets/{asset_path:path}` serves generated/uploaded local assets after path containment validation.
-- `POST /api/local-studio/chat` accepts connection settings, `interface_mode`, `model`, optional `conversation_id`, `message`, `files`, `options`, and optional `rerun_from`.
-- Non-stream chat returns `{"conversation": ..., "request": ..., "elapsed_ms": int, "upstream_id"?: str, "interface_mode": str}`. Stream chat returns Server-Sent Events with `local_studio.delta` and final `local_studio.completed` events.
+- `POST /api/local-studio/chat` accepts connection settings, optional `provider_id`, optional `provider_name`, `interface_mode`, `model`, optional `conversation_id`, `message`, `files`, `options`, and optional `rerun_from`.
+- Local Studio `options` may include `stream`, `reasoning_effort`, `reasoning_summary`, `search`, `cache_enabled`, `cache_namespace`, image-tool fields, and mode-specific generation settings.
+- Non-stream chat returns `{"conversation": ..., "request": ..., "elapsed_ms": int, "upstream_id"?: str, "interface_mode": str, "cache"?: {"hit": bool, "cache_key": str}}`. Stream chat returns Server-Sent Events with `local_studio.delta` and final `local_studio.completed` events; stream cache hits must still return SSE, not JSON.
 - Payload helpers: `normalize_interface_mode(...)`, `local_studio_models_path(mode)`, `local_studio_chat_path(mode, model, stream=False)`, `build_local_studio_chat_payload(...)`, `parse_local_studio_output(...)`, `parse_local_studio_stream_event(...)`, `build_responses_payload(...)`, `validate_gpt_image_2_size(value)`, and `parse_responses_output(payload)`.
 
 ### 3. Contracts
@@ -63,7 +64,11 @@ Questions to answer:
 - Stream mode must set the provider stream flag when supported and normalize provider SSE chunks to `local_studio.delta` events. The final event must include the saved conversation as `local_studio.completed`.
 - Request logging must include `/api/local-studio/models` and `/api/local-studio/chat` client requests plus manually recorded upstream request/response phases. Client `api_key`, `apiKey`, and `token` body fields and upstream `Authorization` headers must be redacted.
 - The `timeout` setting must be passed into every Local Studio upstream client, including model list, non-stream chat, and stream chat.
-- The static UI must clear an accepted Local Studio draft immediately after send, restore it on non-rerun failure, and keep stream/non-stream, interface mode, reasoning, model, and image settings in `openai.localStudio.settings.v1`.
+- The static UI must clear an accepted Local Studio draft immediately after send, restore it on non-rerun failure, and keep provider profiles, active provider id, stream/non-stream, interface mode, reasoning, model, search, cache namespace, and image settings in `openai.localStudio.settings.v1`.
+- Browser-local provider profiles may store runtime tokens, but server-side conversation files and task/spec artifacts must not persist tokens. Backend cache keys may include only a token hash, never the raw token.
+- Local request cache is a Local Studio result-reuse cache, not provider-native cache. Cache keys must include normalized base URL, token hash, interface mode, model, provider id/name, namespace, and request body with the stream flag removed.
+- Cache-hit assistant messages must be appended to the current conversation with visible `cache` metadata, and non-stream responses / final stream events must expose `cache.hit`.
+- Responses-mode `search: true` must add `{"type": "web_search_preview"}` to the `/responses` `tools` list and must coexist with the `gpt-image-2` image-generation tool.
 - The `gpt-image-2` image tool is Responses-mode only. When enabled, Local Studio must send the `image_generation` tool through `/responses` and must not fall back to `/images/generations`; HTTP/transport failures surface as upstream errors, and no-candidate completions remain image-less.
 - Generated image bytes from `b64_json`, `b64`, `result`, or data URLs must be saved under `AISTUDIO_LOCAL_STUDIO_DIR/files` and returned with `/api/local-studio/assets/...` URLs.
 - Responses stream `response.image_generation_call.partial_image` data is a usable partial image candidate. If the upstream stream later fails after text, thinking, usage, or image candidates have arrived, persist the partial assistant result, save any candidate images, and keep a visible assistant `error` note explaining the stream ended before completion.
@@ -79,6 +84,7 @@ Questions to answer:
 - Multiline `api_key`/`token` -> HTTP 400 `API token must be a single line` without echoing the token value.
 - Missing `model` -> HTTP 400 `model is required`.
 - Missing `message` and no files for a non-rerun chat -> HTTP 400 `message or files are required`.
+- Empty Local request cache key -> HTTP 400 `cache key is required`; corrupt or missing cache files are treated as cache misses.
 - Invalid conversation id/path traversal asset path -> HTTP 400; missing conversation/asset -> HTTP 404.
 - Upstream 4xx -> mirror the 4xx status with `upstream_error`; upstream 5xx/524 -> HTTP 502 with the upstream status embedded in the message.
 - Upstream timeout -> HTTP 504 and persist an assistant error message.
@@ -95,6 +101,9 @@ Questions to answer:
 - Good: Responses image tool emits `response.image_generation_call.partial_image`, then the transport raises an incomplete chunked read; Local Studio saves the partial image, preserves any text/usage already received, and shows the upstream interruption as an error note beside the partial result.
 - Good: Responses image tool emits a partial image, then completes with a final image for the same output; Local Studio saves/renders only one final image instead of showing duplicate thumbnails.
 - Good: Responses image tool returns no image candidate; Local Studio saves the completed conversation without generated images and does not call `/images/generations`.
+- Good: Local request cache enabled; the first equivalent request calls the upstream provider and returns `cache.hit=false`, while the second equivalent request appends the cached assistant result to the active conversation and returns `cache.hit=true` without another upstream call.
+- Good: Streamed Local request cache hit returns `text/event-stream` with `local_studio.delta` and final `local_studio.completed`, preserving the frontend stream contract.
+- Good: Responses mode enables both `web_search` and `gpt-image-2`; the payload contains `web_search_preview` and `image_generation` in `tools`.
 - Good: User enters custom `3824x2144`; local validation accepts it as near-4K under the `<3840` edge rule.
 - Base: Text-only Responses chat stores assistant text and usage without calling an image-generation endpoint.
 - Bad: A key file containing both base URL and token is passed as a single Authorization header value.
@@ -106,6 +115,8 @@ Questions to answer:
 - Unit: interface-mode payload routing, upstream paths, response parsers, stream parsers, timeout propagation, and conversation `interface_mode` persistence for OpenAI Chat, Responses, Gemini, and Claude.
 - Unit: conversation CRUD, bulk delete, asset path containment, and rerun truncation.
 - Unit: Responses payload construction includes attachment blocks, reasoning, and image-generation tool options.
+- Unit: Responses payload construction includes `web_search_preview` when Local Studio search is enabled and preserves image-generation tool ordering/compatibility.
+- Unit: Local request cache miss/hit for non-stream chat and stream chat, including provider-aware keys, cache metadata on assistant messages, and no duplicate upstream call on hit.
 - Unit: `gpt-image-2` official size options and invalid custom sizes.
 - Unit: chat persists assistant errors for upstream 524/timeouts and rejects multiline tokens without leaking secrets.
 - Unit: Responses image-tool HTTP failures, transport failures, and no-candidate completions do not call `/images/generations`.
@@ -113,6 +124,7 @@ Questions to answer:
 - Unit: Responses stream partial-image plus final-image events persist only one generated image candidate.
 - Unit: request-log middleware records Local Studio client/upstream/client response phases and redacts client tokens plus upstream Authorization headers.
 - Static: `#studio` route/sidebar, Local Studio interface selector, stream toggle, capability grid, immediate draft clearing, official size list, custom size, Responses-only image panel, and no `3840x2160` option.
+- Static: provider dropdown/add button, provider id in request settings, `web_search` toggle, Local request cache toggle, and cache namespace wiring.
 - Static syntax: when editing `src/aistudio_api/static/app.js`, run `node --check src/aistudio_api/static/app.js`.
 - Real: WSL API smoke with real account data must verify original Playground OpenAI Chat, Responses, Gemini, and Claude routes still return text/stream/usage as applicable.
 - Real: WSL API smoke must verify Local Studio OpenAI Chat, Responses, Gemini, Claude, stream mode, timeout settings, request logs, and runtime-only compatible key credentials. If the key file stores `base_url` plus token on separate lines, pass them as separate request fields; never pass the whole file as one Authorization value.

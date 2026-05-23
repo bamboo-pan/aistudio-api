@@ -173,6 +173,17 @@ def test_build_responses_payload_includes_attachments_reasoning_and_image_tool()
     ]
 
 
+def test_build_responses_payload_includes_web_search_tool():
+    payload = build_responses_payload(
+        model="gpt-5.4-mini",
+        messages=[{"role": "user", "content": "latest docs"}],
+        options={"search": True, "image_tool_enabled": True, "size": "1024x1024"},
+    )
+
+    assert payload["tools"][0] == {"type": "web_search_preview"}
+    assert payload["tools"][1]["type"] == "image_generation"
+
+
 def test_gpt_image_2_size_options_match_official_constraints():
     sizes = [item["size"] for item in GPT_IMAGE_2_SIZE_OPTIONS]
 
@@ -304,6 +315,129 @@ def test_chat_route_posts_selected_interface_mode_and_timeout(tmp_path, monkeypa
     assert captured["url"] == "http://compat.example/v1/chat/completions"
     assert captured["json"]["messages"][0]["content"][0]["text"] == "hello"
     assert response.json()["conversation"]["messages"][-1]["content"] == "hello chat"
+
+
+def test_chat_route_reuses_local_request_cache(tmp_path, monkeypatch):
+    app, old_dir = local_studio_app(tmp_path)
+    captured = {"posts": 0}
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"content-type": "application/json"}
+        content = b'{"id":"resp_cached","output_text":"cached upstream","usage":{"input_tokens":2,"output_tokens":3}}'
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"id": "resp_cached", "output_text": "cached upstream", "usage": {"input_tokens": 2, "output_tokens": 3}}
+
+    class FakeClient:
+        def __init__(self, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def post(self, url, headers, json):
+            captured["posts"] += 1
+            return FakeResponse()
+
+    monkeypatch.setattr(routes_local_studio, "_new_http_client", FakeClient)
+    payload = {
+        "base_url": "http://compat.example/v1",
+        "api_key": "token-1",
+        "provider_id": "google-ai-studio",
+        "provider_name": "Google AI Studio",
+        "model": "gpt-5.4-mini",
+        "message": "hello cache",
+        "options": {"stream": False, "cache_enabled": True, "cache_namespace": "unit-cache"},
+    }
+
+    try:
+        first = request_app(app, "POST", "/api/local-studio/chat", json=payload)
+        second = request_app(app, "POST", "/api/local-studio/chat", json=payload)
+    finally:
+        settings.local_studio_dir = old_dir
+
+    first_body = first.json()
+    second_body = second.json()
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert captured["posts"] == 1
+    assert first_body["cache"] == {"hit": False, "cache_key": first_body["cache"]["cache_key"]}
+    assert second_body["cache"]["hit"] is True
+    assert second_body["conversation"]["messages"][-1]["content"] == "cached upstream"
+    assert second_body["conversation"]["messages"][-1]["cache"]["hit"] is True
+
+
+def test_stream_chat_reuses_local_request_cache(tmp_path, monkeypatch):
+    app, old_dir = local_studio_app(tmp_path)
+    captured = {"streams": 0}
+
+    class FakeStreamResponse:
+        status_code = 200
+        headers = {"content-type": "text/event-stream"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        async def aiter_lines(self):
+            yield 'data: {"type":"response.output_text.delta","delta":"stream cached"}'
+            yield ""
+            yield 'data: {"type":"response.completed","response":{"output_text":"stream cached","usage":{"input_tokens":2,"output_tokens":3}}}'
+            yield ""
+
+    class FakeClient:
+        def __init__(self, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        def stream(self, method, url, headers, json):
+            captured["streams"] += 1
+            return FakeStreamResponse()
+
+    monkeypatch.setattr(routes_local_studio, "_new_http_client", FakeClient)
+    payload = {
+        "base_url": "http://compat.example/v1",
+        "provider_id": "google-ai-studio",
+        "provider_name": "Google AI Studio",
+        "model": "gpt-5.4-mini",
+        "message": "hello stream cache",
+        "options": {"stream": True, "cache_enabled": True, "cache_namespace": "unit-stream-cache"},
+    }
+
+    try:
+        first = request_app(app, "POST", "/api/local-studio/chat", json=payload)
+        second = request_app(app, "POST", "/api/local-studio/chat", json=payload)
+    finally:
+        settings.local_studio_dir = old_dir
+
+    completed = [
+        json.loads(line[6:])
+        for line in second.text.splitlines()
+        if line.startswith("data: ") and json.loads(line[6:]).get("type") == "local_studio.completed"
+    ][0]
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert captured["streams"] == 1
+    assert completed["cache"]["hit"] is True
+    assert completed["conversation"]["messages"][-1]["cache"]["hit"] is True
 
 
 def test_chat_route_image_tool_http_error_does_not_call_images_api(tmp_path, monkeypatch):

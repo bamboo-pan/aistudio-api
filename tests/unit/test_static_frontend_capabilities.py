@@ -220,15 +220,20 @@ def test_static_frontend_exposes_playground_workbench_tools():
     assert ".chat-session-list" in style_css
 
 
-def test_static_frontend_exposes_openai_local_studio_workbench():
+def test_static_frontend_exposes_local_studio_workbench():
     app_js = (ROOT / "src" / "aistudio_api" / "static" / "app.js").read_text(encoding="utf-8")
     index_html = (ROOT / "src" / "aistudio_api" / "static" / "index.html").read_text(encoding="utf-8")
     style_css = (ROOT / "src" / "aistudio_api" / "static" / "style.css").read_text(encoding="utf-8")
 
-    assert "OpenAI Local Studio" in index_html
+    assert "<title>Local Studio</title>" in index_html
+    assert "OpenAI Local Studio" not in index_html
     assert "view==='studio'" in index_html
     assert "go('studio')" in index_html
     assert "openai.localStudio.settings.v1" in app_js
+    assert "localStudioProviders:[]" in app_js
+    assert "provider_id:this.localStudioProviderId" in app_js
+    assert "selectLocalStudioProvider(provider.id)" in index_html
+    assert "addLocalStudioProvider()" in index_html
     assert "loadLocalStudioModels()" in app_js
     assert "'/api/local-studio/models'" in app_js
     assert "'/api/local-studio/conversations'" in app_js
@@ -240,6 +245,13 @@ def test_static_frontend_exposes_openai_local_studio_workbench():
     assert "selectLocalStudioInterfaceMode(value)" in app_js
     assert "localStudioStream:'on'" in app_js
     assert "localStudioControlAvailable('stream')" in app_js
+    assert "localStudioSearch:'off'" in app_js
+    assert "search:this.localStudioSearch==='on'" in app_js
+    assert "localStudioCacheEnabled:false" in app_js
+    assert "cache_enabled:!!this.localStudioCacheEnabled" in app_js
+    assert "cache_namespace:this.localStudioCacheNamespace" in app_js
+    assert "OpenAI web_search" in index_html
+    assert "Local request cache" in index_html
     assert "sendLocalStudioStream(body)" in app_js
     assert "local_studio.delta" in app_js
     assert "localStudioPendingTitle" in app_js
