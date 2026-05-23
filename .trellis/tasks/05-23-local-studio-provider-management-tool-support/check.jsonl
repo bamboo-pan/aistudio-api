@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/index.md","reason":"Verification must use the same backend entry checklist as implementation."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Quality verification should re-check the Local Studio scenario contract and code quality notes."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Check that validation, upstream errors, and secret handling still conform after the provider change."}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Request-log redaction and secret handling are part of the Local Studio flow."}
+{"file":".trellis/spec/guides/index.md","reason":"Shared guide index for the final quality pass."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Final checks need to confirm backend/UI contract consistency across layers."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Final checks should confirm provider/tool constants were not duplicated in conflicting ways."}

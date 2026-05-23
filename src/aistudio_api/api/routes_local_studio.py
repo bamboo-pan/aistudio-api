@@ -7,7 +7,7 @@ import time
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from fastapi.responses import FileResponse
 
@@ -17,8 +17,8 @@ from aistudio_api.infrastructure.local_studio import (
     filter_chat_models,
     local_studio_chat_path,
     local_studio_models_path,
+    resolve_local_studio_provider_settings,
     normalize_interface_mode,
-    normalize_openai_base_url,
     parse_local_studio_output,
     parse_local_studio_stream_event,
     upstream_url,
@@ -34,17 +34,28 @@ def _error_detail(message: str, error_type: str = "bad_request") -> dict[str, st
     return {"message": message, "type": error_type}
 
 
-def _settings_from_payload(payload: dict[str, Any]) -> tuple[str, str, int]:
+def _internal_base_url(request: Request | None, mode: str) -> str | None:
+    if request is None:
+        return None
+    version = "v1beta" if normalize_interface_mode(mode) == "gemini" else "v1"
+    return str(request.base_url).rstrip("/") + f"/{version}"
+
+
+def _settings_from_payload(payload: dict[str, Any], request: Request | None = None) -> tuple[str, str, str, int]:
     try:
-        base_url = normalize_openai_base_url(str(payload.get("base_url") or payload.get("apiUrl") or ""))
+        mode = str(payload.get("interface_mode") or payload.get("mode") or "responses")
+        provider_type, base_url, token = resolve_local_studio_provider_settings(
+            provider_type=str(payload.get("provider_type") or payload.get("providerType") or payload.get("provider_kind") or payload.get("providerKind") or ""),
+            base_url=str(payload.get("base_url") or payload.get("apiUrl") or ""),
+            token=str(payload.get("api_key") or payload.get("token") or ""),
+            mode=mode,
+            internal_base_url=_internal_base_url(request, mode),
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=_error_detail(str(exc), "invalid_request_error")) from exc
-    token = str(payload.get("api_key") or payload.get("token") or "").strip()
-    if "\n" in token or "\r" in token:
-        raise HTTPException(status_code=400, detail=_error_detail("API token must be a single line", "invalid_request_error"))
     timeout = int(payload.get("timeout") or 120)
     timeout = max(1, min(timeout, 600))
-    return base_url, token, timeout
+    return provider_type, base_url, token, timeout
 
 
 def _mode_from_payload(payload: dict[str, Any], *, default: str = "responses") -> str:
@@ -176,8 +187,8 @@ async def health() -> dict[str, Any]:
 
 
 @router.post("/models")
-async def list_models(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
-    base_url, token, timeout = _settings_from_payload(payload)
+async def list_models(request: Request, payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    provider_type, base_url, token, timeout = _settings_from_payload(payload, request)
     mode = _mode_from_payload(payload)
     url = upstream_url(base_url, local_studio_models_path(mode))
     headers = _auth_headers(token)
@@ -272,9 +283,9 @@ async def get_asset(asset_path: str) -> FileResponse:
 
 
 @router.post("/chat")
-async def chat(payload: dict[str, Any] = Body(...)):
+async def chat(request: Request, payload: dict[str, Any] = Body(...)):
     store = LocalStudioStore()
-    base_url, token, timeout = _settings_from_payload(payload)
+    provider_type, base_url, token, timeout = _settings_from_payload(payload, request)
     mode = _mode_from_payload(payload)
     options = _options_from_payload(payload)
     model = str(payload.get("model") or "").strip()
@@ -327,6 +338,7 @@ async def chat(payload: dict[str, Any] = Body(...)):
                 mode=mode,
                 model=model,
                 request_body=request_body,
+                provider_type=provider_type,
                 provider_id=str(payload.get("provider_id") or ""),
                 provider_name=str(options.get("provider_name") or payload.get("provider_name") or ""),
                 namespace=str(options.get("cache_namespace") or "local_studio"),

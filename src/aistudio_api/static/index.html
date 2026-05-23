@@ -386,7 +386,7 @@
               <div class="local-studio-waiting"><span class="local-studio-spinner"></span><div><strong x-text="localStudioPendingTitle"></strong><small x-text="localStudioPendingDetail"></small></div></div>
             </div>
           </div>
-          <div class="local-studio-empty local-studio-empty-chat" x-show="!localStudioActiveMessages.length">连接兼容 OpenAI 的 /v1 地址后开始对话</div>
+          <div class="local-studio-empty local-studio-empty-chat" x-show="!localStudioActiveMessages.length">选择 Provider 和模型后开始对话</div>
         </div>
         <div class="local-studio-composer">
           <div class="local-studio-file-strip" x-show="localStudioFiles.length" x-cloak>
@@ -427,11 +427,14 @@
                 </div>
               </div>
               <button type="button" class="btn btn-sm" @click="addLocalStudioProvider()">新增</button>
+              <button type="button" class="btn btn-sm" x-show="localStudioProviderType==='openai'" x-cloak @click="removeLocalStudioProvider()">删除</button>
             </div>
           </div>
+          <div class="local-studio-size-note">Provider Type: <span x-text="localStudioProviderTypeLabel()"></span></div>
           <label class="local-studio-field"><span>Provider Name</span><input type="text" x-model="localStudioSettings.name" @change="saveLocalStudioSettings()" placeholder="Google AI Studio"></label>
-          <label class="local-studio-field"><span>Base URL</span><input type="url" x-model="localStudioSettings.baseUrl" @change="saveLocalStudioSettings()" placeholder="https://api.openai.com/v1"></label>
-          <label class="local-studio-field"><span>API Token</span><input type="password" x-model="localStudioSettings.apiKey" @change="saveLocalStudioSettings()" placeholder="sk-... 或兼容服务 token"></label>
+          <label class="local-studio-field" x-show="localStudioProviderType==='openai'" x-cloak><span>Base URL</span><input type="url" x-model="localStudioSettings.baseUrl" @change="saveLocalStudioSettings()" placeholder="https://api.openai.com/v1"></label>
+          <label class="local-studio-field" x-show="localStudioProviderType==='openai'" x-cloak><span>API Token</span><input type="password" x-model="localStudioSettings.apiKey" @change="saveLocalStudioSettings()" placeholder="sk-... 或兼容服务 token"></label>
+          <div class="local-studio-size-note" x-show="localStudioProviderType==='google-ai-studio'" x-cloak>Google AI Studio 使用当前已登录账号，不需要配置 URL 或 token。</div>
           <label class="local-studio-field"><span>Timeout</span><input type="number" min="1" max="600" step="1" x-model.number="localStudioSettings.timeout" @change="saveLocalStudioSettings()"></label>
           <div class="local-studio-field">
             <span>Interface</span>
@@ -457,9 +460,8 @@
         <section class="local-studio-panel">
           <div class="local-studio-pane-head"><div><div class="local-studio-kicker">Runtime</div><h2>运行</h2></div></div>
           <div class="runtime-toggle" x-show="localStudioControlAvailable('stream')"><span>Stream</span><button type="button" :class="{active:localStudioStream==='on'}" @click="localStudioStream=localStudioStream==='on'?'off':'on';saveLocalStudioSettings()" x-text="localStudioStream==='on'?'开启':'关闭'"></button></div>
-          <div class="runtime-toggle" x-show="localStudioControlAvailable('search')"><span>OpenAI web_search</span><button type="button" :class="{active:localStudioSearch==='on'}" @click="localStudioSearch=localStudioSearch==='on'?'off':'on';saveLocalStudioSettings()" x-text="localStudioSearch==='on'?'开启':'关闭'"></button></div>
-          <div class="runtime-toggle"><span>Local request cache</span><button type="button" :class="{active:localStudioCacheEnabled}" @click="localStudioCacheEnabled=!localStudioCacheEnabled;saveLocalStudioSettings()" x-text="localStudioCacheEnabled?'开启':'关闭'"></button></div>
-          <label class="local-studio-field" x-show="localStudioCacheEnabled" x-cloak><span>Cache Namespace</span><input type="text" x-model="localStudioCacheNamespace" @change="saveLocalStudioSettings()" placeholder="local_studio"></label>
+          <div class="runtime-toggle" x-show="localStudioControlAvailable('search')"><span>Web search</span><button type="button" :class="{active:localStudioSearch==='on'}" @click="localStudioSearch=localStudioSearch==='on'?'off':'on';saveLocalStudioSettings()" x-text="localStudioSearch==='on'?'开启':'关闭'"></button></div>
+          <label class="local-studio-field"><span>Cache Namespace (enabled)</span><input type="text" x-model="localStudioCacheNamespace" @change="saveLocalStudioSettings()" placeholder="local_studio"></label>
           <div class="capability-grid local-studio-capabilities">
             <template x-for="item in [{key:'text',label:'文本',available:localStudioSelectedCaps.text_output!==false},{key:'files',label:'文件',available:localStudioControlAvailable('files')},{key:'thinking',label:'推理',available:localStudioControlAvailable('thinking')},{key:'stream',label:'流式',available:localStudioControlAvailable('stream')},{key:'tools',label:'工具',available:localStudioSelectedCaps.tools!==false},{key:'structured',label:'结构化',available:localStudioSelectedCaps.structured_output!==false}]" :key="item.key">
               <div class="capability-chip" :class="{available:item.available}"><span x-text="item.label"></span><strong x-text="item.available?'可用':'不可用'"></strong></div>

@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 
 import httpx
@@ -8,7 +9,7 @@ from aistudio_api.api.app import app
 from aistudio_api.api.dependencies import get_client
 from aistudio_api.api.state import runtime_state
 from aistudio_api.domain.model_capabilities import clear_dynamic_model_capabilities, get_model_capabilities
-from aistudio_api.domain.models import Candidate, ModelOutput
+from aistudio_api.domain.models import Candidate, GeneratedImage, ModelOutput
 
 
 class FakeTextClient:
@@ -23,6 +24,15 @@ class FakeTextClient:
         return ModelOutput(
             candidates=[Candidate(text=self.text, thinking=self.thinking, function_calls=self.function_calls)],
             usage={"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7},
+        )
+
+
+class FakeTextAndImageClient(FakeTextClient):
+    async def generate_image(self, **kwargs):
+        self.calls.append({"image": kwargs})
+        return ModelOutput(
+            candidates=[Candidate(text="revised image", images=[GeneratedImage(mime="image/png", data=b"image-bytes", size=11)])],
+            usage={"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3},
         )
 
 
@@ -368,6 +378,73 @@ def test_openai_responses_accepts_web_search_tool_and_outputs_search_call():
     assert body["output"][0]["type"] == "web_search_call"
     assert body["output"][1]["content"][0]["text"] == "grounded"
     assert client.calls[0]["tools"] == [[None, None, None, [None, [[]]]]]
+
+
+def test_openai_responses_accepts_image_generation_tool():
+    client = FakeTextAndImageClient(text="unused")
+
+    response = request_with_client(
+        client,
+        "POST",
+        "/v1/responses",
+        json={
+            "model": "gemini-3-flash-preview",
+            "input": "draw a small test square",
+            "tools": [{"type": "image_generation", "model": "gpt-image-2", "size": "1536x864"}],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    image_item = body["output"][0]
+    assert image_item["type"] == "image_generation_call"
+    assert base64.b64decode(image_item["result"]) == b"image-bytes"
+    image_call = client.calls[0]["image"]
+    assert image_call["model"] == "gemini-3.1-flash-image-preview"
+    assert image_call["prompt"] == "draw a small test square\n\nUse a square 1:1 composition."
+
+
+def test_openai_responses_combines_web_search_and_image_generation_tool():
+    client = FakeTextAndImageClient(text="searched image prompt")
+
+    response = request_with_client(
+        client,
+        "POST",
+        "/v1/responses",
+        json={
+            "model": "gemini-3-flash-preview",
+            "input": "search then draw",
+            "tools": [{"type": "web_search_preview"}, {"type": "image_generation", "model": "gpt-image-2"}],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [item["type"] for item in body["output"]] == ["web_search_call", "image_generation_call"]
+    assert client.calls[0]["tools"] == [[None, None, None, [None, [[]]]]]
+    assert client.calls[1]["image"]["prompt"] == "searched image prompt\n\nUse a square 1:1 composition."
+    assert {key: body["usage"][key] for key in ("prompt_tokens", "completion_tokens", "total_tokens")} == {
+        "prompt_tokens": 3,
+        "completion_tokens": 4,
+        "total_tokens": 7,
+    }
+
+
+def test_openai_responses_streams_image_generation_tool_events():
+    client = FakeTextAndImageClient(text="unused")
+
+    response = request_with_client(
+        client,
+        "POST",
+        "/v1/responses",
+        json={"model": "gemini-3-flash-preview", "input": "draw", "stream": True, "tools": [{"type": "image_generation"}]},
+    )
+
+    assert response.status_code == 200
+    events = response_stream_events(response.text)
+    assert any(event_name == "response.image_generation_call.partial_image" for event_name, _ in events)
+    completed = [data for event_name, data in events if event_name == "response.completed"][0]
+    assert completed["response"]["output"][0]["type"] == "image_generation_call"
 
 
 def test_openai_responses_streaming_emits_responses_events():
