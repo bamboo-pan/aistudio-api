@@ -8,6 +8,7 @@ import pytest
 from aistudio_api.api.app import app
 from aistudio_api.api.dependencies import get_client
 from aistudio_api.api.state import runtime_state
+from aistudio_api.application.api_service import _image_size_for_google_provider
 from aistudio_api.domain.model_capabilities import clear_dynamic_model_capabilities, get_model_capabilities
 from aistudio_api.domain.models import Candidate, GeneratedImage, ModelOutput
 
@@ -401,7 +402,34 @@ def test_openai_responses_accepts_image_generation_tool():
     assert base64.b64decode(image_item["result"]) == b"image-bytes"
     image_call = client.calls[0]["image"]
     assert image_call["model"] == "gemini-3.1-flash-image-preview"
-    assert image_call["prompt"] == "draw a small test square\n\nUse a square 1:1 composition."
+    assert image_call["prompt"] == "draw a small test square\n\nUse a horizontal 16:9 composition."
+
+
+def test_openai_responses_maps_image_tool_sizes_to_google_provider_sizes():
+    cases = [
+        ("1024x1536", "1024x1792", "Use a vertical 9:16 composition."),
+        ("1536x1024", "1792x1024", "Use a horizontal 16:9 composition."),
+        ("1536x864", "1792x1024", "Use a horizontal 16:9 composition."),
+    ]
+    for requested_size, expected_size, expected_suffix in cases:
+        assert _image_size_for_google_provider(requested_size) == expected_size
+        client = FakeTextAndImageClient(text="unused")
+
+        response = request_with_client(
+            client,
+            "POST",
+            "/v1/responses",
+            json={
+                "model": "gemini-3-flash-preview",
+                "input": "draw",
+                "tools": [{"type": "image_generation", "model": "gpt-image-2", "size": requested_size}],
+            },
+        )
+
+        assert response.status_code == 200
+        image_call = client.calls[0]["image"]
+        assert image_call["generation_config_overrides"] == {"output_image_size": [None, "1K"]}
+        assert image_call["prompt"] == f"draw\n\n{expected_suffix}"
 
 
 def test_openai_responses_combines_web_search_and_image_generation_tool():

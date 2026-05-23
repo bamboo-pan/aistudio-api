@@ -1261,7 +1261,12 @@ def _responses_toolless_payload(payload: dict[str, Any], skip_tool_type: str) ->
 
 def _image_size_for_google_provider(size: Any) -> str:
     raw_size = str(size or DEFAULT_IMAGE_SIZE).strip().lower()
-    return raw_size if raw_size in {"1024x1024", "1024x1536", "1536x1024"} else DEFAULT_IMAGE_SIZE
+    return {
+        "1024x1024": "1024x1024",
+        "1024x1536": "1024x1792",
+        "1536x1024": "1792x1024",
+        "1536x864": "1792x1024",
+    }.get(raw_size, DEFAULT_IMAGE_SIZE)
 
 
 def _file_path_to_image_data_url(path: str) -> str:
