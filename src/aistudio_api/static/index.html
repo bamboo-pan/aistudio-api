@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>OpenAI Local Studio</title>
+<title>Local Studio</title>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body x-data="app()" x-init="init()" :class="{'sidebar-collapsed':sidebarCollapsed}">
@@ -23,7 +23,7 @@
       <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
       <span class="nav-label">Playground</span>
     </button>
-    <button class="nav-item" :class="{active:view==='studio'}" @click="go('studio')" title="OpenAI Local Studio" aria-label="OpenAI Local Studio">
+    <button class="nav-item" :class="{active:view==='studio'}" @click="go('studio')" title="Local Studio" aria-label="Local Studio">
       <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10"/><path d="M7 12h5"/><path d="M14 15l2 2 4-5"/></svg>
       <span class="nav-label">Local Studio</span>
     </button>
@@ -287,7 +287,7 @@
     </div>
   </div>
 
-  <!-- OpenAI Local Studio -->
+  <!-- Local Studio -->
   <div id="studio-page" class="page-wrap local-studio-page" :class="{active:view==='studio'}">
     <div class="local-studio-shell">
       <aside class="local-studio-history">
@@ -336,7 +336,7 @@
         <div class="local-studio-hero">
           <div>
             <div class="local-studio-kicker" x-text="localStudioInterfaceModeLabel">OpenAI Responses</div>
-            <h1>OpenAI Local Studio</h1>
+            <h1>Local Studio</h1>
           </div>
           <div class="local-studio-status">
             <span x-text="localStudioCanConnect()?'已配置接口':'等待接口'"></span>
@@ -402,7 +402,7 @@
           <div class="local-studio-compose-row">
             <input x-ref="localStudioFileInput" type="file" :accept="localStudioFileAccept()" multiple hidden @change="attachLocalStudioFiles($event)">
             <button class="attach-btn" :disabled="localStudioBusy" @click="$refs.localStudioFileInput.click()" title="上传附件"><svg viewBox="0 0 24 24"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg></button>
-            <textarea x-model="localStudioDraft" rows="1" placeholder="向 OpenAI Local Studio 发送消息、图片或文件..." @keydown.enter.prevent="if(!$event.shiftKey)sendLocalStudioMessage()"></textarea>
+            <textarea x-model="localStudioDraft" rows="1" placeholder="向 Local Studio 发送消息、图片或文件..." @keydown.enter.prevent="if(!$event.shiftKey)sendLocalStudioMessage()"></textarea>
             <button class="send" :disabled="!localStudioCanSend" @click="sendLocalStudioMessage()" title="发送"><svg viewBox="0 0 24 24"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg></button>
           </div>
         </div>
@@ -417,6 +417,19 @@
             </div>
             <button class="btn btn-sm btn-primary" :disabled="localStudioModelsLoading||!localStudioCanConnect()" @click="loadLocalStudioModels()" x-text="localStudioModelsLoading?'加载中':'加载模型'"></button>
           </div>
+          <div class="local-studio-field">
+            <span>Provider</span>
+            <div class="local-studio-provider-row">
+              <div class="cselect local-studio-select" :class="{open:openSelect==='localStudioProvider'}" @click.stop>
+                <div class="cselect-btn" @click="toggleSelect('localStudioProvider',$event)" tabindex="0"><span x-text="currentLocalStudioProvider().name||'选择 Provider'"></span><span class="arrow"></span></div>
+                <div class="cselect-menu">
+                  <template x-for="provider in localStudioProviderOptions" :key="provider.id"><div class="cselect-opt" :class="{active:localStudioProviderId===provider.id}" @click="selectLocalStudioProvider(provider.id)" x-text="provider.label"></div></template>
+                </div>
+              </div>
+              <button type="button" class="btn btn-sm" @click="addLocalStudioProvider()">新增</button>
+            </div>
+          </div>
+          <label class="local-studio-field"><span>Provider Name</span><input type="text" x-model="localStudioSettings.name" @change="saveLocalStudioSettings()" placeholder="Google AI Studio"></label>
           <label class="local-studio-field"><span>Base URL</span><input type="url" x-model="localStudioSettings.baseUrl" @change="saveLocalStudioSettings()" placeholder="https://api.openai.com/v1"></label>
           <label class="local-studio-field"><span>API Token</span><input type="password" x-model="localStudioSettings.apiKey" @change="saveLocalStudioSettings()" placeholder="sk-... 或兼容服务 token"></label>
           <label class="local-studio-field"><span>Timeout</span><input type="number" min="1" max="600" step="1" x-model.number="localStudioSettings.timeout" @change="saveLocalStudioSettings()"></label>
@@ -444,6 +457,9 @@
         <section class="local-studio-panel">
           <div class="local-studio-pane-head"><div><div class="local-studio-kicker">Runtime</div><h2>运行</h2></div></div>
           <div class="runtime-toggle" x-show="localStudioControlAvailable('stream')"><span>Stream</span><button type="button" :class="{active:localStudioStream==='on'}" @click="localStudioStream=localStudioStream==='on'?'off':'on';saveLocalStudioSettings()" x-text="localStudioStream==='on'?'开启':'关闭'"></button></div>
+          <div class="runtime-toggle" x-show="localStudioControlAvailable('search')"><span>OpenAI web_search</span><button type="button" :class="{active:localStudioSearch==='on'}" @click="localStudioSearch=localStudioSearch==='on'?'off':'on';saveLocalStudioSettings()" x-text="localStudioSearch==='on'?'开启':'关闭'"></button></div>
+          <div class="runtime-toggle"><span>Local request cache</span><button type="button" :class="{active:localStudioCacheEnabled}" @click="localStudioCacheEnabled=!localStudioCacheEnabled;saveLocalStudioSettings()" x-text="localStudioCacheEnabled?'开启':'关闭'"></button></div>
+          <label class="local-studio-field" x-show="localStudioCacheEnabled" x-cloak><span>Cache Namespace</span><input type="text" x-model="localStudioCacheNamespace" @change="saveLocalStudioSettings()" placeholder="local_studio"></label>
           <div class="capability-grid local-studio-capabilities">
             <template x-for="item in [{key:'text',label:'文本',available:localStudioSelectedCaps.text_output!==false},{key:'files',label:'文件',available:localStudioControlAvailable('files')},{key:'thinking',label:'推理',available:localStudioControlAvailable('thinking')},{key:'stream',label:'流式',available:localStudioControlAvailable('stream')},{key:'tools',label:'工具',available:localStudioSelectedCaps.tools!==false},{key:'structured',label:'结构化',available:localStudioSelectedCaps.structured_output!==false}]" :key="item.key">
               <div class="capability-chip" :class="{available:item.available}"><span x-text="item.label"></span><strong x-text="item.available?'可用':'不可用'"></strong></div>

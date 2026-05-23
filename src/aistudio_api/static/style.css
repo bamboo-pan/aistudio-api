@@ -268,7 +268,7 @@ select.sel:focus,.sel:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(
 .cselect-opt.active::before{content:'✓';font-size:12px}
 .cselect-lg .cselect-btn{padding:8px 12px;font-size:14px;border-radius:8px}
 
-/* OpenAI Local Studio */
+/* Local Studio */
 .local-studio-page{background:#f6f7f8;min-height:0}
 .local-studio-shell{width:100%;height:100%;display:grid;grid-template-columns:300px minmax(0,1fr) 340px;gap:14px;padding:16px;overflow:hidden}
 .local-studio-history,.local-studio-settings,.local-studio-chat-panel{min-width:0;min-height:0;border:1px solid var(--border);border-radius:8px;background:#fff;box-shadow:0 10px 30px rgba(15,23,42,.04);overflow:hidden}
@@ -331,6 +331,9 @@ select.sel:focus,.sel:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(
 .local-studio-select{width:100%}
 .local-studio-select .cselect-btn{min-height:36px;border-radius:8px}
 .local-studio-select .cselect-menu{width:100%}
+.local-studio-provider-row{display:flex;align-items:center;gap:8px;min-width:0}
+.local-studio-provider-row .local-studio-select{flex:1}
+.local-studio-provider-row .btn{flex-shrink:0}
 .local-studio-grid-controls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .local-studio-size-note{font-size:12px;color:var(--muted);line-height:1.45;border-top:1px solid var(--border);padding-top:10px}
 

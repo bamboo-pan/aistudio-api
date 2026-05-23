@@ -317,6 +317,52 @@ async def chat(payload: dict[str, Any] = Body(...)):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=_error_detail(str(exc), "invalid_request_error")) from exc
 
+    cache_enabled = bool(options.get("cache_enabled"))
+    request_cache_key = ""
+    if cache_enabled:
+        try:
+            request_cache_key = store.request_cache_key(
+                base_url=base_url,
+                token=token,
+                mode=mode,
+                model=model,
+                request_body=request_body,
+                provider_id=str(payload.get("provider_id") or ""),
+                provider_name=str(options.get("provider_name") or payload.get("provider_name") or ""),
+                namespace=str(options.get("cache_namespace") or "local_studio"),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=_error_detail(str(exc), "invalid_request_error")) from exc
+
+        cached_response = store.get_request_cache(request_cache_key)
+        if isinstance(cached_response, dict):
+            cached_assistant = cached_response.get("assistant") if isinstance(cached_response.get("assistant"), dict) else {}
+            if cached_assistant:
+                store.add_assistant_message(
+                    conversation,
+                    content=str(cached_assistant.get("content") or ""),
+                    thinking=str(cached_assistant.get("thinking") or ""),
+                    usage=cached_assistant.get("usage") if isinstance(cached_assistant.get("usage"), dict) else None,
+                    images=cached_assistant.get("images") if isinstance(cached_assistant.get("images"), list) else None,
+                    error=str(cached_assistant.get("error") or ""),
+                    cache={"enabled": True, "hit": True, "key": request_cache_key},
+                )
+                saved = store.save(conversation)
+                result = {
+                    "conversation": saved,
+                    "request": request_body,
+                    "elapsed_ms": 0,
+                    "upstream_id": cached_response.get("upstream_id"),
+                    "interface_mode": mode,
+                    "cache": {"hit": True, "cache_key": request_cache_key},
+                }
+                if options.get("stream"):
+                    return StreamingResponse(
+                        _stream_cached_local_studio_chat(result=result, assistant=saved["messages"][-1] if saved.get("messages") else {}),
+                        media_type="text/event-stream",
+                    )
+                return result
+
     if options.get("stream"):
         return StreamingResponse(
             _stream_local_studio_chat(
@@ -328,6 +374,8 @@ async def chat(payload: dict[str, Any] = Body(...)):
                 mode=mode,
                 model=model,
                 request_body=request_body,
+                cache_enabled=cache_enabled,
+                cache_key=request_cache_key,
             ),
             media_type="text/event-stream",
         )
@@ -342,7 +390,24 @@ async def chat(payload: dict[str, Any] = Body(...)):
         model=model,
         options=options,
         request_body=request_body,
+        cache_enabled=cache_enabled,
+        cache_key=request_cache_key,
     )
+
+
+async def _stream_cached_local_studio_chat(*, result: dict[str, Any], assistant: dict[str, Any]):
+    delta = {
+        "type": "local_studio.delta",
+        "content": str(assistant.get("content") or ""),
+        "thinking": str(assistant.get("thinking") or ""),
+        "usage": assistant.get("usage") if isinstance(assistant.get("usage"), dict) else None,
+        "error": str(assistant.get("error") or ""),
+        "cache": result.get("cache"),
+    }
+    if delta["content"] or delta["thinking"] or delta["usage"] or delta["error"]:
+        yield f"data: {json.dumps(delta, ensure_ascii=False)}\n\n".encode("utf-8")
+    done = {"type": "local_studio.completed", **result}
+    yield f"data: {json.dumps(done, ensure_ascii=False)}\n\n".encode("utf-8")
 
 
 async def _complete_local_studio_chat(
@@ -356,6 +421,8 @@ async def _complete_local_studio_chat(
     model: str,
     options: dict[str, Any],
     request_body: dict[str, Any],
+    cache_enabled: bool,
+    cache_key: str,
 ) -> dict[str, Any]:
     path = local_studio_chat_path(mode, model, stream=False)
     url = upstream_url(base_url, path)
@@ -396,9 +463,18 @@ async def _complete_local_studio_chat(
     images = store.save_response_images(parsed["image_candidates"])
     elapsed_ms = round((time.perf_counter() - started) * 1000)
     content = parsed["content"] or ("Generated image" if images else "")
-    store.add_assistant_message(conversation, content=content or "(no response content)", thinking=parsed["thinking"], usage=parsed["usage"], images=images)
+    cache_meta = None
+    if cache_enabled and cache_key:
+        cache_meta = {"enabled": True, "hit": False, "key": cache_key}
+    store.add_assistant_message(conversation, content=content or "(no response content)", thinking=parsed["thinking"], usage=parsed["usage"], images=images, cache=cache_meta)
     saved = store.save(conversation)
-    return {"conversation": saved, "request": request_body, "elapsed_ms": elapsed_ms, "upstream_id": data.get("id") if isinstance(data, dict) else None, "interface_mode": mode}
+    if cache_enabled and cache_key:
+        assistant = saved["messages"][-1] if isinstance(saved.get("messages"), list) and saved.get("messages") else {}
+        store.save_request_cache(cache_key, {"assistant": assistant, "upstream_id": data.get("id") if isinstance(data, dict) else None})
+    result = {"conversation": saved, "request": request_body, "elapsed_ms": elapsed_ms, "upstream_id": data.get("id") if isinstance(data, dict) else None, "interface_mode": mode}
+    if cache_enabled and cache_key:
+        result["cache"] = {"hit": False, "cache_key": cache_key}
+    return result
 
 
 async def _stream_local_studio_chat(
@@ -411,6 +487,8 @@ async def _stream_local_studio_chat(
     mode: str,
     model: str,
     request_body: dict[str, Any],
+    cache_enabled: bool,
+    cache_key: str,
 ):
     path = local_studio_chat_path(mode, model, stream=True)
     url = upstream_url(base_url, path)
@@ -498,11 +576,16 @@ async def _stream_local_studio_chat(
         thinking = "\n".join(part for part in thinking_parts if part).strip()
         if error_message and (content or thinking or images or usage):
             partial_note = f"Partial response saved before upstream stream ended: {error_message}"
-            store.add_assistant_message(conversation, content=content or ("Generated image" if images else ""), thinking=thinking, usage=usage, images=images, error=partial_note)
+            cache_meta = {"enabled": bool(cache_enabled), "hit": False, "key": cache_key} if cache_enabled and cache_key else None
+            store.add_assistant_message(conversation, content=content or ("Generated image" if images else ""), thinking=thinking, usage=usage, images=images, error=partial_note, cache=cache_meta)
         elif error_message:
             store.add_assistant_message(conversation, error=error_message)
         else:
-            store.add_assistant_message(conversation, content=content or ("Generated image" if images else "(no response content)"), thinking=thinking, usage=usage, images=images)
+            cache_meta = {"enabled": bool(cache_enabled), "hit": False, "key": cache_key} if cache_enabled and cache_key else None
+            store.add_assistant_message(conversation, content=content or ("Generated image" if images else "(no response content)"), thinking=thinking, usage=usage, images=images, cache=cache_meta)
         saved = store.save(conversation)
+        if cache_enabled and cache_key and not error_message:
+            assistant = saved["messages"][-1] if isinstance(saved.get("messages"), list) and saved.get("messages") else {}
+            store.save_request_cache(cache_key, {"assistant": assistant, "upstream_id": None})
         done = {"type": "local_studio.completed", "conversation": saved, "elapsed_ms": elapsed_ms, "interface_mode": mode}
         yield f"data: {json.dumps(done, ensure_ascii=False)}\n\n".encode("utf-8")

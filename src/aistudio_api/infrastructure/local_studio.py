@@ -332,9 +332,14 @@ def build_responses_payload(
         reasoning["summary"] = summary
     if reasoning:
         payload["reasoning"] = reasoning
-    tool = build_image_generation_tool(options)
-    if tool:
-        payload["tools"] = [tool]
+    tools: list[dict[str, Any]] = []
+    if options.get("search"):
+        tools.append({"type": "web_search_preview"})
+    image_tool = build_image_generation_tool(options)
+    if image_tool:
+        tools.append(image_tool)
+    if tools:
+        payload["tools"] = tools
     if options.get("stream"):
         payload["stream"] = True
     return payload
@@ -382,15 +387,18 @@ def parse_responses_output(payload: Mapping[str, Any]) -> dict[str, Any]:
 class LocalStudioStore:
     """Persist local OpenAI studio conversations and uploaded/generated assets."""
 
-    def __init__(self, storage_dir: str | Path | None = None, *, max_conversations: int = 300) -> None:
+    def __init__(self, storage_dir: str | Path | None = None, *, max_conversations: int = 300, max_cache_entries: int = 500) -> None:
         self.root = Path(storage_dir or settings.local_studio_dir).expanduser().resolve()
         self.conversations_dir = self.root / "conversations"
         self.files_dir = self.root / "files"
+        self.request_cache_dir = self.root / "cache" / "requests"
         self.max_conversations = max_conversations
+        self.max_cache_entries = max_cache_entries
 
     def ensure_directory(self) -> None:
         self.conversations_dir.mkdir(parents=True, exist_ok=True)
         self.files_dir.mkdir(parents=True, exist_ok=True)
+        self.request_cache_dir.mkdir(parents=True, exist_ok=True)
 
     def list(self) -> list[dict[str, Any]]:
         self.ensure_directory()
@@ -496,6 +504,7 @@ class LocalStudioStore:
         usage: Mapping[str, Any] | None = None,
         images: list[Mapping[str, Any]] | None = None,
         error: str = "",
+        cache: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         message = {
             "id": uuid.uuid4().hex,
@@ -507,8 +516,59 @@ class LocalStudioStore:
             "error": error,
             "created_at": int(time.time()),
         }
+        if isinstance(cache, Mapping):
+            message["cache"] = dict(cache)
         conversation.setdefault("messages", []).append(message)
         return message
+
+    def request_cache_key(
+        self,
+        *,
+        base_url: str,
+        token: str,
+        mode: str,
+        model: str,
+        request_body: Mapping[str, Any],
+        provider_id: str = "",
+        provider_name: str = "",
+        namespace: str = "",
+    ) -> str:
+        provider_signature = {
+            "base_url": normalize_openai_base_url(base_url),
+            "token_hash": hashlib.sha256(str(token or "").encode("utf-8")).hexdigest() if token else "",
+            "mode": normalize_interface_mode(mode),
+            "model": str(model or ""),
+            "provider_id": str(provider_id or "").strip(),
+            "provider_name": str(provider_name or "").strip(),
+            "namespace": str(namespace or "").strip(),
+            "request": self._request_cache_shape(request_body),
+        }
+        payload = json.dumps(provider_signature, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def get_request_cache(self, cache_key: str) -> dict[str, Any] | None:
+        path = self._request_cache_path(cache_key)
+        if not path.is_file():
+            return None
+        try:
+            data = self._read_json(path)
+        except (OSError, ValueError, json.JSONDecodeError):
+            return None
+        return data if isinstance(data, dict) else None
+
+    def save_request_cache(self, cache_key: str, data: Mapping[str, Any]) -> dict[str, Any]:
+        self.ensure_directory()
+        payload = dict(data)
+        payload["cache_key"] = cache_key
+        payload.setdefault("created_at", int(time.time()))
+        payload["updated_at"] = int(time.time())
+        path = self._request_cache_path(cache_key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_suffix(".tmp")
+        tmp_path.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+        tmp_path.replace(path)
+        self._prune_old_request_cache()
+        return payload
 
     def truncate_for_rerun(self, conversation: dict[str, Any], message_index: int) -> dict[str, Any]:
         messages = conversation.get("messages") if isinstance(conversation.get("messages"), list) else []
@@ -621,6 +681,12 @@ class LocalStudioStore:
     def _path_for(self, conversation_id: str) -> Path:
         return self.conversations_dir / f"{self._validate_id(conversation_id)}.json"
 
+    def _request_cache_path(self, cache_key: str) -> Path:
+        key = str(cache_key or "").strip()
+        if not key:
+            raise ValueError("cache key is required")
+        return self.request_cache_dir / key[:2] / f"{key}.json"
+
     def _validate_id(self, value: str) -> str:
         conversation_id = str(value or "").strip()
         if not _ID_RE.fullmatch(conversation_id):
@@ -638,6 +704,14 @@ class LocalStudioStore:
         tmp_path.write_text(json.dumps(data, ensure_ascii=False, sort_keys=True), encoding="utf-8")
         tmp_path.replace(path)
 
+    def _request_cache_shape(self, request_body: Mapping[str, Any]) -> dict[str, Any]:
+        shape: dict[str, Any] = {}
+        for key, value in request_body.items():
+            if str(key) == "stream":
+                continue
+            shape[str(key)] = value
+        return shape
+
     def _normalize_message(self, message: Mapping[str, Any]) -> dict[str, Any]:
         role = "assistant" if message.get("role") == "assistant" else "user"
         normalized = {
@@ -651,6 +725,8 @@ class LocalStudioStore:
                 normalized[key] = str(message[key])
         if isinstance(message.get("usage"), Mapping):
             normalized["usage"] = dict(message["usage"])
+        if isinstance(message.get("cache"), Mapping):
+            normalized["cache"] = dict(message["cache"])
         for key in ("attachments", "images"):
             if isinstance(message.get(key), list):
                 normalized[key] = [self._strip_heavy_fields(dict(item)) for item in message[key] if isinstance(item, Mapping)]
@@ -703,6 +779,21 @@ class LocalStudioStore:
             files.append((data.get("updated_at") or data.get("created_at") or 0, path.name, path))
         files.sort(reverse=True)
         for _, _, path in files[self.max_conversations :]:
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                continue
+
+    def _prune_old_request_cache(self) -> None:
+        files: list[tuple[int, str, Path]] = []
+        for path in self.request_cache_dir.glob("**/*.json"):
+            try:
+                data = self._read_json(path)
+            except (OSError, ValueError, json.JSONDecodeError):
+                continue
+            files.append((int(data.get("updated_at") or data.get("created_at") or 0), path.name, path))
+        files.sort(reverse=True)
+        for _, _, path in files[self.max_cache_entries :]:
             try:
                 path.unlink()
             except FileNotFoundError:
