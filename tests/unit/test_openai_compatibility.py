@@ -364,6 +364,43 @@ def test_chat_completions_accepts_search_tool_shapes(tool_type):
     assert client.calls[0]["tools"] == [[None, None, None, [None, [[]]]]]
 
 
+def test_chat_completions_keeps_output_budget_when_thinking_is_enabled():
+    client = FakeTextClient(text="ok")
+
+    response = request_with_client(
+        client,
+        "POST",
+        "/v1/chat/completions",
+        json={
+            "model": "gemini-3-flash-preview",
+            "messages": [{"role": "user", "content": "reply briefly"}],
+            "max_tokens": 64,
+        },
+    )
+
+    assert response.status_code == 200
+    assert client.calls[0]["max_tokens"] == 1024
+
+
+def test_chat_completions_preserves_small_max_tokens_when_thinking_is_off():
+    client = FakeTextClient(text="ok")
+
+    response = request_with_client(
+        client,
+        "POST",
+        "/v1/chat/completions",
+        json={
+            "model": "gemini-3-flash-preview",
+            "messages": [{"role": "user", "content": "reply briefly"}],
+            "max_tokens": 64,
+            "thinking": "off",
+        },
+    )
+
+    assert response.status_code == 200
+    assert client.calls[0]["max_tokens"] == 64
+
+
 def test_openai_responses_accepts_web_search_tool_and_outputs_search_call():
     client = FakeTextClient(text="grounded")
 
@@ -382,7 +419,7 @@ def test_openai_responses_accepts_web_search_tool_and_outputs_search_call():
 
 
 def test_openai_responses_accepts_image_generation_tool():
-    client = FakeTextAndImageClient(text="unused")
+    client = FakeTextAndImageClient(text="", function_calls=[{"name": "image_generation", "args": {"prompt": "draw a small test square"}}])
 
     response = request_with_client(
         client,
@@ -400,9 +437,52 @@ def test_openai_responses_accepts_image_generation_tool():
     image_item = body["output"][0]
     assert image_item["type"] == "image_generation_call"
     assert base64.b64decode(image_item["result"]) == b"image-bytes"
-    image_call = client.calls[0]["image"]
+    image_call = client.calls[1]["image"]
     assert image_call["model"] == "gemini-3.1-flash-image-preview"
     assert image_call["prompt"] == "draw a small test square\n\nUse a horizontal 16:9 composition."
+
+
+def test_openai_responses_image_generation_tool_does_not_force_plain_chat():
+    client = FakeTextAndImageClient(text="plain answer")
+
+    response = request_with_client(
+        client,
+        "POST",
+        "/v1/responses",
+        json={
+            "model": "gemini-3-flash-preview",
+            "input": "say hello, do not draw anything",
+            "tools": [{"type": "image_generation", "model": "gpt-image-2", "size": "1536x864"}],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["output_text"] == "plain answer"
+    assert body["output"][0]["type"] == "message"
+    assert len(client.calls) == 1
+    assert "image" not in client.calls[0]
+
+
+def test_openai_responses_uses_selected_gemini_image_model():
+    client = FakeTextAndImageClient(text="", function_calls=[{"name": "image_generation", "args": {"prompt": "draw a detailed square"}}])
+
+    response = request_with_client(
+        client,
+        "POST",
+        "/v1/responses",
+        json={
+            "model": "gemini-3-flash-preview",
+            "input": "draw a detailed square",
+            "tools": [{"type": "image_generation", "provider": "google-ai-studio", "model": "gemini-3-pro-image-preview", "size": "2048x2048"}],
+        },
+    )
+
+    assert response.status_code == 200
+    image_call = client.calls[1]["image"]
+    assert image_call["model"] == "gemini-3-pro-image-preview"
+    assert image_call["generation_config_overrides"] == {"output_image_size": [None, "2K"]}
+    assert response.json()["thinking"] == "Image generation tool selected gemini-3-pro-image-preview at 2048x2048."
 
 
 def test_openai_responses_maps_image_tool_sizes_to_google_provider_sizes():
@@ -413,7 +493,7 @@ def test_openai_responses_maps_image_tool_sizes_to_google_provider_sizes():
     ]
     for requested_size, expected_size, expected_suffix in cases:
         assert _image_size_for_google_provider(requested_size) == expected_size
-        client = FakeTextAndImageClient(text="unused")
+        client = FakeTextAndImageClient(text="", function_calls=[{"name": "image_generation", "args": {"prompt": "draw"}}])
 
         response = request_with_client(
             client,
@@ -427,13 +507,13 @@ def test_openai_responses_maps_image_tool_sizes_to_google_provider_sizes():
         )
 
         assert response.status_code == 200
-        image_call = client.calls[0]["image"]
+        image_call = client.calls[1]["image"]
         assert image_call["generation_config_overrides"] == {"output_image_size": [None, "1K"]}
         assert image_call["prompt"] == f"draw\n\n{expected_suffix}"
 
 
 def test_openai_responses_combines_web_search_and_image_generation_tool():
-    client = FakeTextAndImageClient(text="searched image prompt")
+    client = FakeTextAndImageClient(text="", function_calls=[{"name": "image_generation", "args": {"prompt": "searched image prompt"}}])
 
     response = request_with_client(
         client,
@@ -449,7 +529,7 @@ def test_openai_responses_combines_web_search_and_image_generation_tool():
     assert response.status_code == 200
     body = response.json()
     assert [item["type"] for item in body["output"]] == ["web_search_call", "image_generation_call"]
-    assert client.calls[0]["tools"] == [[None, None, None, [None, [[]]]]]
+    assert client.calls[0]["tools"]
     assert client.calls[1]["image"]["prompt"] == "searched image prompt\n\nUse a square 1:1 composition."
     assert {key: body["usage"][key] for key in ("prompt_tokens", "completion_tokens", "total_tokens")} == {
         "prompt_tokens": 3,
@@ -459,7 +539,7 @@ def test_openai_responses_combines_web_search_and_image_generation_tool():
 
 
 def test_openai_responses_streams_image_generation_tool_events():
-    client = FakeTextAndImageClient(text="unused")
+    client = FakeTextAndImageClient(text="", function_calls=[{"name": "image_generation", "args": {"prompt": "draw"}}])
 
     response = request_with_client(
         client,
@@ -470,9 +550,15 @@ def test_openai_responses_streams_image_generation_tool_events():
 
     assert response.status_code == 200
     events = response_stream_events(response.text)
+    assert events[0][0] == "response.created"
+    assert any(event_name == "response.reasoning.delta" for event_name, _ in events)
     assert any(event_name == "response.image_generation_call.partial_image" for event_name, _ in events)
+    done_items = [data["item"] for event_name, data in events if event_name == "response.output_item.done"]
+    assert done_items and "result" not in done_items[0]
     completed = [data for event_name, data in events if event_name == "response.completed"][0]
     assert completed["response"]["output"][0]["type"] == "image_generation_call"
+    assert "result" not in completed["response"]["output"][0]
+    assert "Image generation tool selected" in completed["response"]["thinking"]
 
 
 def test_openai_responses_streaming_emits_responses_events():

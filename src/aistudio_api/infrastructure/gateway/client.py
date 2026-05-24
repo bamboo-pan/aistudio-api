@@ -95,6 +95,9 @@ class AIStudioClient:
         clear_templates = getattr(self._capture_service, "clear_templates", None)
         if callable(clear_templates):
             clear_templates()
+        clear_session_templates = getattr(self._session, "clear_templates", None)
+        if callable(clear_session_templates):
+            clear_session_templates()
         self._snapshot_cache.clear()
 
     def _dump_raw_exchange(

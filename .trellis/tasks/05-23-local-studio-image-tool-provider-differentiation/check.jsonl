@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend spec index for verification."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Required Local Studio automated/static/real verification matrix."}
+{"file":".trellis/tasks/05-23-local-studio-image-tool-provider-differentiation/research/current-implementation.md","reason":"Known failure modes to verify are fixed."}
+{"file":".trellis/tasks/05-23-local-studio-image-tool-provider-differentiation/research/provider-image-capabilities.md","reason":"Provider/model capability expectations for check."}

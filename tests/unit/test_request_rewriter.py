@@ -1,5 +1,7 @@
 import json
 
+from aistudio_api.infrastructure.gateway.client import AIStudioClient
+from aistudio_api.infrastructure.gateway.capture import RequestCaptureService
 from aistudio_api.infrastructure.gateway.request_rewriter import AistudioWireCodec, modify_body
 
 
@@ -141,3 +143,163 @@ def test_modify_body_uses_requested_model_even_when_template_model_differs():
 
     body = json.loads(rewritten)
     assert body[0] == "models/gemini-3.1-flash-image-preview"
+
+
+def test_modify_body_maps_discovered_gemini_35_flash_to_stable_wire_model():
+    original = '["models/gemini-3-flash-preview",[[[[null,"old"]],"user"]],null,[null,null,null,128],"!snap",null,null]'
+
+    rewritten = modify_body(
+        original,
+        model="gemini-3.5-flash",
+        prompt="hello",
+    )
+
+    body = json.loads(rewritten)
+    assert body[0] == "models/gemini-3-flash-preview"
+
+
+def test_clear_capture_state_clears_session_template_cache():
+    class FakeCaptureService:
+        def __init__(self):
+            self.cleared = False
+
+        def clear_templates(self):
+            self.cleared = True
+
+    class FakeSession:
+        def __init__(self):
+            self.cleared = False
+
+        def clear_templates(self):
+            self.cleared = True
+
+    client = AIStudioClient(use_pure_http=True)
+    capture_service = FakeCaptureService()
+    session = FakeSession()
+    client._capture_service = capture_service
+    client._session = session
+
+    client.clear_capture_state()
+
+    assert capture_service.cleared is True
+    assert session.cleared is True
+
+
+def test_capture_resolves_model_alias_before_template_and_cache():
+    class FakeSnapshotCache:
+        def __init__(self):
+            self.get_models = []
+            self.put_models = []
+
+        def get(self, prompt, model=None):
+            self.get_models.append(model)
+            return None
+
+        def put(self, prompt, snapshot, url, headers, body, model=None):
+            self.put_models.append(model)
+
+    class FakeSession:
+        def __init__(self):
+            self.template_models = []
+
+        async def capture_template(self, model):
+            self.template_models.append(model)
+            return {
+                "url": "https://aistudio.google.com/_/BardChatUi/data/batchexecute/GenerateContent",
+                "headers": {"content-type": "application/json"},
+                "body": '["models/gemini-3-flash-preview",[[[[null,"old"]],"user"]],null,[null,null,null,64],"template-snapshot",null,null]',
+            }
+
+        async def generate_snapshot(self, contents):
+            return "fresh-snapshot"
+
+    cache = FakeSnapshotCache()
+    session = FakeSession()
+    service = RequestCaptureService(session, cache)
+
+    import asyncio
+
+    captured = asyncio.run(service.capture("hello", model="gemini-3.5-flash"))
+
+    assert session.template_models == ["models/gemini-3-flash-preview"]
+    assert cache.get_models == ["models/gemini-3-flash-preview"]
+    assert cache.put_models == ["models/gemini-3-flash-preview"]
+    assert json.loads(captured.body)[0] == "models/gemini-3-flash-preview"
+
+
+def test_capture_with_images_obtains_template_before_rewrite():
+    class FakeSnapshotCache:
+        def __init__(self):
+            self.get_calls = 0
+            self.put_calls = 0
+
+        def get(self, prompt, model=None):
+            self.get_calls += 1
+            return None
+
+        def put(self, prompt, snapshot, url, headers, body, model=None):
+            self.put_calls += 1
+
+    class FakeSession:
+        def __init__(self):
+            self.template_models = []
+
+        async def capture_template(self, model):
+            self.template_models.append(model)
+            return {
+                "url": "https://aistudio.google.com/_/BardChatUi/data/batchexecute/GenerateContent",
+                "headers": {"content-type": "application/json"},
+                "body": '["models/gemini-3-flash-preview",[[[[null,"old"]],"user"]],null,[null,null,null,64],"template-snapshot",null,null]',
+            }
+
+        async def generate_snapshot(self, contents):
+            return "fresh-snapshot"
+
+    cache = FakeSnapshotCache()
+    session = FakeSession()
+    service = RequestCaptureService(session, cache)
+
+    import asyncio
+
+    captured = asyncio.run(service.capture("hello", model="gemini-3.5-flash", images=["fake.png"]))
+
+    assert session.template_models == ["models/gemini-3-flash-preview"]
+    assert cache.get_calls == 0
+    assert cache.put_calls == 0
+    assert json.loads(captured.body)[0] == "models/gemini-3-flash-preview"
+
+
+def test_capture_force_refresh_obtains_template_before_rewrite():
+    class FakeSnapshotCache:
+        def get(self, prompt, model=None):
+            return ("cached", "https://cached.example", {}, '["models/cached",[],null,null,"cached"]')
+
+        def put(self, prompt, snapshot, url, headers, body, model=None):
+            self.put_model = model
+
+    class FakeSession:
+        def __init__(self):
+            self.template_models = []
+
+        async def capture_template(self, model):
+            self.template_models.append(model)
+            return {
+                "url": "https://aistudio.google.com/_/BardChatUi/data/batchexecute/GenerateContent",
+                "headers": {"content-type": "application/json"},
+                "body": '["models/gemini-3-flash-preview",[[[[null,"old"]],"user"]],null,[null,null,null,64],"template-snapshot",null,null]',
+            }
+
+        async def generate_snapshot(self, contents):
+            return "fresh-snapshot"
+
+    cache = FakeSnapshotCache()
+    session = FakeSession()
+    service = RequestCaptureService(session, cache)
+
+    import asyncio
+
+    captured = asyncio.run(service.capture("hello", model="gemini-3.5-flash", force_refresh=True))
+
+    assert session.template_models == ["models/gemini-3-flash-preview"]
+    assert cache.put_model == "models/gemini-3-flash-preview"
+    assert json.loads(captured.body)[4] == "fresh-snapshot"

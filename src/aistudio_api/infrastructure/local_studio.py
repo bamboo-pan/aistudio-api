@@ -15,6 +15,7 @@ from typing import Any
 from urllib.parse import quote, unquote, urlparse
 
 from aistudio_api.config import settings
+from aistudio_api.domain.model_capabilities import get_model_capabilities
 
 
 _ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
@@ -39,6 +40,14 @@ _GPT_IMAGE_2_MAX_EDGE_EXCLUSIVE = 3840
 _GPT_IMAGE_2_MAX_PIXELS = 8_294_400
 _GPT_IMAGE_2_MIN_PIXELS = 655_360
 _GPT_IMAGE_2_MAX_RATIO = 3
+
+_OPENAI_IMAGE_PARAMETER_METADATA = {
+    "size": {"type": "string", "enum": [item["size"] for item in GPT_IMAGE_2_SIZE_OPTIONS], "default": "1024x1024"},
+    "quality": {"type": "string", "enum": ["auto", "low", "medium", "high"], "default": "auto"},
+    "background": {"type": "string", "enum": ["auto", "transparent", "opaque"], "default": "auto"},
+    "output_format": {"type": "string", "enum": ["png", "jpeg", "webp"], "default": "png"},
+    "output_compression": {"type": "integer", "minimum": 0, "maximum": 100, "default": 100},
+}
 
 _MIME_EXTENSIONS = {
     "application/json": ".json",
@@ -138,6 +147,10 @@ def filter_chat_models(models: Iterable[Mapping[str, Any]], mode: str = "respons
             continue
         if any(marker in lowered for marker in _NON_CHAT_MODEL_MARKERS):
             continue
+        capabilities = model.get("capabilities") if isinstance(model.get("capabilities"), Mapping) else None
+        registry_capabilities = _registered_model_capabilities(model_id)
+        if (isinstance(capabilities, Mapping) and capabilities.get("image_output") is True) or (registry_capabilities is not None and registry_capabilities.image_output):
+            continue
         if normalized_mode == "gemini" and "image" in lowered:
             continue
         item = dict(model, id=model_id)
@@ -147,6 +160,62 @@ def filter_chat_models(models: Iterable[Mapping[str, Any]], mode: str = "respons
         if not isinstance(item.get("capabilities"), Mapping):
             item["capabilities"] = default_capabilities_for_model(model_id, mode=normalized_mode, source=model)
         filtered.append(item)
+    return filtered
+
+
+def _registered_model_capabilities(model_id: str):
+    try:
+        return get_model_capabilities(model_id, strict=True)
+    except ValueError:
+        return None
+
+
+def _openai_image_model_metadata() -> dict[str, Any]:
+    return {
+        "sizes": [{"size": item["size"], "aspect_ratio": item["note"]} for item in GPT_IMAGE_2_SIZE_OPTIONS],
+        "response_formats": ["png", "jpeg", "webp"],
+        "defaults": {"size": "1024x1024", "n": 1, "response_format": "png"},
+        "parameters": dict(_OPENAI_IMAGE_PARAMETER_METADATA),
+        "unsupported_fields": [],
+        "ignored_fields": ["user"],
+    }
+
+
+def filter_image_models(models: Iterable[Mapping[str, Any]], mode: str = "responses", provider_type: str = LOCAL_STUDIO_PROVIDER_OPENAI) -> list[dict[str, Any]]:
+    normalized_mode = normalize_interface_mode(mode)
+    provider = normalize_provider_kind(provider_type, default=LOCAL_STUDIO_PROVIDER_OPENAI)
+    filtered: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for model in models:
+        model_id = _model_id(model, normalized_mode)
+        if not model_id or model_id in seen:
+            continue
+        lowered = model_id.lower()
+        capabilities = model.get("capabilities") if isinstance(model.get("capabilities"), Mapping) else None
+        registry_capabilities = _registered_model_capabilities(model_id)
+        is_openai_image_model = any(lowered.startswith(prefix) for prefix in _IMAGE_MODEL_PREFIXES)
+        is_image_model = is_openai_image_model or (isinstance(capabilities, Mapping) and capabilities.get("image_output") is True) or (registry_capabilities is not None and registry_capabilities.image_output)
+        if not is_image_model:
+            continue
+        if provider == LOCAL_STUDIO_PROVIDER_GOOGLE and (is_openai_image_model or registry_capabilities is None or not registry_capabilities.image_output):
+            continue
+        if provider == LOCAL_STUDIO_PROVIDER_OPENAI and registry_capabilities is not None and registry_capabilities.image_output and not is_openai_image_model:
+            continue
+        item = dict(model, id=model_id)
+        item.setdefault("object", "model")
+        item.setdefault("created", 0)
+        item.setdefault("owned_by", "local-studio")
+        if not isinstance(item.get("capabilities"), Mapping):
+            if registry_capabilities is not None:
+                item["capabilities"] = registry_capabilities.to_model_dict()["capabilities"]
+            else:
+                item["capabilities"] = {"image_output": True}
+        if registry_capabilities is not None and registry_capabilities.image_sizes and not isinstance(item.get("image_generation"), Mapping):
+            item["image_generation"] = registry_capabilities.to_model_dict()["image_generation"]
+        elif is_openai_image_model and not isinstance(item.get("image_generation"), Mapping):
+            item["image_generation"] = _openai_image_model_metadata()
+        filtered.append(item)
+        seen.add(model_id)
     return filtered
 
 
@@ -349,11 +418,31 @@ def validate_gpt_image_2_size(value: str) -> str:
     return f"{width}x{height}"
 
 
+def _normalized_image_provider(options: Mapping[str, Any]) -> str:
+    raw = options.get("image_tool_provider") or options.get("image_provider") or options.get("provider_type") or options.get("providerType")
+    if raw in (None, ""):
+        return LOCAL_STUDIO_PROVIDER_OPENAI
+    return normalize_provider_kind(str(raw), default=LOCAL_STUDIO_PROVIDER_OPENAI)
+
+
 def build_image_generation_tool(options: Mapping[str, Any] | None) -> dict[str, Any] | None:
     options = options or {}
     if not options.get("image_tool_enabled"):
         return None
-    tool: dict[str, Any] = {"type": "image_generation", "model": "gpt-image-2"}
+    provider = _normalized_image_provider(options)
+    requested_model = str(options.get("image_model") or options.get("imageToolModel") or "").strip()
+    if provider == LOCAL_STUDIO_PROVIDER_GOOGLE:
+        tool = {
+            "type": "image_generation",
+            "provider": LOCAL_STUDIO_PROVIDER_GOOGLE,
+            "model": requested_model or "gemini-3.1-flash-image-preview",
+        }
+        size = str(options.get("size") or "").strip()
+        if size:
+            tool["size"] = size
+        return tool
+
+    tool: dict[str, Any] = {"type": "image_generation", "model": requested_model or "gpt-image-2"}
     for key in ("size", "quality", "background", "output_format", "output_compression"):
         value = options.get(key)
         if value not in (None, ""):
