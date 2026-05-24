@@ -4,6 +4,8 @@
 
 这份计划用于验证 Local Studio 以及它复用的 WebUI 基础模块在真实环境中的完整用户路径和架构契约。测试必须从用户真实入口出发，覆盖浏览器 UI、后端 API、上游 provider、请求记录和本地持久化，不用 mock 结果替代真实链路。
 
+本文件是 Local Studio WebUI、共享基础 WebUI 模块、兼容 API、本地持久化、请求记录和真实 provider 集成的全局最高测试纲领。任何任务内 smoke 脚本、临时验证脚本、人工验收清单、PR 说明或测试报告都不能降低本文件的通过标准；如果脚本结果和本文件冲突，以本文件为准，并且必须先补齐脚本断言再声明系统测试通过。
+
 重点回归两个已报告问题：
 
 * Google AI Studio provider 在 Local Studio Responses 模式下开启图片工具后，对话触发生图时上游返回 `Please enable tool_config.include_server_side_tool_invocations to use Built-in tools with Function calling.`。
@@ -22,6 +24,21 @@
 * 测试脚本中采集到的关键 oracle 字段必须进入失败判定，不能只写入结果文件。例如高推理用例里的 `assistant_has_thinking=false`、`reasoning_summary_visible=false`、`contains_*_error=true` 都必须让测试失败，除非同一结果明确标记 `not_applicable` 且有原因。
 * 每次系统测试后必须做一次“计划-脚本对齐审计”：把本计划中的每条 P0/P1 通过标准映射到脚本断言或人工验收项；发现“计划写了但脚本只记录不 fail”的情况，测试结论必须标为失败或不完整。
 * 测试可引用密钥/凭据路径，但不能把真实 token、cookie、storage state、请求日志导出或生成图片提交到 Git。
+
+## 全局高风险遗漏类
+
+这些类别是系统测试最容易“看起来跑了、实际上没判定”的风险区。每轮完整系统测试必须逐项覆盖并在 `architecture-contract-results` 或等价报告中标记 pass/fail/not_applicable；`not_applicable` 必须有具体原因和证据。
+
+| 高风险遗漏类 | 典型遗漏 | 必须硬断言 |
+| --- | --- | --- |
+| UI 可见性与状态 | 脚本只检查 API 200，但 UI 没显示结果；`Reasoning summary`、图片、工具过程、引用、错误、cache 标记或 usage 被隐藏；pending/tool-running 状态残留 | 所有 `*_visible`、`has_*`、`completed`、pending/error/disabled 状态字段都必须进入 pass/fail；成功路径必须截图或 DOM 断言用户可见结果；失败路径必须断言输入框恢复可用 |
+| Provider 与 request-log 签名 | 请求走错 provider/base URL/tool schema；OpenAI-compatible 使用 Google-only tool；Google provider 泄露 token；日志阶段缺失但 summary 仍通过 | `contains_*` 错误签名、provider/tool 名、upstream URL、Authorization 脱敏、lifecycle phase、group id 都必须断言；发现错误签名或缺阶段必须 fail |
+| 能力过程保留 | reasoning/tool/search/image/usage/attachments 在 request log 有，但 API/UI/conversation 丢失；脚本只看最终文本 | 上游返回的 reasoning summary、tool call、search citation、image generation call、usage、附件引用必须至少在 API、最终 SSE、UI、conversation JSON、刷新恢复、request log 中按本计划要求保留；只剩最终文本或图片时必须 fail |
+| 恢复与重复路径 | 首次发送通过，但刷新、rerun、cache hit、错误重试、删除/导出后状态不一致 | 每个能力至少覆盖一个恢复路径；刷新后 UI 和 conversation JSON 一致；rerun 不污染旧消息；cache hit 保留可见详情和 cache 标记；删除/导出 lifecycle 可审计 |
+| Cache 隔离 | 同 prompt 在 provider/interface/model/tool/reasoning/附件/token/namespace 变化后误 hit；只验证 namespace miss | cache key 维度必须逐项变更并断言 miss；切回完全等价配置才允许 hit；命中结果必须按当前协议返回，不能丢 UI/usage/tool/reasoning details |
+| `not_applicable` 滥用 | provider/model 没返回能力时直接跳过，掩盖未覆盖的正向路径 | 每个 `not_applicable` 必须写明具体条件、模型/provider、证据字段和替代正向覆盖用例；同一能力在整轮测试中不能只有 `not_applicable` |
+| 测试 harness 漏判 | 结果文件记录 `assistant_has_thinking=false`、`secret_redacted=false`、`contains_*_error=true`、`reasoning_summary_visible=false`，但 `failures=[]` | 任何 expected/oracle 字段都必须映射到 fail 条件；计划-脚本对齐审计发现未映射字段时，本轮系统测试结论为失败或不完整 |
+| 安全与 artifact 边界 | 截图、server.log、request-log export、conversation JSON 或任务文件带真实 token/cookie/storage state/大图 payload | 提交前和归档前必须扫描 artifacts 与仓库变更；真实凭据、Authorization 明文、Google cookie、storage state、原始大图 payload 出现即 fail，并不得提交 |
 
 ## 真实环境
 
