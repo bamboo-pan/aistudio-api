@@ -948,3 +948,36 @@ Updated Local Studio Responses search to select provider-aware tool types, expan
 ### Next Steps
 
 - None - task complete
+
+
+## Session 29: Strengthen Local Studio system test contracts
+
+**Date**: 2026-05-24
+**Task**: Strengthen Local Studio system test contracts
+**Branch**: `feature/system-test-plan-architecture-contracts`
+
+### Summary
+
+Enhanced the Local Studio real system test plan with architecture contract assertions, provider-specific OpenAI Responses reasoning coverage, cache/provider isolation oracles, UI state-machine checks, and backend quality spec guidance for future system test plans.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5a3bc51` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
