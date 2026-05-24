@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from aistudio_api.config import camoufox_proxy_identity_options, settings
 from aistudio_api.infrastructure.gateway.wire_types import AistudioContent
@@ -22,6 +22,8 @@ log = logging.getLogger("aistudio.session")
 
 AI_STUDIO_URL = "https://aistudio.google.com/prompts/new_chat"
 AI_STUDIO_URL_FALLBACK = "https://aistudio.google.com/app/prompts/new_chat"
+AI_STUDIO_IMAGE_URL = "https://aistudio.google.com/prompts/new_image?model=imagen-4.0-generate-001"
+AI_STUDIO_IMAGE_URL_FALLBACK = "https://aistudio.google.com/app/prompts/new_image?model=imagen-4.0-generate-001"
 AI_STUDIO_HOME_URL = "https://aistudio.google.com/"
 AI_STUDIO_HOST = "aistudio.google.com"
 AI_DEVELOPERS_HOST = "ai.google.dev"
@@ -257,35 +259,94 @@ AI_STUDIO_TRIGGER_IMAGE_ONBOARDING_JS = r"""(() => {
 AI_STUDIO_SELECT_IMAGE_MODEL_JS = r"""(model) => {
     const targetModel = String(model || '').replace(/^models\//, '').toLowerCase();
     const labels = targetModel.includes('pro-image')
-        ? ['nano banana pro']
+        ? ['nano banana pro', 'banana pro', 'gemini 3 pro image', 'pro image']
         : targetModel.includes('flash-image')
-            ? ['nano banana 2', 'nano banana']
+            ? ['nano banana 2', 'nano banana', 'gemini 3.1 flash image', 'flash image']
             : [];
     if (!labels.length) return {selected: false, reason: 'not_image_model'};
 
-    const textOf = (el) => String(el.innerText || el.textContent || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+    const textOf = (el) => String(
+        el?.innerText ||
+        el?.textContent ||
+        el?.getAttribute?.('aria-label') ||
+        el?.getAttribute?.('title') ||
+        el?.getAttribute?.('data-value') ||
+        el?.getAttribute?.('data-model') ||
+        ''
+    ).replace(/\s+/g, ' ').trim();
     const visible = (el) => {
         const rect = el.getBoundingClientRect();
         const style = window.getComputedStyle(el);
         return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
     };
-    const bodyText = textOf(document.body).toLowerCase();
-    if (bodyText.includes(targetModel)) return {selected: false, reason: 'already_selected'};
+    const normalized = (value) => textOf(value).toLowerCase();
+    const modelPickerCandidates = Array.from(document.querySelectorAll('mat-select, [role="combobox"], button, [role="button"]'));
+    const sendLike = (label) => /\b(run|send|generate)\b|运行|发送|生成/.test(label);
+    const imageRoute = /new_image/i.test(window.location.pathname || window.location.href || '');
+    const imageContext = () => imageRoute || /nano banana|imagen|image generation|image model|image_edit_auto|图片|图像|生图/i.test(document.body?.innerText || '');
+    const pickerLike = (label) => /nano banana|imagen|image generation|image model|image_edit_auto|gemini 3(?:\.1)? .*image|flash image|pro image|图片|图像|生图/i.test(label);
+    const selectedNodes = () => Array.from(document.querySelectorAll('[aria-selected="true"], .selected, .active, .mat-mdc-option-active, [role="combobox"], mat-select'));
+    const selectedText = () => selectedNodes().filter(visible).map(normalized).join(' ');
+    if (labels.some((label) => selectedText().includes(label))) return {selected: false, reason: 'already_selected', label: selectedText().slice(0, 120)};
 
-    const candidates = Array.from(document.querySelectorAll('button, [role="button"]'));
+    let candidates = Array.from(document.querySelectorAll('button, [role="button"], [role="option"], mat-option, [data-value], [data-model]'));
+    const visibleLabels = () => candidates.filter(visible).map(textOf).filter(Boolean).slice(0, 18);
+    let openedLabel = '';
+    if (!candidates.some((candidate) => visible(candidate) && candidate.matches?.('[role="option"], mat-option, [data-value], [data-model]'))) {
+        if (!imageContext()) return {selected: false, reason: 'image_picker_not_open', visible: visibleLabels()};
+        for (const candidate of modelPickerCandidates) {
+            if (!visible(candidate)) continue;
+            if (candidate.disabled || candidate.getAttribute('aria-disabled') === 'true') continue;
+            const label = normalized(candidate);
+            if (!label || sendLike(label) || !pickerLike(label)) continue;
+            try { candidate.scrollIntoView({block: 'center', inline: 'center'}); } catch (e) {}
+            candidate.click();
+            openedLabel = textOf(candidate).slice(0, 120);
+            break;
+        }
+        candidates = Array.from(document.querySelectorAll('button, [role="button"], [role="option"], mat-option, [data-value], [data-model]'));
+    }
     for (const labelNeedle of labels) {
-        for (const button of candidates) {
-            if (!visible(button)) continue;
-            const label = textOf(button).toLowerCase();
+        for (const candidate of candidates) {
+            if (!visible(candidate)) continue;
+            const label = normalized(candidate);
             if (!label.includes(labelNeedle)) continue;
             if (label.includes('content_copy')) continue;
             if (labelNeedle === 'nano banana' && label.includes('nano banana pro')) continue;
-            button.click();
-            return {selected: true, label: textOf(button).slice(0, 120)};
+            try { candidate.scrollIntoView({block: 'center', inline: 'center'}); } catch (e) {}
+            candidate.click();
+            const selectedLabel = textOf(candidate).slice(0, 120);
+            return {selected: true, label: selectedLabel, opened: openedLabel, visible: visibleLabels()};
         }
     }
-    return {selected: false, reason: 'model_card_not_found'};
+    return {selected: false, reason: 'model_card_not_found', opened: openedLabel, visible: visibleLabels()};
 }"""
+
+AI_STUDIO_OPEN_IMAGE_MODEL_PICKER_JS = r"""(() => {
+    const textOf = (el) => String(el.innerText || el.textContent || el.getAttribute('aria-label') || el.getAttribute('title') || '').replace(/\s+/g, ' ').trim();
+    const visible = (el) => {
+        const rect = el.getBoundingClientRect();
+        const style = window.getComputedStyle(el);
+        return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+    };
+    const lowerBody = (document.body?.innerText || '').toLowerCase();
+    const imageRoute = /new_image/i.test(window.location.pathname || window.location.href || '');
+    const imageContext = imageRoute || /nano banana|imagen|image generation|image model|image_edit_auto|图片|图像|生图/i.test(lowerBody);
+    if (!imageContext) return {opened: false, reason: 'not_image_context'};
+    const isSendControl = (label) => /\b(run|send|generate)\b|运行|发送|生成/.test(label.toLowerCase());
+    const imagePickerLike = (label) => /nano banana|imagen|image generation|image model|image_edit_auto|gemini 3(?:\.1)? .*image|flash image|pro image|图片|图像|生图/i.test(label);
+    const candidates = Array.from(document.querySelectorAll('mat-select, [role="combobox"], button, [role="button"]'));
+    for (const candidate of candidates) {
+        if (!visible(candidate)) continue;
+        if (candidate.disabled || candidate.getAttribute('aria-disabled') === 'true') continue;
+        const label = textOf(candidate);
+        if (!label || isSendControl(label) || !imagePickerLike(label)) continue;
+        try { candidate.scrollIntoView({block: 'center', inline: 'center'}); } catch (e) {}
+        candidate.click();
+        return {opened: true, label: label.slice(0, 160)};
+    }
+    return {opened: false, reason: 'image_model_picker_not_found'};
+})()"""
 
 AI_STUDIO_LIST_MODELS_JS = r"""(() => {
     const values = new Set();
@@ -370,7 +431,6 @@ class BrowserSession:
         self._cf = None
         self._snap_key: str | None = None
         self._templates: dict[str, dict[str, Any]] = {}
-        self._last_botguard_template: dict[str, Any] | None = None
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="aistudio-camoufox")
         self._botguard_lock = asyncio.Lock()
         self._snapshot_lock = asyncio.Lock()
@@ -383,6 +443,9 @@ class BrowserSession:
 
     async def close(self) -> None:
         await self._run_sync(self._close_sync)
+
+    def clear_templates(self) -> None:
+        self._templates.clear()
 
     async def detect_tier_for_auth_file(self, auth_file: str, timeout_ms: int = 30000):
         return await self._run_sync(self._detect_tier_for_auth_file_sync, auth_file, timeout_ms)
@@ -774,8 +837,6 @@ class BrowserSession:
             for i in range(45):
                 page.wait_for_timeout(1000)
                 if page.evaluate("mw:!!window.__bg_service"):
-                    if captured:
-                        self._last_botguard_template = captured
                     self._wait_until_idle_sync(page)
                     log.debug(f"[timing] botguard captured after {i+1}s, total {_t.time()-_t0:.1f}s")
                     return page
@@ -805,12 +866,6 @@ class BrowserSession:
             return captured
 
         page = self._ensure_botguard_service_sync()
-        if self._last_botguard_template:
-            captured = self._last_botguard_template
-            self._last_botguard_template = None
-            self._templates[model] = captured
-            log.debug(f"[timing] text template reused from BotGuard capture for {model} in {_t.time()-_t0:.1f}s")
-            return captured
         log.debug(f"[timing] botguard done in {_t.time()-_t0:.1f}s, starting template capture")
         captured = self._capture_template_request_with_recovery_sync(page, model)
         self._templates[model] = captured
@@ -909,12 +964,29 @@ class BrowserSession:
                     self._goto_aistudio_sync(page)
                     self._install_hooks_sync(page)
                     continue
+                if attempt == 0 and self._is_image_model(model):
+                    log.info("AI Studio image template capture failed; re-opening image model before retry: %s; %s", exc, diagnostics)
+                    self._prepare_model_onboarding_sync(page, model)
+                    self._install_hooks_sync(page)
+                    continue
                 raise
         if last_error is not None:
             raise last_error
         raise RuntimeError(f"template capture failed for model={model}")
 
     def _generate_snapshot_sync(self, contents: list[AistudioContent]) -> str:
+        snapshot = ""
+        for attempt in range(3):
+            snapshot = self._generate_snapshot_once_sync(contents)
+            if len(snapshot) >= 1500:
+                return snapshot
+            if attempt < 2:
+                log.info("AI Studio snapshot looks immature (%d chars); retrying", len(snapshot))
+                page = self._ensure_botguard_service_sync()
+                page.wait_for_timeout(1500)
+        return snapshot
+
+    def _generate_snapshot_once_sync(self, contents: list[AistudioContent]) -> str:
         page = self._ensure_botguard_service_sync()
         if not self._snap_key:
             raise RuntimeError("Snapshot function not detected")
@@ -1380,6 +1452,10 @@ mw:((hash) => {
                 prepared = True
                 log.info("AI Studio image onboarding entry opened")
                 page.wait_for_timeout(1200)
+                try:
+                    page.evaluate(DIALOG_CLEANUP_JS)
+                except Exception:
+                    pass
                 break
             if trigger_result and trigger_result.get("reason") == "already_visible":
                 if self._complete_aistudio_onboarding_sync(page):
@@ -1390,10 +1466,24 @@ mw:((hash) => {
 
         if trigger_result and not trigger_result.get("triggered") and trigger_result.get("reason") not in {"already_visible"}:
             log.info("AI Studio image onboarding entry not opened: %s", trigger_result.get("reason"))
+            if trigger_result.get("reason") == "image_entry_not_found":
+                self._goto_aistudio_image_sync(page, model)
+                prepared = True
+
+        try:
+            page.evaluate(DIALOG_CLEANUP_JS)
+        except Exception:
+            pass
 
         if self._complete_aistudio_onboarding_sync(page):
             prepared = True
             page.wait_for_timeout(1200)
+        try:
+            opened = page.evaluate(AI_STUDIO_OPEN_IMAGE_MODEL_PICKER_JS)
+            if isinstance(opened, dict) and opened.get("opened"):
+                page.wait_for_timeout(800)
+        except Exception as exc:
+            log.debug("AI Studio image model picker open failed: %s", exc)
         try:
             selected = page.evaluate(AI_STUDIO_SELECT_IMAGE_MODEL_JS, model)
         except Exception as exc:
@@ -1406,8 +1496,78 @@ mw:((hash) => {
             if self._complete_aistudio_onboarding_sync(page):
                 page.wait_for_timeout(1200)
         elif isinstance(selected, dict) and selected.get("reason") not in {"already_selected", "not_image_model"}:
-            log.info("AI Studio image model not selected: %s", selected.get("reason"))
+            if not self._is_aistudio_image_context_sync(page, selected):
+                self._goto_aistudio_image_sync(page, model)
+                prepared = True
+            if self._is_aistudio_image_context_sync(page, selected):
+                log.info(
+                    "AI Studio image model picker did not expose %s (%s); continuing on image route for body rewrite",
+                    model,
+                    selected.get("reason"),
+                )
+                return True
+            raise RuntimeError(
+                "AI Studio image model not selected: "
+                f"model={model}, reason={selected.get('reason')}, opened={selected.get('opened')}, visible={selected.get('visible')}"
+            )
         return prepared
+
+    def _aistudio_image_urls_for_model(self, model: str) -> tuple[str, str]:
+        model_id = str(model or "").strip().removeprefix("models/") or "imagen-4.0-generate-001"
+        encoded = quote(model_id, safe="")
+        return (
+            f"https://aistudio.google.com/prompts/new_image?model={encoded}",
+            f"https://aistudio.google.com/app/prompts/new_image?model={encoded}",
+        )
+
+    def _is_aistudio_image_url(self, url: str | None) -> bool:
+        try:
+            parsed = urlparse(url or "")
+        except Exception:
+            return False
+        if parsed.hostname != AI_STUDIO_HOST:
+            return False
+        path = parsed.path or ""
+        return path.startswith("/prompts/new_image") or path.startswith("/app/prompts/new_image")
+
+    def _is_aistudio_image_context_sync(self, page, selection: dict[str, Any] | None = None) -> bool:
+        if self._is_aistudio_image_url(getattr(page, "url", "")):
+            return True
+        selection = selection if isinstance(selection, dict) else {}
+        visible_values = selection.get("visible") if isinstance(selection.get("visible"), list) else []
+        hints = [selection.get("opened"), *visible_values]
+        if any("image_edit_auto" in str(hint).lower() or "nano banana" in str(hint).lower() or "imagen" in str(hint).lower() for hint in hints):
+            return True
+        try:
+            body = page.evaluate("() => document.body?.innerText?.toLowerCase() || ''")
+        except Exception:
+            return False
+        return any(hint in body for hint in ("image_edit_auto", "nano banana", "imagen", "image generation"))
+
+    def _goto_aistudio_image_sync(self, page, model: str = "") -> None:
+        last_error = None
+        for url in self._aistudio_image_urls_for_model(model):
+            try:
+                page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            except Exception as exc:
+                last_error = exc
+                continue
+            current_url = getattr(page, "url", "")
+            if self._is_google_signin_url(current_url):
+                diagnostics = self._format_chat_runtime_diagnostics_sync(page)
+                auth_state = self._format_auth_state_diagnostics()
+                raise RuntimeError(
+                    f"AI Studio redirected to Google sign-in after navigating to {url}; "
+                    f"browser auth state is missing or invalid ({auth_state}). "
+                    f"Activate an account or complete login again. {diagnostics}"
+                )
+            if self._wait_for_chat_runtime_sync(page):
+                if self._complete_aistudio_onboarding_sync(page):
+                    self._wait_for_chat_runtime_sync(page)
+                return
+            last_error = RuntimeError(f"AI Studio image runtime not ready after navigating to {url}: {self._format_chat_runtime_diagnostics_sync(page)}")
+        if last_error is not None:
+            raise last_error
 
     def _list_available_models_sync(self) -> list[str]:
         page = self._ensure_hook_page_sync()
@@ -1571,3 +1731,4 @@ mw:((hash) => {
         self._browser = None
         self._cf = None
         self._snap_key = None
+        self.clear_templates()

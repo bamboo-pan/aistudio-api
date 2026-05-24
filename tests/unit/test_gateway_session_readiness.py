@@ -199,6 +199,22 @@ class BrowserSessionForTest(BrowserSession):
         self.install_calls += 1
 
 
+class SnapshotRetrySessionForTest(BrowserSession):
+    def __init__(self, snapshots):
+        super().__init__(port=0)
+        self.snapshots = list(snapshots)
+        self.wait_calls = []
+
+    def _generate_snapshot_once_sync(self, contents):
+        return self.snapshots.pop(0)
+
+    def _ensure_botguard_service_sync(self):
+        return self
+
+    def wait_for_timeout(self, timeout_ms: int):
+        self.wait_calls.append(timeout_ms)
+
+
 class FakeTierContext:
     def __init__(self):
         self.closed = False
@@ -274,6 +290,24 @@ def test_ensure_hook_page_reuses_ready_chat_route():
 
     assert session.goto_calls == 0
     assert session.install_calls == 1
+
+
+def test_generate_snapshot_retries_short_cold_start_snapshot():
+    session = SnapshotRetrySessionForTest(["x" * 1390, "y" * 1600])
+
+    snapshot = session._generate_snapshot_sync([])
+
+    assert snapshot == "y" * 1600
+    assert session.wait_calls == [1500]
+
+
+def test_generate_snapshot_returns_short_snapshot_after_retry_budget():
+    session = SnapshotRetrySessionForTest(["x" * 1390, "y" * 1400, "z" * 1450])
+
+    snapshot = session._generate_snapshot_sync([])
+
+    assert snapshot == "z" * 1450
+    assert session.wait_calls == [1500, 1500]
 
 
 def test_goto_waits_until_chat_runtime_and_input_are_ready():
@@ -496,22 +530,43 @@ class FakeOnboardingPage:
 
 
 class FakeImageOnboardingPage:
-    def __init__(self, *, initial_consent: bool = False):
+    def __init__(self, *, initial_consent: bool = False, selection_result: dict | None = None, trigger_result: dict | None = None):
         self.wait_calls = []
         self.evaluate_calls = []
+        self.goto_urls = []
+        self.url = AI_STUDIO_URL
+        self.has_default_makersuite = True
+        self.has_textarea = True
         self.initial_consent = initial_consent
+        self.selection_result = selection_result
+        self.trigger_result = trigger_result
         self.consent_calls = 0
         self.trigger_calls = 0
+        self.open_picker_calls = 0
+        self.model_picker_selection_calls = 0
+
+    def goto(self, url: str, **kwargs):
+        self.goto_urls.append(url)
+        self.url = url
 
     def evaluate(self, script: str, *args):
         self.evaluate_calls.append(script)
+        if script == "mw:!!window.default_MakerSuite":
+            return self.has_default_makersuite
         if "image_entry_not_found" in script:
             self.trigger_calls += 1
+            if self.trigger_result is not None:
+                return self.trigger_result
             if self.initial_consent and self.trigger_calls == 1:
                 return {"triggered": False, "reason": "already_visible"}
             return {"triggered": True, "label": "image Image Generation"}
+        if "image_model_picker_not_found" in script:
+            self.open_picker_calls += 1
+            return {"opened": True, "label": "Nano Banana"}
         if "model_card_not_found" in script:
-            return {"selected": True, "label": "Nano Banana Pro"}
+            if "openedLabel" in script and "pickerLike" in script:
+                self.model_picker_selection_calls += 1
+            return self.selection_result or {"selected": True, "label": "Nano Banana Pro"}
         if "google apis terms" in script.lower():
             self.consent_calls += 1
             if self.initial_consent and self.consent_calls == 1:
@@ -523,6 +578,12 @@ class FakeImageOnboardingPage:
 
     def wait_for_timeout(self, timeout_ms: int):
         self.wait_calls.append(timeout_ms)
+
+    def query_selector(self, selector: str):
+        return object() if selector == "textarea" and self.has_textarea else None
+
+    def title(self):
+        return "AI Studio"
 
 
 class FakeModelListPage:
@@ -569,7 +630,9 @@ def test_image_model_capture_prepares_image_onboarding(monkeypatch):
 
     assert session._prepare_model_onboarding_sync(page, "gemini-3-pro-image-preview") is True
 
-    assert page.wait_calls == [1200, 1200]
+    assert page.wait_calls == [1200, 800, 1200]
+    assert page.open_picker_calls == 1
+    assert page.model_picker_selection_calls == 1
     assert any("model_card_not_found" in script for script in page.evaluate_calls)
 
 
@@ -582,6 +645,55 @@ def test_image_model_capture_reopens_image_entry_after_initial_terms():
     assert page.trigger_calls == 1
     assert page.consent_calls >= 2
     assert any("model_card_not_found" in script for script in page.evaluate_calls)
+
+
+def test_image_model_capture_continues_when_picker_cards_are_hidden_after_entry_opens():
+    page = FakeImageOnboardingPage(selection_result={"selected": False, "reason": "model_card_not_found", "visible": ["Nano Banana"]})
+    session = BrowserSession(port=0)
+
+    assert session._prepare_model_onboarding_sync(page, "gemini-3-pro-image-preview") is True
+
+    assert page.trigger_calls == 1
+    assert page.open_picker_calls == 1
+    assert page.model_picker_selection_calls == 1
+    assert any("model_card_not_found" in script for script in page.evaluate_calls)
+
+
+def test_image_model_capture_navigates_to_image_route_when_entry_missing():
+    page = FakeImageOnboardingPage(trigger_result={"triggered": False, "reason": "image_entry_not_found"})
+    session = BrowserSession(port=0)
+
+    assert session._prepare_model_onboarding_sync(page, "gemini-3-pro-image-preview") is True
+
+    assert page.goto_urls == ["https://aistudio.google.com/prompts/new_image?model=gemini-3-pro-image-preview"]
+    assert page.open_picker_calls == 1
+    assert page.model_picker_selection_calls == 1
+
+
+def test_image_model_capture_continues_on_image_route_when_picker_cards_are_hidden():
+    page = FakeImageOnboardingPage(selection_result={"selected": False, "reason": "model_card_not_found", "opened": "image_edit_auto"})
+    page.url = "https://aistudio.google.com/prompts/new_image?model=gemini-3-pro-image-preview"
+    session = BrowserSession(port=0)
+
+    assert session._prepare_model_onboarding_sync(page, "gemini-3-pro-image-preview") is True
+
+    assert page.goto_urls == []
+    assert page.open_picker_calls == 1
+    assert page.model_picker_selection_calls == 1
+
+
+def test_image_model_capture_continues_when_image_controls_are_visible_after_picker_open():
+    page = FakeImageOnboardingPage(
+        selection_result={"selected": False, "reason": "model_card_not_found", "opened": "image_edit_auto", "visible": ["tune", "image_edit_auto"]}
+    )
+    page.url = AI_STUDIO_URL
+    session = BrowserSession(port=0)
+
+    assert session._prepare_model_onboarding_sync(page, "gemini-3-pro-image-preview") is True
+
+    assert page.goto_urls == []
+    assert page.open_picker_calls == 1
+    assert page.model_picker_selection_calls == 1
 
 
 def test_text_model_capture_skips_image_onboarding():
@@ -634,6 +746,18 @@ class TemplateCaptureImageSessionForTest(TemplateCaptureSessionForTest):
         page.has_textarea = True
 
 
+class ImageTemplateRetrySessionForTest(TemplateCaptureImageSessionForTest):
+    def __init__(self, page):
+        super().__init__(page)
+        self.capture_calls = 0
+
+    def _capture_template_request_sync(self, page, model: str) -> dict:
+        self.capture_calls += 1
+        if self.capture_calls == 1:
+            raise RuntimeError(f"template capture timeout for model={model}")
+        return {"url": page.generate_content_url, "headers": page.generate_content_headers, "body": page.generate_content_body}
+
+
 def test_capture_template_prepares_image_model_before_botguard_snapshot_ready():
     page = FakePage(url=AI_STUDIO_URL, has_default_makersuite=True, has_textarea=True)
     session = TemplateCaptureImageSessionForTest(page)
@@ -646,6 +770,21 @@ def test_capture_template_prepares_image_model_before_botguard_snapshot_ready():
     assert session.prepare_calls == [(page, "gemini-3-pro-image-preview", 0)]
     assert session.install_calls == 2
     assert session.goto_calls == 1
+
+
+def test_image_template_capture_reselects_image_model_after_timeout():
+    page = FakePage(url=AI_STUDIO_URL, has_default_makersuite=True, has_textarea=True)
+    session = ImageTemplateRetrySessionForTest(page)
+
+    captured = session._capture_template_sync("gemini-3-pro-image-preview")
+
+    assert captured["url"].endswith("GenerateContent")
+    assert session.capture_calls == 2
+    assert session.prepare_calls == [
+        (page, "gemini-3-pro-image-preview", 0),
+        (page, "gemini-3-pro-image-preview", 0),
+    ]
+    assert session.install_calls == 3
 
 
 def test_capture_template_uses_request_route_and_aborts_dummy_generation():
@@ -714,7 +853,7 @@ def test_capture_template_ignores_generatecontent_url_with_non_json_body():
     )
 
 
-def test_text_capture_reuses_request_from_botguard_service_capture():
+def test_text_capture_does_not_reuse_botguard_warmup_request():
     page = FakePage(url=AI_STUDIO_URL, has_default_makersuite=True, has_textarea=True, botguard_on_send=True)
     session = BrowserSessionForTest(page)
 
@@ -725,9 +864,11 @@ def test_text_capture_reuses_request_from_botguard_service_capture():
         "headers": page.generate_content_headers,
         "body": page.generate_content_body,
     }
-    assert page.filled_texts == ["1"]
+    assert page.filled_texts == ["1", "template"]
+    assert len(page.routed_requests) == 2
     assert page.routed_requests[0].continued is True
-    assert page.unroute_calls == ["**/*"]
+    assert page.routed_requests[1].aborted is True
+    assert page.unroute_calls == ["**/*", "**/*"]
 
 
 def test_capture_template_recovers_when_page_redirects_to_docs_during_fill():

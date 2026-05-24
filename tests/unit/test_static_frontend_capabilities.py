@@ -16,6 +16,9 @@ def test_static_frontend_uses_model_capabilities_for_controls():
     assert "if(this.controlAvailable('thinking')) body.thinking=this.cfg.thinking" in app_js
     assert "this.cfg.thinking!=='off') body.thinking" not in app_js
     assert "ensureTextModelDefaults" in app_js
+    assert "get preferredTextModelIds(){return['gemini-3-flash-preview','gemma-4-31b-it']}" in app_js
+    assert "preferredTextModel(textModels=this.textModels)" in app_js
+    assert "this.model=preferred?.id||textModels[0].id" in app_js
     assert "selectModel(m.id)" in index_html
     assert "x-for=\"m in textModels\"" in index_html
     assert "暂无文本模型" in index_html
@@ -273,7 +276,7 @@ def test_static_frontend_exposes_local_studio_workbench():
     assert "id:`local-user-${Date.now()}" in app_js
     assert "this.localStudioInterfaceMode=this.validInterfaceMode(this.localStudioConversation.interface_mode)" in app_js
     assert "startsWith('gpt-image-')" in app_js
-    assert "gpt-image-2" in index_html
+    assert "gpt-image-2" in app_js
     assert "localStudioInterfaceModeLabel" in index_html
     assert "selectLocalStudioInterfaceMode(option.id)" in index_html
     assert "localStudioStream==='on'" in index_html
@@ -282,6 +285,16 @@ def test_static_frontend_exposes_local_studio_workbench():
     assert "localStudioStatusText" in index_html
     assert "localStudioMessageError(message)" in index_html
     assert "localStudioInterfaceMode==='responses'" in index_html
+    assert "localStudioImageModels:[]" in app_js
+    assert "localStudioImageModel:''" in app_js
+    assert "localStudioImageModelOptions" in app_js
+    assert "defaultLocalStudioImageModels()" in app_js
+    assert "gemini-3.1-flash-image-preview" in app_js
+    assert "gemini-3-pro-image-preview" in app_js
+    assert "localStudioImageToolTitle" in app_js
+    assert "localStudioImageToolLabel" in app_js
+    assert "Image Model" in index_html
+    assert "x-for=\"model in localStudioImageModelOptions\"" in index_html
     assert "localStudioSizeOptions" in app_js
     assert "size:'2560x1440'" in app_js
     assert "size:'3824x2144'" in app_js
@@ -290,9 +303,13 @@ def test_static_frontend_exposes_local_studio_workbench():
     assert "localStudioResolvedImageSize()" in app_js
     assert "x-for=\"option in localStudioSizeOptions\"" in index_html
     assert "Custom Size" in index_html
-    assert "below 3840px" in index_html
+    assert "below 3840px" in app_js
     assert "reasoning_effort:this.localStudioControlAvailable('thinking')?this.localStudioReasoningEffort:'off'" in app_js
     assert "image_tool_enabled:this.localStudioInterfaceMode==='responses'&&this.localStudioImageToolEnabled" in app_js
+    assert "image_tool_provider:this.localStudioProviderType" in app_js
+    assert "image_model:this.localStudioImageToolLabel" in app_js
+    assert "if(!this.localStudioIsGoogleProvider)" in app_js
+    assert "localStudioImageParamAvailable('quality')" in index_html
     assert "rerunLocalStudioMessage(index)" in app_js
     assert "attachLocalStudioFiles" in app_js
     assert "image.b64_json||image.b64||image.result" in app_js

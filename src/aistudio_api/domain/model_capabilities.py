@@ -261,6 +261,9 @@ def _image_model(
     )
 
 
+PREFERRED_TEXT_MODEL_IDS = ("gemini-3-flash-preview", "gemma-4-31b-it")
+
+
 MODEL_CAPABILITIES: dict[str, ModelCapabilities] = {
     # Gemma 4 series
     "gemma-4-31b-it": _text_model("gemma-4-31b-it", image_input=False, file_input=False),
@@ -389,7 +392,16 @@ def get_model_capabilities(model: str, *, strict: bool = False) -> ModelCapabili
 
 
 def list_model_metadata() -> list[dict[str, Any]]:
-    return [capabilities.to_model_dict() for capabilities in _all_model_capabilities()]
+    preferred_rank = {model_id: index for index, model_id in enumerate(PREFERRED_TEXT_MODEL_IDS)}
+
+    def sort_key(capabilities: ModelCapabilities) -> tuple[int, int, str]:
+        if capabilities.id in preferred_rank:
+            return (0, preferred_rank[capabilities.id], capabilities.id)
+        if capabilities.image_output:
+            return (2, 0, capabilities.id)
+        return (1, 0, capabilities.id)
+
+    return [capabilities.to_model_dict() for capabilities in sorted(_all_model_capabilities(), key=sort_key)]
 
 
 def get_model_metadata(model: str) -> dict[str, Any]:

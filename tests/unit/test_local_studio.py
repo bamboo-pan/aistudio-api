@@ -14,6 +14,7 @@ from aistudio_api.infrastructure.local_studio import (
     build_responses_payload,
     default_local_studio_base_url,
     filter_chat_models,
+    filter_image_models,
     local_studio_chat_path,
     normalize_openai_base_url,
     resolve_local_studio_provider_settings,
@@ -46,6 +47,7 @@ def test_filter_chat_models_excludes_image_only_models():
             {"id": "gpt-5.4-mini"},
             {"id": "gpt-image-2"},
             {"id": "GPT-IMAGE-1"},
+            {"id": "gemini-3.1-flash-image-preview"},
             {"id": "gpt-4o-audio-preview"},
             {"id": "text-embedding-3-large"},
             {"name": "compatible-chat"},
@@ -53,6 +55,45 @@ def test_filter_chat_models_excludes_image_only_models():
     )
 
     assert [model["id"] for model in filtered] == ["gpt-5.4-mini", "compatible-chat"]
+
+
+def test_filter_image_models_includes_provider_specific_metadata():
+    models = [
+        {"id": "gpt-5.4-mini"},
+        {"id": "gpt-image-2"},
+        {"id": "gemini-3.1-flash-image-preview"},
+        {"name": "models/gemini-3-pro-image-preview"},
+    ]
+    google_filtered = filter_image_models(
+        models,
+        mode="gemini",
+        provider_type="google-ai-studio",
+    )
+    openai_filtered = filter_image_models(
+        models,
+        mode="responses",
+        provider_type="openai",
+    )
+
+    assert [model["id"] for model in openai_filtered] == ["gpt-image-2"]
+    ids = [model["id"] for model in google_filtered]
+    assert ids == ["gemini-3.1-flash-image-preview", "gemini-3-pro-image-preview"]
+    gemini_model = next(model for model in google_filtered if model["id"] == "gemini-3-pro-image-preview")
+    assert gemini_model["capabilities"]["image_output"] is True
+    assert "4096x4096" in [item["size"] for item in gemini_model["image_generation"]["sizes"]]
+
+
+def test_filter_image_models_defaults_to_openai_provider():
+    filtered = filter_image_models(
+        [
+            {"id": "gpt-5.4-mini"},
+            {"id": "gpt-image-2"},
+            {"id": "gemini-3.1-flash-image-preview"},
+            {"name": "models/gemini-3-pro-image-preview"},
+        ]
+    )
+
+    assert [model["id"] for model in filtered] == ["gpt-image-2"]
 
 
 def test_local_studio_protocol_paths_payloads_and_parsers():
@@ -137,13 +178,13 @@ def test_google_local_studio_provider_uses_internal_endpoint_without_token(tmp_p
     class FakeResponse:
         status_code = 200
         headers = {"content-type": "application/json"}
-        content = b'{"data":[{"id":"gemini-3-flash-preview"},{"id":"gpt-image-2"}]}'
+        content = b'{"data":[{"id":"gemini-3-flash-preview"},{"id":"gpt-image-2"},{"id":"gemini-3.1-flash-image-preview"}]}'
 
         def raise_for_status(self):
             return None
 
         def json(self):
-            return {"data": [{"id": "gemini-3-flash-preview"}, {"id": "gpt-image-2"}]}
+            return {"data": [{"id": "gemini-3-flash-preview"}, {"id": "gpt-image-2"}, {"id": "gemini-3.1-flash-image-preview"}]}
 
     class FakeClient:
         def __init__(self, timeout):
@@ -176,6 +217,7 @@ def test_google_local_studio_provider_uses_internal_endpoint_without_token(tmp_p
     assert captured["url"] == "http://testserver/v1/models"
     assert "Authorization" not in captured["headers"]
     assert [model["id"] for model in response.json()["data"]] == ["gemini-3-flash-preview"]
+    assert [model["id"] for model in response.json()["image_models"]] == ["gemini-3.1-flash-image-preview"]
 
 
 def test_google_local_studio_provider_chat_uses_internal_image_tool(tmp_path, monkeypatch):
@@ -224,7 +266,7 @@ def test_google_local_studio_provider_chat_uses_internal_image_tool(tmp_path, mo
                 "interface_mode": "responses",
                 "model": "gemini-3-flash-preview",
                 "message": "draw a smoke test square",
-                "options": {"search": True, "image_tool_enabled": True, "size": "1536x864", "cache_enabled": True},
+                "options": {"search": True, "image_tool_enabled": True, "image_tool_provider": "google-ai-studio", "image_model": "gemini-3-pro-image-preview", "size": "2048x2048", "cache_enabled": True},
             },
         )
     finally:
@@ -235,12 +277,41 @@ def test_google_local_studio_provider_chat_uses_internal_image_tool(tmp_path, mo
     assert "Authorization" not in captured["headers"]
     assert captured["json"]["tools"] == [
         {"type": "web_search_preview"},
-        {"type": "image_generation", "model": "gpt-image-2", "size": "1536x864"},
+        {"type": "image_generation", "provider": "google-ai-studio", "model": "gemini-3-pro-image-preview", "size": "2048x2048"},
     ]
     assistant = response.json()["conversation"]["messages"][-1]
     assert assistant["content"] == "Generated image"
     assert assistant["images"][0]["url"].startswith("/api/local-studio/assets/")
     assert response.json()["cache"]["hit"] is False
+
+
+def test_build_responses_payload_keeps_openai_image_tool_semantics():
+    payload = build_responses_payload(
+        model="gpt-5.4-mini",
+        messages=[{"role": "user", "content": "draw"}],
+        options={
+            "image_tool_enabled": True,
+            "image_tool_provider": "openai",
+            "image_model": "gpt-image-2",
+            "size": "1536x864",
+            "quality": "high",
+            "background": "transparent",
+            "output_format": "png",
+            "output_compression": 80,
+        },
+    )
+
+    assert payload["tools"] == [
+        {
+            "type": "image_generation",
+            "model": "gpt-image-2",
+            "size": "1536x864",
+            "quality": "high",
+            "background": "transparent",
+            "output_format": "png",
+            "output_compression": 80,
+        }
+    ]
 
 
 def test_custom_provider_display_name_does_not_override_openai_inference(tmp_path, monkeypatch):

@@ -17,6 +17,16 @@ TOOLS_TEMPLATES = {
     "google_search": [None, None, None, [None, [[]]]],
 }
 
+AI_STUDIO_WIRE_MODEL_ALIASES = {
+    "gemini-3.5-flash": "models/gemini-3-flash-preview",
+    "models/gemini-3.5-flash": "models/gemini-3-flash-preview",
+}
+
+
+def resolve_aistudio_wire_model(model: str) -> str:
+    normalized = (model or "").strip()
+    return AI_STUDIO_WIRE_MODEL_ALIASES.get(normalized.lower(), normalized)
+
 
 def _encode_image(path: str) -> tuple[str, str]:
     mime = mimetypes.guess_type(path)[0] or "image/jpeg"
@@ -105,7 +115,8 @@ class AistudioWireCodec:
         enable_thinking: bool = True,
     ) -> str:
         request = self.decode(original_body)
-        request.model = model
+        wire_model = resolve_aistudio_wire_model(model)
+        request.model = wire_model
         capabilities = get_model_capabilities(model)
         if snapshot is not None:
             request.snapshot = snapshot

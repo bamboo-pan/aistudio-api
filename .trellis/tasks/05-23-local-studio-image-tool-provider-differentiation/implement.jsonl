@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend spec index and Local Studio guideline entry point."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Local Studio provider, cache, request log, image tool, and real-test contracts."}
+{"file":".trellis/tasks/05-23-local-studio-image-tool-provider-differentiation/research/current-implementation.md","reason":"Current Local Studio image tool code paths and observed log symptoms."}
+{"file":".trellis/tasks/05-23-local-studio-image-tool-provider-differentiation/research/provider-image-capabilities.md","reason":"Provider/model-specific image capability design direction."}

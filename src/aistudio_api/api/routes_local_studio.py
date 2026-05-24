@@ -15,6 +15,7 @@ from aistudio_api.infrastructure.local_studio import (
     LocalStudioStore,
     build_local_studio_chat_payload,
     filter_chat_models,
+    filter_image_models,
     local_studio_chat_path,
     local_studio_models_path,
     resolve_local_studio_provider_settings,
@@ -211,7 +212,13 @@ async def list_models(request: Request, payload: dict[str, Any] = Body(...)) -> 
     _record_upstream_response(entry=entry, kind=f"local_studio_models_{mode}", model="", method="GET", url=url, headers=headers, status_code=response.status_code, response_headers=dict(response.headers), response_body=response.content, elapsed_ms=(time.perf_counter() - started) * 1000)
     data = response.json()
     models = data.get("models") if mode == "gemini" and isinstance(data, dict) else data.get("data") if isinstance(data, dict) else []
-    return {"object": "list", "data": filter_chat_models(models if isinstance(models, list) else [], mode=mode), "interface_mode": mode}
+    model_list = models if isinstance(models, list) else []
+    return {
+        "object": "list",
+        "data": filter_chat_models(model_list, mode=mode),
+        "image_models": filter_image_models(model_list, mode=mode, provider_type=provider_type),
+        "interface_mode": mode,
+    }
 
 
 @router.get("/conversations")
@@ -541,11 +548,12 @@ async def _stream_local_studio_chat(
                         parsed = parse_local_studio_stream_event(mode, event if isinstance(event, dict) else {})
                         is_completed_event = event_type == "response.completed"
                         had_content_parts = bool(content_parts)
+                        had_thinking_parts = bool(thinking_parts)
                         if parsed.get("error"):
                             error_message = str(parsed["error"])
                         if parsed.get("content") and (not is_completed_event or not content_parts):
                             content_parts.append(str(parsed["content"]))
-                        if parsed.get("thinking"):
+                        if parsed.get("thinking") and (not is_completed_event or not thinking_parts):
                             thinking_parts.append(str(parsed["thinking"]))
                         if isinstance(parsed.get("image_candidates"), list):
                             parsed_candidates = [candidate for candidate in parsed["image_candidates"] if isinstance(candidate, dict)]
@@ -556,7 +564,8 @@ async def _stream_local_studio_chat(
                         if isinstance(parsed.get("usage"), dict):
                             usage = dict(parsed["usage"])
                         delta_content = "" if is_completed_event and had_content_parts else parsed.get("content") or ""
-                        delta = {"type": "local_studio.delta", "content": delta_content, "thinking": parsed.get("thinking") or "", "usage": parsed.get("usage") or None, "error": parsed.get("error") or ""}
+                        delta_thinking = "" if is_completed_event and had_thinking_parts else parsed.get("thinking") or ""
+                        delta = {"type": "local_studio.delta", "content": delta_content, "thinking": delta_thinking, "usage": parsed.get("usage") or None, "error": parsed.get("error") or ""}
                         if delta["content"] or delta["thinking"] or delta["usage"] or delta["error"]:
                             yield f"data: {json.dumps(delta, ensure_ascii=False)}\n\n".encode("utf-8")
     except httpx.HTTPStatusError as exc:
