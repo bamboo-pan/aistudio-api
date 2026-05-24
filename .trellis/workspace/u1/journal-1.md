@@ -1014,3 +1014,36 @@ Executed Local Studio real WSL smoke and extended matrix tests, fixed the Google
 ### Next Steps
 
 - None - task complete
+
+
+## Session 31: Local Studio streaming reasoning display
+
+**Date**: 2026-05-24
+**Task**: Local Studio streaming reasoning display
+**Branch**: `feature/05-24-local-studio-system-test-fixes`
+
+### Summary
+
+Fixed Local Studio Responses streaming reasoning parsing and persistence, hardened the real system test plan so collected reasoning/UI oracle fields must fail when missing, documented remaining system-test runner gap classes, and verified focused plus full unit tests and frontend syntax checks passed.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cf8f940` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

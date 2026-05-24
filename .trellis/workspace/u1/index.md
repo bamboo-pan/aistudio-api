@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 30
+- **Total Sessions**: 31
 - **Last Active**: 2026-05-24
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1016 | Active |
+| `journal-1.md` | ~1049 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 31 | 2026-05-24 | Local Studio streaming reasoning display | `cf8f940` | `feature/05-24-local-studio-system-test-fixes` |
 | 30 | 2026-05-24 | Local Studio real system test fixes | `e2ebd3b` | `feature/05-24-local-studio-system-test-fixes` |
 | 29 | 2026-05-24 | Strengthen Local Studio system test contracts | `5a3bc51` | `feature/system-test-plan-architecture-contracts` |
 | 28 | 2026-05-24 | Fix OpenAI provider search tool | `9ea4afc` | `fix/openai-provider-search-tool` |
