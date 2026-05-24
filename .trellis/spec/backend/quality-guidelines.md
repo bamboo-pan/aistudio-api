@@ -196,6 +196,58 @@ except httpx.HTTPError:
 	raise
 ```
 
+## Scenario: Real WebUI System Test Plans
+
+### 1. Scope / Trigger
+
+- Trigger: Creating or updating a real-system test plan for WebUI/API behavior, especially for Local Studio, provider integrations, account/browser flows, request logging, image generation, or bug reports that only reproduce with real credentials.
+- Store reusable, operator-facing durable plans at the repository root so they are easy to find after task archive; narrower suite-specific plans may live under `tests/system/` when they primarily document test implementation details.
+
+### 2. Signatures
+
+- Plan files should be Markdown runbooks named after the feature surface, for example `LOCAL_STUDIO_WEB_REAL_SYSTEM_TEST_PLAN.md` for a reusable root runbook or `tests/system/<feature>-system-test-plan.md` for a suite-local plan.
+- Each plan must name the WebUI route(s), API route(s), provider(s), credential source(s), environment variables, and artifact directory for every real system suite.
+
+### 3. Contracts
+
+- A real WebUI system plan must require both API-level validation and browser UI validation for the same user journeys.
+- Credential paths may be referenced, but raw tokens, cookies, storage states, request-log exports, and generated assets must not be committed.
+- Request logging is part of the verification contract for provider/API flows. Critical cases must assert full request lifecycle phases and secret redaction.
+- Bug-driven plans must include explicit regression oracles copied from the observed failing path, including expected server-log and UI behavior.
+
+### 4. Validation & Error Matrix
+
+- Missing API coverage for a UI journey -> plan is incomplete.
+- Missing browser coverage for an API journey -> plan is incomplete.
+- Real credential values or copied secret artifacts in the repo -> reject the change.
+- Failure-path cases that do not assert service health after the error -> plan is incomplete.
+- Provider/tool matrices that only cover the happy path -> plan is incomplete.
+
+### 5. Good/Base/Bad Cases
+
+- Good: The plan defines provider/interface/tool/cache/conversation/request-log matrices plus concrete pass/fail assertions and artifact handling.
+- Base: The plan documents a narrow smoke route with both API and UI checks and states what is out of scope.
+- Bad: The plan says "test Local Studio manually" without credential setup, user paths, request-log expectations, bug oracle, or cleanup rules.
+
+### 6. Tests Required
+
+- Documentation-only plan changes should at minimum pass `git diff --check` and relevant existing focused tests when the plan references current contracts.
+- If a plan accompanies code changes, run the code tests required by that feature and the real WSL API/UI checks named in the plan.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```markdown
+Run a quick browser smoke and see whether chat works.
+```
+
+#### Correct
+
+```markdown
+For each Provider x Interface combination, run Stream on/off and Search on/off through API and browser UI, enable request logs, assert full lifecycle phases, and verify no secret values appear in exported artifacts.
+```
+
 ## Scenario: Image Prompt Optimization With Reference Images
 
 ### 1. Scope / Trigger

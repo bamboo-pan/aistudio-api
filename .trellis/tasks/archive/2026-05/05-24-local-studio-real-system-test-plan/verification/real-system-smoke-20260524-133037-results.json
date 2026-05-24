@@ -1,0 +1,65 @@
+[
+  {
+    "case_id": "BOOT-01",
+    "layer": "api",
+    "status": "pass",
+    "detail": "service healthy and request logs enabled",
+    "elapsed_ms": 25
+  },
+  {
+    "case_id": "API-LS-01",
+    "layer": "api",
+    "status": "pass",
+    "detail": "google responses models loaded; selected gemini-3.5-flash",
+    "elapsed_ms": 56
+  },
+  {
+    "case_id": "API-LS-03",
+    "layer": "api",
+    "status": "fail",
+    "detail": "HTTP 504: upstream request timed out after 300s",
+    "elapsed_ms": 300038
+  },
+  {
+    "case_id": "BUG-GEMINI-IMAGE-TOOL-01",
+    "layer": "api",
+    "status": "skip",
+    "detail": "blocked because Google AI Studio browser capture did not complete the basic chat path",
+    "elapsed_ms": 0
+  },
+  {
+    "case_id": "API-LS-02",
+    "layer": "api",
+    "status": "pass",
+    "detail": "OpenAI-compatible models loaded; selected gpt-5.5",
+    "elapsed_ms": 1226
+  },
+  {
+    "case_id": "BUG-OPENAI-SEARCH-STREAM-01",
+    "layer": "api",
+    "status": "pass",
+    "detail": "stream search path returned controlled SSE and server stayed healthy",
+    "elapsed_ms": 1237
+  },
+  {
+    "case_id": "BOOT-02",
+    "layer": "ui",
+    "status": "pass",
+    "detail": "all primary routes loaded without console errors",
+    "elapsed_ms": 7968
+  },
+  {
+    "case_id": "G-LS-01",
+    "layer": "ui",
+    "status": "skip",
+    "detail": "blocked because Google AI Studio browser capture did not complete the basic API path",
+    "elapsed_ms": 0
+  },
+  {
+    "case_id": "O-LS-03",
+    "layer": "ui",
+    "status": "pass",
+    "detail": "OpenAI-compatible UI search stream ended in controlled UI state",
+    "elapsed_ms": 7967
+  }
+]

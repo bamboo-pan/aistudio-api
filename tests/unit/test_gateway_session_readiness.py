@@ -105,6 +105,7 @@ class FakePage:
         self.botguard_on_send = botguard_on_send
         self.button_aria_disabled = button_aria_disabled
         self.goto_urls: list[str] = []
+        self.goto_kwargs: list[dict[str, object]] = []
         self.wait_calls: list[int] = []
         self.filled_texts: list[str] = []
         self.textarea_clicks = 0
@@ -126,6 +127,7 @@ class FakePage:
     def goto(self, url: str, **kwargs):
         self.url = self.goto_redirect_url or url
         self.goto_urls.append(url)
+        self.goto_kwargs.append(kwargs)
         if self.goto_error is not None:
             raise self.goto_error
 
@@ -317,6 +319,7 @@ def test_goto_waits_until_chat_runtime_and_input_are_ready():
     session._goto_aistudio_sync(page)
 
     assert page.goto_urls == [AI_STUDIO_URL]
+    assert page.goto_kwargs[0]["wait_until"] == "commit"
     assert page.has_default_makersuite is True
     assert page.has_textarea is True
 
@@ -425,6 +428,16 @@ def test_browser_options_set_proxy_identity_when_proxy_is_configured(monkeypatch
     assert options["config"]["geolocation:latitude"] == settings.camoufox_geolocation_latitude
     assert options["config"]["geolocation:longitude"] == settings.camoufox_geolocation_longitude
     assert options["i_know_what_im_doing"] is True
+
+
+def test_browser_options_disable_ipv6_and_http3_for_wsl_navigation(monkeypatch):
+    monkeypatch.setattr(settings, "proxy_server", "")
+    session = BrowserSession(port=0)
+
+    options = session._browser_options_sync()
+
+    assert options["firefox_user_prefs"]["network.dns.disableIPv6"] is True
+    assert options["firefox_user_prefs"]["network.http.http3.enable"] is False
 
 
 def test_install_hook_failure_reports_page_diagnostics():
@@ -758,6 +771,18 @@ class ImageTemplateRetrySessionForTest(TemplateCaptureImageSessionForTest):
         return {"url": page.generate_content_url, "headers": page.generate_content_headers, "body": page.generate_content_body}
 
 
+class TextTemplateTimeoutRetrySessionForTest(TemplateCaptureImageSessionForTest):
+    def __init__(self, page):
+        super().__init__(page)
+        self.capture_calls = 0
+
+    def _capture_template_request_sync(self, page, model: str) -> dict:
+        self.capture_calls += 1
+        if self.capture_calls == 1:
+            raise RuntimeError(f"template capture timeout for model={model}")
+        return {"url": page.generate_content_url, "headers": page.generate_content_headers, "body": page.generate_content_body}
+
+
 def test_capture_template_prepares_image_model_before_botguard_snapshot_ready():
     page = FakePage(url=AI_STUDIO_URL, has_default_makersuite=True, has_textarea=True)
     session = TemplateCaptureImageSessionForTest(page)
@@ -785,6 +810,18 @@ def test_image_template_capture_reselects_image_model_after_timeout():
         (page, "gemini-3-pro-image-preview", 0),
     ]
     assert session.install_calls == 3
+
+
+def test_text_template_capture_reopens_page_after_timeout():
+    page = FakePage(url=AI_STUDIO_URL, has_default_makersuite=True, has_textarea=True)
+    session = TextTemplateTimeoutRetrySessionForTest(page)
+
+    captured = session._capture_template_sync("gemini-3-flash-preview")
+
+    assert captured["url"].endswith("GenerateContent")
+    assert session.capture_calls == 2
+    assert session.goto_calls == 1
+    assert session.install_calls == 1
 
 
 def test_capture_template_uses_request_route_and_aborts_dummy_generation():
@@ -843,6 +880,27 @@ def test_capture_template_accepts_current_generatecontent_rpc_host():
     assert page.routed_requests[0].aborted is True
 
 
+def test_text_capture_template_accepts_batchexecute_body_markers_without_generatecontent_url():
+    page = FakePage(
+        url=AI_STUDIO_URL,
+        has_default_makersuite=True,
+        has_textarea=True,
+        generate_content_url="https://aistudio.google.com/_/BardChatUi/data/batchexecute?rpcids=abc123",
+    )
+    page.generate_content_body = json.dumps([
+        "models/gemini-3-flash-preview",
+        {"snapshot": "x" * 120},
+        None,
+    ])
+    session = TemplateCaptureSessionForTest(page)
+
+    captured = session._capture_template_sync("gemini-3.1-flash-lite")
+
+    assert captured["url"] == page.generate_content_url
+    assert captured["body"] == page.generate_content_body
+    assert page.routed_requests[0].aborted is True
+
+
 def test_capture_template_ignores_generatecontent_url_with_non_json_body():
     session = BrowserSession(port=0)
 
@@ -850,6 +908,23 @@ def test_capture_template_ignores_generatecontent_url_with_non_json_body():
         url="https://alkalimakersuite-pa.clients6.google.com/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GenerateContent",
         body="x" * 160,
         model_marker="gemini-3-flash-preview",
+    )
+
+
+def test_capture_template_accepts_generatecontent_body_with_model_and_snapshot_markers():
+    session = BrowserSession(port=0)
+
+    body = json.dumps([
+        "models/gemini-3-flash-preview",
+        [["snapshot", {"value": "x" * 120}]],
+        None,
+    ])
+
+    assert session._is_template_capture_request(
+        url="https://aistudio.google.com/_/BardChatUi/data/batchexecute?rpcids=abc123",
+        body=body,
+        model_marker="gemini-3-flash-preview",
+        allow_text_markers=True,
     )
 
 

@@ -1292,6 +1292,45 @@ def _responses_tools_for_optional_image_generation(tools: Any) -> Any:
     return converted
 
 
+def _responses_tools_include_search(tools: Any) -> bool:
+    return isinstance(tools, list) and any(isinstance(tool, dict) and is_search_tool_type(tool.get("type")) for tool in tools)
+
+
+def _responses_search_tools_only(tools: Any) -> list[dict[str, Any]]:
+    if not isinstance(tools, list):
+        return []
+    return [dict(tool) for tool in tools if isinstance(tool, dict) and is_search_tool_type(tool.get("type"))]
+
+
+def _responses_image_tool_decision_instruction(tool: dict[str, Any]) -> str:
+    default_size = tool.get("size") if isinstance(tool.get("size"), str) and tool.get("size") else "1024x1024"
+    return (
+        "Image generation tool selection protocol: If the latest user request explicitly asks to create or edit an image, "
+        "respond with exactly one line in this format: "
+        f"Tool call requested: image_generation {{\"prompt\":\"<complete image prompt>\",\"size\":\"{default_size}\"}}. "
+        "Use web search context when it helps make the image prompt accurate. "
+        "If the latest user request does not ask for visual output, answer normally and do not mention this protocol."
+    )
+
+
+def _responses_search_only_image_decision_payload(payload: dict[str, Any], tool: dict[str, Any]) -> dict[str, Any]:
+    sanitized = dict(payload)
+    tools = _responses_search_tools_only(payload.get("tools"))
+    if tools:
+        sanitized["tools"] = tools
+    else:
+        sanitized.pop("tools", None)
+    instruction = _responses_image_tool_decision_instruction(tool)
+    existing = sanitized.get("instructions")
+    sanitized["instructions"] = f"{existing.strip()}\n\n{instruction}" if isinstance(existing, str) and existing.strip() else instruction
+    return sanitized
+
+
+def _responses_needs_search_image_decision_fallback(exc: HTTPException, payload: dict[str, Any]) -> bool:
+    message = _exception_message(exc)
+    return "include_server_side_tool_invocations" in message and _responses_tools_include_search(payload.get("tools"))
+
+
 def _responses_optional_image_payload(payload: dict[str, Any]) -> dict[str, Any]:
     sanitized = dict(payload)
     tools = _responses_tools_for_optional_image_generation(payload.get("tools"))
@@ -1511,18 +1550,29 @@ async def _complete_responses_optional_image_generation(
     text_config = payload.get("text")
     if response_format is None and isinstance(text_config, dict):
         response_format = text_config.get("format")
-    chat_req = ChatRequest(
-        model=str(payload["model"]),
-        messages=_messages_from_responses_payload(decision_payload),
-        temperature=payload.get("temperature"),
-        top_p=payload.get("top_p"),
-        max_tokens=payload.get("max_output_tokens") or payload.get("max_tokens"),
-        tools=_messages_tools_from_payload(decision_payload.get("tools")),
-        thinking=payload.get("thinking"),
-        response_format=response_format,
-    )
+    def build_decision_chat_req(current_payload: dict[str, Any]) -> ChatRequest:
+        return ChatRequest(
+            model=str(payload["model"]),
+            messages=_messages_from_responses_payload(current_payload),
+            temperature=payload.get("temperature"),
+            top_p=payload.get("top_p"),
+            max_tokens=payload.get("max_output_tokens") or payload.get("max_tokens"),
+            tools=_messages_tools_from_payload(current_payload.get("tools")),
+            thinking=payload.get("thinking"),
+            response_format=response_format,
+        )
+
+    chat_req = build_decision_chat_req(decision_payload)
     uses_search = _chat_request_uses_search(chat_req)
-    chat_response = await handle_chat(chat_req, client)
+    try:
+        chat_response = await handle_chat(chat_req, client)
+    except HTTPException as exc:
+        if not _responses_needs_search_image_decision_fallback(exc, decision_payload):
+            raise
+        fallback_payload = _responses_search_only_image_decision_payload(payload, tool)
+        chat_req = build_decision_chat_req(fallback_payload)
+        uses_search = _chat_request_uses_search(chat_req)
+        chat_response = await handle_chat(chat_req, client)
     image_tool_request = _responses_image_tool_request(chat_response, allowed_tool_names)
     if image_tool_request is None:
         response = _responses_chat_response_payload(payload, chat_response, uses_search=uses_search, allowed_tool_names=allowed_tool_names)

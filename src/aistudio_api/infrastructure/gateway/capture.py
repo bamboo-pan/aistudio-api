@@ -15,6 +15,13 @@ from aistudio_api.infrastructure.gateway.wire_types import AistudioContent, Aist
 logger = logging.getLogger("aistudio")
 
 
+def _is_transient_aistudio_capture_error(exc: BaseException) -> bool:
+    message = str(exc)
+    if "Google sign-in" in message or "auth state" in message:
+        return False
+    return "Page.goto: Timeout" in message or "AI Studio chat runtime not ready" in message or "AI Studio image runtime not ready" in message or "template capture timeout" in message
+
+
 @dataclass
 class CapturedRequest:
     url: str
@@ -95,7 +102,17 @@ class RequestCaptureService:
         if model in self._templates:
             return self._templates[model]
 
-        captured = await self._session.capture_template(model)
+        captured = None
+        for attempt in range(2):
+            try:
+                captured = await self._session.capture_template(model)
+                break
+            except Exception as exc:
+                if attempt or not _is_transient_aistudio_capture_error(exc):
+                    raise
+                logger.warning("AI Studio template capture failed during navigation/readiness; retrying once: %s", exc)
+        if captured is None:
+            raise RuntimeError(f"AI Studio template capture failed for model={model}")
         template = CapturedRequest(**captured)
         self._templates[model] = template
         logger.info("Hook 模板已就绪: requested=%s, captured=%s", model, template.model)
