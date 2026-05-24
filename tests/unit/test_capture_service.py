@@ -32,6 +32,14 @@ class FakeBrowserSession:
         return "fresh-snapshot"
 
 
+class FlakyNavigationBrowserSession(FakeBrowserSession):
+    async def capture_template(self, model):
+        if not self.template_calls:
+            self.template_calls.append(model)
+            raise RuntimeError('Page.goto: Timeout 60000ms exceeded while navigating to "https://aistudio.google.com/"')
+        return await super().capture_template(model)
+
+
 def test_capture_rewrites_template_with_requested_model():
     service = RequestCaptureService(FakeBrowserSession(), SnapshotCache(ttl=60, max_size=10))
 
@@ -59,6 +67,16 @@ def test_capture_template_cache_can_be_cleared():
     third = asyncio.run(service.capture("third prompt", model="gemini-3.1-flash-lite"))
 
     assert third.headers["x-template-call"] == "2"
+    assert session.template_calls == ["gemini-3.1-flash-lite", "gemini-3.1-flash-lite"]
+
+
+def test_capture_template_retries_transient_aistudio_navigation_failure():
+    session = FlakyNavigationBrowserSession()
+    service = RequestCaptureService(session, SnapshotCache(ttl=60, max_size=10))
+
+    captured = asyncio.run(service.capture("hello", model="gemini-3.1-flash-lite"))
+
+    assert captured.headers["x-template-call"] == "2"
     assert session.template_calls == ["gemini-3.1-flash-lite", "gemini-3.1-flash-lite"]
 
 

@@ -213,7 +213,7 @@ def test_google_local_studio_provider_uses_internal_endpoint_without_token(tmp_p
         settings.local_studio_dir = old_dir
 
     assert response.status_code == 200
-    assert captured["timeout"] == 5
+    assert captured["timeout"] == 300
     assert captured["url"] == "http://testserver/v1/models"
     assert "Authorization" not in captured["headers"]
     assert [model["id"] for model in response.json()["data"]] == ["gemini-3-flash-preview"]
@@ -1191,6 +1191,79 @@ def test_stream_chat_transport_error_without_partial_output_persists_error(tmp_p
     assert assistant["content"] == ""
     assert assistant["images"] == []
     assert "peer closed connection" in assistant["error"]
+
+
+def test_stream_chat_http_status_error_reads_stream_body_without_response_not_read(tmp_path, monkeypatch):
+    app, old_dir = local_studio_app(tmp_path)
+
+    class FakeStreamResponse:
+        status_code = 400
+        headers = {"content-type": "application/json"}
+        is_error = True
+        reason_phrase = "Bad Request"
+        encoding = "utf-8"
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        @property
+        def content(self):
+            raise httpx.ResponseNotRead()
+
+        async def aread(self):
+            return b'{"error":{"message":"search tool rejected"}}'
+
+        def raise_for_status(self):
+            raise AssertionError("streaming error bodies should be handled before raise_for_status")
+
+        async def aiter_lines(self):
+            raise AssertionError("error streams should not be iterated")
+            yield ""
+
+    class FakeClient:
+        def __init__(self, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        def stream(self, method, url, headers, json):
+            return FakeStreamResponse()
+
+    monkeypatch.setattr(routes_local_studio, "_new_http_client", FakeClient)
+    try:
+        response = request_app(
+            app,
+            "POST",
+            "/api/local-studio/chat",
+            json={
+                "base_url": "http://compat.example/v1",
+                "api_key": "token-1",
+                "model": "gpt-5.4-mini",
+                "message": "search latest news",
+                "options": {"stream": True, "search": True},
+            },
+        )
+    finally:
+        settings.local_studio_dir = old_dir
+
+    completed = [
+        json.loads(line[6:])
+        for line in response.text.splitlines()
+        if line.startswith("data: ") and json.loads(line[6:]).get("type") == "local_studio.completed"
+    ][0]
+    assistant = completed["conversation"]["messages"][-1]
+
+    assert response.status_code == 200
+    assert "search tool rejected" in response.text
+    assert "ResponseNotRead" not in response.text
+    assert "search tool rejected" in assistant["error"]
 
 
 def test_chat_route_surfaces_http_524_and_records_error(tmp_path, monkeypatch):

@@ -234,7 +234,10 @@ def test_static_frontend_exposes_local_studio_workbench():
     assert "go('studio')" in index_html
     assert "openai.localStudio.settings.v1" in app_js
     assert "localStudioProviders:[]" in app_js
+    assert "localStudioSettings:{name:'',baseUrl:'',apiKey:'',timeout:300}" in app_js
     assert "localStudioProviderType:'google-ai-studio'" in app_js
+    assert "timeout:300,interfaceMode:'responses'" in app_js
+    assert "providerType==='google-ai-studio'?Math.max(rawTimeout,300):rawTimeout" in app_js
     assert "provider_type:providerType" in app_js
     assert "openai-provider-${index+1}" in app_js
     assert "rawId&&!rawId.startsWith('google-ai-studio')" in app_js

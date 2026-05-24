@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.responses import FileResponse
 
 from aistudio_api.infrastructure.local_studio import (
+    LOCAL_STUDIO_PROVIDER_GOOGLE,
     LocalStudioStore,
     build_local_studio_chat_payload,
     filter_chat_models,
@@ -54,7 +55,10 @@ def _settings_from_payload(payload: dict[str, Any], request: Request | None = No
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=_error_detail(str(exc), "invalid_request_error")) from exc
-    timeout = int(payload.get("timeout") or 120)
+    default_timeout = 300 if provider_type == LOCAL_STUDIO_PROVIDER_GOOGLE else 120
+    timeout = int(payload.get("timeout") or default_timeout)
+    if provider_type == LOCAL_STUDIO_PROVIDER_GOOGLE:
+        timeout = max(timeout, default_timeout)
     timeout = max(1, min(timeout, 600))
     return provider_type, base_url, token, timeout
 
@@ -162,11 +166,38 @@ def _record_upstream_response(
         return
 
 
-def _upstream_error(exc: httpx.HTTPStatusError) -> HTTPException:
-    response = exc.response
-    message = response.text or response.reason_phrase or f"HTTP {response.status_code}"
+def _response_text(response: httpx.Response, body: bytes | None = None) -> str:
+    if body is not None:
+        return body.decode(response.encoding or "utf-8", errors="replace")
     try:
-        data = response.json()
+        return response.text
+    except httpx.ResponseNotRead:
+        return ""
+
+
+def _response_json(response: httpx.Response, body: bytes | None = None) -> Any:
+    try:
+        if body is not None:
+            return json.loads(_response_text(response, body)) if body else None
+        return response.json()
+    except (ValueError, httpx.ResponseNotRead):
+        return None
+
+
+async def _read_response_body(response: httpx.Response) -> bytes:
+    try:
+        return response.content
+    except httpx.ResponseNotRead:
+        try:
+            return await response.aread()
+        except httpx.HTTPError:
+            return b""
+
+
+def _upstream_error_from_response(response: httpx.Response, body: bytes | None = None) -> HTTPException:
+    message = _response_text(response, body) or response.reason_phrase or f"HTTP {response.status_code}"
+    data = _response_json(response, body)
+    try:
         if isinstance(data, dict):
             error = data.get("error")
             if isinstance(error, dict):
@@ -174,10 +205,14 @@ def _upstream_error(exc: httpx.HTTPStatusError) -> HTTPException:
             elif data.get("detail"):
                 detail = data["detail"]
                 message = str(detail.get("message") if isinstance(detail, dict) else detail)
-    except ValueError:
+    except (TypeError, ValueError):
         pass
     status = response.status_code if 400 <= response.status_code < 500 else 502
     return HTTPException(status_code=status, detail=_error_detail(f"HTTP {response.status_code}: {message}", "upstream_error"))
+
+
+def _upstream_error(exc: httpx.HTTPStatusError, body: bytes | None = None) -> HTTPException:
+    return _upstream_error_from_response(exc.response, body)
 
 
 @router.get("/health")
@@ -530,6 +565,14 @@ async def _stream_local_studio_chat(
             async with client.stream("POST", url, headers=headers, json=request_body) as response:
                 status_code = response.status_code
                 response_headers = dict(response.headers)
+                if status_code >= 400:
+                    body = await response.aread()
+                    if body:
+                        response_chunks.append(body)
+                    error = _upstream_error_from_response(response, body)
+                    error_message = error.detail["message"] if isinstance(error.detail, dict) else str(error.detail)
+                    yield f"data: {json.dumps({'type':'error','error':{'message':error_message}}, ensure_ascii=False)}\n\n".encode("utf-8")
+                    return
                 response.raise_for_status()
                 async for line in response.aiter_lines():
                     raw = (line + "\n").encode("utf-8")
@@ -571,8 +614,10 @@ async def _stream_local_studio_chat(
     except httpx.HTTPStatusError as exc:
         status_code = exc.response.status_code
         response_headers = dict(exc.response.headers)
-        response_chunks.append(exc.response.content)
-        error = _upstream_error(exc)
+        body = await _read_response_body(exc.response)
+        if body:
+            response_chunks.append(body)
+        error = _upstream_error(exc, body)
         error_message = error.detail["message"] if isinstance(error.detail, dict) else str(error.detail)
         yield f"data: {json.dumps({'type':'error','error':{'message':error_message}}, ensure_ascii=False)}\n\n".encode("utf-8")
     except httpx.TimeoutException:

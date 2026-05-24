@@ -710,6 +710,10 @@ class BrowserSession:
         browser_options: dict[str, Any] = {
             "headless": settings.camoufox_headless,
             "main_world_eval": True,
+            "firefox_user_prefs": {
+                "network.dns.disableIPv6": True,
+                "network.http.http3.enable": False,
+            },
         }
         if settings.proxy_server:
             browser_options["proxy"] = {"server": settings.proxy_server}
@@ -888,7 +892,7 @@ class BrowserSession:
                 return
             body = request.post_data
             url = request.url
-            if self._is_template_capture_request(url=url, body=body, model_marker=model_marker):
+            if self._is_template_capture_request(url=url, body=body, model_marker=model_marker, allow_text_markers=not self._is_image_model(model)):
                 captured["url"] = url
                 captured["headers"] = dict(request.headers)
                 captured["body"] = body
@@ -967,6 +971,11 @@ class BrowserSession:
                 if attempt == 0 and self._is_image_model(model):
                     log.info("AI Studio image template capture failed; re-opening image model before retry: %s; %s", exc, diagnostics)
                     self._prepare_model_onboarding_sync(page, model)
+                    self._install_hooks_sync(page)
+                    continue
+                if attempt == 0 and "template capture timeout" in str(exc):
+                    log.info("AI Studio template send produced no capture request; reopening before retry: %s; %s", exc, diagnostics)
+                    self._goto_aistudio_sync(page)
                     self._install_hooks_sync(page)
                     continue
                 raise
@@ -1257,7 +1266,7 @@ mw:((hash) => {
             route_started_at = _t.time()
             goto_error = None
             try:
-                page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                page.goto(url, wait_until="commit", timeout=60000)
                 log.debug(f"[timing] goto {url} took {_t.time()-route_started_at:.1f}s")
             except Exception as exc:
                 goto_error = exc
@@ -1280,7 +1289,7 @@ mw:((hash) => {
                     last_error = RuntimeError(f"AI Studio redirected to docs after navigating to {url}: {current_url}")
                     continue
                 try:
-                    page.goto(AI_STUDIO_URL_FALLBACK, wait_until="domcontentloaded", timeout=60000)
+                    page.goto(AI_STUDIO_URL_FALLBACK, wait_until="commit", timeout=60000)
                     page.wait_for_timeout(2500)
                     current_url = getattr(page, "url", "")
                 except Exception as exc:
@@ -1548,7 +1557,7 @@ mw:((hash) => {
         last_error = None
         for url in self._aistudio_image_urls_for_model(model):
             try:
-                page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                page.goto(url, wait_until="commit", timeout=60000)
             except Exception as exc:
                 last_error = exc
                 continue

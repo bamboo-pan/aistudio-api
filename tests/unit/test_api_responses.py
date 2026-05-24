@@ -1,7 +1,10 @@
+import asyncio
 import json
 
 import pytest
+from fastapi import HTTPException
 
+from aistudio_api.application import api_service
 from aistudio_api.application.api_service import stats_response
 from aistudio_api.api.responses import (
     chat_completion_response,
@@ -207,3 +210,66 @@ def test_stats_response_aggregates_image_sizes_by_resolution():
 
     assert response["totals"]["image_sizes"] == {"1024x1024": 3, "1024x1792": 3}
     assert response["totals"]["image_total"] == 6
+
+
+def test_responses_search_image_fallback_splits_builtin_search_and_function_tool(monkeypatch):
+    captured_tools = []
+    captured_messages = []
+    captured_image_request = {}
+
+    async def fake_handle_chat(req, client, request=None):
+        captured_tools.append(req.tools)
+        captured_messages.append(req.messages)
+        if len(captured_tools) == 1:
+            raise HTTPException(
+                502,
+                detail={
+                    "message": "HTTP 400: Please enable tool_config.include_server_side_tool_invocations to use Built-in tools with Function calling.",
+                    "type": "upstream_error",
+                },
+            )
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": 'Tool call requested: image_generation {"prompt":"red square with searched context","size":"1024x1024"}'
+                    }
+                }
+            ],
+            "usage": {"prompt_tokens": 3, "completion_tokens": 4},
+        }
+
+    async def fake_handle_image_generation(req, client):
+        captured_image_request["model"] = req.model
+        captured_image_request["prompt"] = req.prompt
+        captured_image_request["size"] = req.size
+        return {"data": [{"b64_json": "ZmFrZQ==", "mime_type": "image/png"}], "usage": {"total_tokens": 1}}
+
+    monkeypatch.setattr(api_service, "handle_chat", fake_handle_chat)
+    monkeypatch.setattr(api_service, "handle_image_generation", fake_handle_image_generation)
+
+    response = asyncio.run(
+        api_service.handle_openai_responses(
+            {
+                "model": "gemini-3-flash-preview",
+                "input": "Search for color symbolism and make it an image",
+                "tools": [
+                    {"type": "web_search_preview"},
+                    {"type": "image_generation", "provider": "google-ai-studio", "model": "gemini-3.1-flash-image-preview"},
+                ],
+            },
+            client=object(),
+        )
+    )
+
+    assert captured_tools[0][0].type == "web_search_preview"
+    assert captured_tools[0][1].function.name == "image_generation"
+    assert [tool.type for tool in captured_tools[1]] == ["web_search_preview"]
+    assert any("Image generation tool selection protocol" in message.content for message in captured_messages[1] if message.role == "system")
+    assert response["output"][0]["type"] == "web_search_call"
+    assert response["output"][1]["type"] == "image_generation_call"
+    assert captured_image_request == {
+        "model": "gemini-3.1-flash-image-preview",
+        "prompt": "red square with searched context",
+        "size": "1024x1024",
+    }

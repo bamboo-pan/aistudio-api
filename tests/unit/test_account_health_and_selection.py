@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import httpx
 from fastapi import FastAPI
 
+from aistudio_api.api.app import _should_start_background_warmup
 from aistudio_api.api.dependencies import get_account_service
 from aistudio_api.api.routes_accounts import router as accounts_router
 from aistudio_api.api.schemas import ChatRequest, ImageRequest, Message
@@ -49,6 +50,12 @@ def request_app(app: FastAPI, method: str, url: str, **kwargs) -> httpx.Response
             return await client.request(method, url, **kwargs)
 
     return asyncio.run(send())
+
+
+def test_background_warmup_skips_redundant_account_pool_navigation():
+    assert _should_start_background_warmup(use_pure_http=False, account_count=0) is True
+    assert _should_start_background_warmup(use_pure_http=False, account_count=1) is False
+    assert _should_start_background_warmup(use_pure_http=True, account_count=0) is False
 
 
 def accounts_app(service: AccountService) -> FastAPI:

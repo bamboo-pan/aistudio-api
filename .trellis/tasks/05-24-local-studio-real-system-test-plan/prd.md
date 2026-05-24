@@ -2,7 +2,7 @@
 
 ## Goal
 
-Design and commit a new, complete, real-system frontend WebUI test plan for Local Studio and the surrounding WebUI. The plan must be grounded in the current architecture, use the real credential locations documented in `AGENTS.md`, and explicitly cover the two user-reported failures: Gemini image tool conversations failing after enabling the image tool, and custom OpenAI-compatible search conversations crashing the stream error path.
+Design and commit a new, complete, real-system frontend WebUI test plan for Local Studio and the surrounding WebUI, then execute the plan's real P0 paths, summarize and fix discovered bugs, and repeat verification until no P0 bug remains. The plan and verification must be grounded in the current architecture, use the real credential locations documented in `AGENTS.md`, and explicitly cover the two user-reported failures: Gemini image tool conversations failing after enabling the image tool, and custom OpenAI-compatible search conversations crashing the stream error path.
 
 ## Requirements
 
@@ -14,6 +14,11 @@ Design and commit a new, complete, real-system frontend WebUI test plan for Loca
 * Use the real WSL testing setup from `AGENTS.md`: temporary WSL working directory, real Google AI Studio account credentials, and the OpenAI key file path.
 * Do not commit secrets or test artifacts containing raw tokens, cookies, generated images, request logs, or browser storage states.
 * Add the Trellis task files and include the existing `AGENTS.md` credential-path change in the final commit.
+* Execute the real system plan's P0 API and browser UI paths in WSL, prioritizing the two reported bug reproductions.
+* Summarize every bug found with reproduction path, expected behavior, actual behavior, root cause, and verification status.
+* Fix discovered P0 bugs in the current task scope and add/update automated regression coverage where practical.
+* Re-run targeted real API/UI verification after fixes until the P0 paths are green or a genuine external-provider limitation is clearly recorded.
+* Push the completed feature branch after commits are made.
 
 ## Acceptance Criteria
 
@@ -24,17 +29,26 @@ Design and commit a new, complete, real-system frontend WebUI test plan for Loca
 * [x] The plan covers standalone base modules and confirms Local Studio wrapping does not regress them.
 * [x] Markdown/document changes are checked for repository consistency.
 * [x] The requested changes are committed on the feature branch.
+* [x] P0 real API/UI plan paths are executed in WSL with artifacts recorded under the Trellis task.
+* [x] Discovered bugs are summarized and fixed or explicitly classified as external/provider limitations.
+* [x] Targeted automated regression tests pass after fixes.
+* [x] Real P0 API/UI verification is re-run after fixes; independent paths pass and the remaining Google AI Studio browser-capture blocker is recorded.
+* [ ] Final commits are pushed to the remote feature branch.
 
 ## Definition of Done
 
 * Repository test-plan document added.
 * Trellis PRD, research, and context JSONL are present.
-* Relevant verification for a documentation-only change is run.
-* Commit includes this task's files and the existing `AGENTS.md` test-environment note.
+* Real WSL API and browser UI verification results are persisted under this Trellis task without secrets.
+* Fixes and regression tests are committed when bugs are found.
+* Commit includes this task's files, verification notes, code/test fixes, and the existing `AGENTS.md` test-environment note.
+* Feature branch is pushed.
 
 ## Technical Approach
 
-The test plan will be a Chinese-language Markdown runbook and matrix in `tests/system/local-studio-web-real-system-test-plan.md`. It will define exhaustive user-path coverage by dimensions and then group high-cost real tests into suites that still cover every real user path: direct API preflight, browser navigation, provider setup, Local Studio provider/interface/tool combinations, request log lifecycle, standalone base-module smoke, failure-path robustness, and artifact/security gates.
+The test plan is a Chinese-language Markdown runbook and matrix in `tests/system/local-studio-web-real-system-test-plan.md`. It defines exhaustive user-path coverage by dimensions and groups high-cost real tests into suites that still cover every real user path: direct API preflight, browser navigation, provider setup, Local Studio provider/interface/tool combinations, request log lifecycle, standalone base-module smoke, failure-path robustness, and artifact/security gates.
+
+For execution, run the P0 subset first because it touches the user-reported failures and highest-risk provider/tool paths. When a P0 bug is found, add the narrowest reproducible automated test, fix the root cause, run focused automated tests, then re-run the matching WSL API/UI path before continuing.
 
 ## Decision (ADR-lite)
 
@@ -46,10 +60,9 @@ The test plan will be a Chinese-language Markdown runbook and matrix in `tests/s
 
 ## Out of Scope
 
-* Fixing the two reported runtime bugs in this task.
-* Implementing a full Playwright automation suite.
-* Running expensive real provider tests for a documentation-only change.
-* Changing Local Studio behavior or WebUI design.
+* Implementing a full exhaustive Playwright automation suite for every P1 combination.
+* Fixing unrelated bugs outside Local Studio/WebUI/API/request-log paths unless they block P0 verification.
+* Committing raw real-test artifacts that contain secrets, account state, request logs with sensitive data, or generated images.
 
 ## Technical Notes
 

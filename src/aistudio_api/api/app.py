@@ -33,6 +33,10 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message
 logger = logging.getLogger("aistudio.server")
 
 
+def _should_start_background_warmup(*, use_pure_http: bool, account_count: int) -> bool:
+    return not use_pure_http and account_count == 0
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     import asyncio
@@ -63,6 +67,7 @@ async def lifespan(app: FastAPI):
 
     # 初始化账号管理服务
     account_store = AccountStore()
+    accounts = account_store.list_accounts()
     login_service = LoginService(port=settings.login_camoufox_port)
     account_service = AccountService(account_store, login_service)
     runtime_state.account_service = account_service
@@ -95,12 +100,12 @@ async def lifespan(app: FastAPI):
         "Client initialized (camoufox port=%s, rotation=%s, accounts=%d)",
         runtime_state.camoufox_port,
         rotator.mode,
-        len(account_store.list_accounts()),
+        len(accounts),
     )
 
     # 后台预热浏览器，避免首次请求延迟
     warmup_task = None
-    if not settings.use_pure_http:
+    if _should_start_background_warmup(use_pure_http=settings.use_pure_http, account_count=len(accounts)):
         async def _warmup():
             try:
                 await client.warmup()
