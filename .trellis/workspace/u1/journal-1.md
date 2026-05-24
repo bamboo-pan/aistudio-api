@@ -981,3 +981,102 @@ Enhanced the Local Studio real system test plan with architecture contract asser
 ### Next Steps
 
 - None - task complete
+
+
+## Session 30: Local Studio real system test fixes
+
+**Date**: 2026-05-24
+**Task**: Local Studio real system test fixes
+**Branch**: `feature/05-24-local-studio-system-test-fixes`
+
+### Summary
+
+Executed Local Studio real WSL smoke and extended matrix tests, fixed the Google Responses search plus image-tool decision flow, updated regression coverage and backend quality spec, then verified full pytest, JS syntax, diff checks, and final real system runs passed.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e2ebd3b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 31: Local Studio streaming reasoning display
+
+**Date**: 2026-05-24
+**Task**: Local Studio streaming reasoning display
+**Branch**: `feature/05-24-local-studio-system-test-fixes`
+
+### Summary
+
+Fixed Local Studio Responses streaming reasoning parsing and persistence, hardened the real system test plan so collected reasoning/UI oracle fields must fail when missing, documented remaining system-test runner gap classes, and verified focused plus full unit tests and frontend syntax checks passed.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cf8f940` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
+
+
+## Session 32: System test plan charter hardening
+
+**Date**: 2026-05-24
+**Task**: System test plan charter hardening
+**Branch**: `feature/05-24-local-studio-system-test-fixes`
+
+### Summary
+
+Updated the Local Studio real system test plan to serve as the global highest test charter, adding explicit high-risk omission classes and hard oracle enforcement requirements for UI visibility, provider/request-log signatures, capability preservation, recovery paths, cache isolation, not_applicable handling, harness fail wiring, and artifact safety.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ead17d4` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

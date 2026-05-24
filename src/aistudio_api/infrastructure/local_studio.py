@@ -1190,10 +1190,16 @@ def parse_responses_stream_event(payload: Mapping[str, Any]) -> dict[str, Any]:
     image_candidates: list[dict[str, Any]] = []
     if event_type == "response.output_text.delta":
         content = str(payload.get("delta") or "")
-    elif event_type == "response.reasoning.delta":
+    elif event_type in {"response.reasoning.delta", "response.reasoning_text.delta", "response.reasoning_summary_text.delta"}:
         thinking = str(payload.get("delta") or "")
-    elif event_type == "response.reasoning.done":
+    elif event_type in {"response.reasoning.done", "response.reasoning_text.done", "response.reasoning_summary_text.done"}:
         thinking = str(payload.get("text") or "")
+    elif event_type in {"response.output_item.done", "response.output_item.added"} and isinstance(payload.get("item"), Mapping):
+        item = payload["item"]
+        if str(item.get("type") or "") == "reasoning":
+            thinking = parse_responses_output({"output": [item]})["thinking"]
+    elif event_type in {"response.reasoning_summary_part.done", "response.reasoning_summary_part.added"}:
+        thinking = "\n".join(_text_from_parts(payload.get("part"))).strip()
     elif event_type == "response.completed" and isinstance(payload.get("response"), Mapping):
         response = payload["response"]
         parsed = parse_responses_output(response)

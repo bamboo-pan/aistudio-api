@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend spec entry point for Local Studio implementation context."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Local Studio reasoning, streaming, request-log, and real-system test contracts."}
+{"file":".trellis/tasks/archive/2026-05/05-24-local-studio-real-system-test-fixes/research/test-run-results.md","reason":"Previous real WSL evidence showing streaming reasoning completed without assistant thinking while non-stream preserved it."}

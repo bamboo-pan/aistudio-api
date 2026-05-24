@@ -63,6 +63,7 @@ Questions to answer:
 - Model rows returned to the UI must include capability metadata or have default capabilities inferred for text, files, reasoning, streaming, tools, structured output, and Gemini safety controls.
 - Chat payloads must be mode-specific: OpenAI Chat -> `/chat/completions` `messages`; Responses -> `/responses` `input`; Gemini -> `contents` plus optional `generationConfig`; Claude -> `/messages` `messages` and `max_tokens`.
 - Stream mode must set the provider stream flag when supported and normalize provider SSE chunks to `local_studio.delta` events. The final event must include the saved conversation as `local_studio.completed`.
+- Responses stream parsers must preserve all provider reasoning variants as Local Studio `thinking`, including `response.reasoning.delta/done`, `response.reasoning_text.delta/done`, `response.reasoning_summary_text.delta/done`, reasoning summary parts, and reasoning `response.output_item.done` payloads. The UI already renders the reasoning block from `message.thinking`; missing thinking in the completed conversation is a backend stream parsing/persistence regression, not a frontend empty-state.
 - Request logging must include `/api/local-studio/models` and `/api/local-studio/chat` client requests plus manually recorded upstream request/response phases. Client `api_key`, `apiKey`, and `token` body fields and upstream `Authorization` headers must be redacted.
 - The `timeout` setting must be passed into every Local Studio upstream client, including model list, non-stream chat, and stream chat.
 - The static UI must clear an accepted Local Studio draft immediately after send, restore it on non-rerun failure, and keep provider profiles, active provider id, stream/non-stream, interface mode, reasoning, model, search, cache namespace, and image settings in `openai.localStudio.settings.v1`.
@@ -73,6 +74,7 @@ Questions to answer:
 - The Local Studio image-generation tool is Responses-mode only. When enabled, Local Studio must send the `image_generation` tool through `/responses` and must not fall back to `/images/generations`; HTTP/transport failures surface as upstream errors, and no-candidate completions remain image-less. OpenAI providers keep OpenAI image tool options such as quality/background/format/compression. Google AI Studio providers send `provider: "google-ai-studio"`, the selected Gemini image model, and only model-supported size/options.
 - The internal Google AI Studio `/v1/responses` compatibility route must expose image generation as an optional model-selected tool, not as a forced call. Plain chat prompts with the image tool enabled must still be able to return a normal message without invoking image generation.
 - For built-in Google provider requests that combine `web_search_preview` and `image_generation`, the internal Responses compatibility route must preserve the search output item and use the selected Gemini image model/size when the model chooses image generation.
+- Built-in Google provider requests that combine `web_search_preview` and `image_generation` must not send Google built-in search together with a function-calling image tool during the image-tool decision step. Build the decision request as search-only plus the image-tool selection instruction from the start, then parse the text protocol locally and call image generation only if selected. Do not rely on a first upstream 400 followed by retry; request logs are part of the contract and must not contain the `include_server_side_tool_invocations` failure.
 - Generated image bytes from `b64_json`, `b64`, `result`, or data URLs must be saved under `AISTUDIO_LOCAL_STUDIO_DIR/files` and returned with `/api/local-studio/assets/...` URLs.
 - Responses stream `response.image_generation_call.partial_image` data is a usable partial image candidate. If the upstream stream later fails after text, thinking, usage, or image candidates have arrived, persist the partial assistant result, save any candidate images, and keep a visible assistant `error` note explaining the stream ended before completion.
 - Successful Responses streams that include both `response.image_generation_call.partial_image` progress data and final `image_generation_call.result` data must prefer final image candidates. Equivalent generated image payloads must be deduplicated before saving so the UI renders one image per unique output.
@@ -92,6 +94,7 @@ Questions to answer:
 - Invalid conversation id/path traversal asset path -> HTTP 400; missing conversation/asset -> HTTP 404.
 - Upstream 4xx -> mirror the 4xx status with `upstream_error`; upstream 5xx/524 -> HTTP 502 with the upstream status embedded in the message.
 - Upstream timeout -> HTTP 504 and persist an assistant error message.
+- Google Responses search plus image-tool decision path records `Please enable tool_config.include_server_side_tool_invocations...` in any upstream response/request-log group -> fail the regression; avoid the invalid upstream call rather than hiding it behind a successful retry.
 - `gpt-image-2` size not `auto` or `WIDTHxHEIGHT` -> HTTP 400 before upstream call.
 - `gpt-image-2` edges not multiples of 16, longest edge `>=3840`, ratio `>3:1`, pixels `<655,360`, or pixels `>8,294,400` -> HTTP 400 before upstream call.
 
@@ -100,6 +103,7 @@ Questions to answer:
 - Good: Real compatible endpoint returns models including `gpt-image-2` and audio ids; Local Studio returns chat-capable ids only, includes capability badges, and defaults to a text/chat model for the selected interface mode.
 - Good: User switches `interface_mode` from OpenAI Chat to Gemini; model loading calls the Gemini models route shape, chat calls `:generateContent`, token usage is normalized, and restoring the conversation restores Gemini mode.
 - Good: Responses stream emits provider chunks; backend emits incremental `local_studio.delta`, frontend renders the assistant placeholder while streaming, and final persistence arrives via `local_studio.completed`.
+- Good: Responses high-reasoning stream emits reasoning summary events; Local Studio accumulates them into the assistant `thinking` field, the completed conversation persists that field, and the existing UI shows the `Reasoning summary` block after refresh.
 - Good: Request logs enabled; a Local Studio chat group contains client request, upstream request, upstream response, and client response phases without API token leakage.
 - Good: Responses image tool returns `image_generation_call.result`; the image is saved locally and rendered in the UI.
 - Good: Responses image tool emits `response.image_generation_call.partial_image`, then the transport raises an incomplete chunked read; Local Studio saves the partial image, preserves any text/usage already received, and shows the upstream interruption as an error note beside the partial result.
@@ -108,6 +112,7 @@ Questions to answer:
 - Good: Local request cache enabled; the first equivalent request calls the upstream provider and returns `cache.hit=false`, while the second equivalent request appends the cached assistant result to the active conversation and returns `cache.hit=true` without another upstream call.
 - Good: Streamed Local request cache hit returns `text/event-stream` with `local_studio.delta` and final `local_studio.completed`, preserving the frontend stream contract.
 - Good: Responses mode enables both search and image generation; built-in Google payloads contain `web_search_preview` plus provider-aware `image_generation`, while OpenAI-compatible payloads contain `web_search` plus provider-aware `image_generation`. Ordinary text prompts may still return only message output, and image prompts can produce `web_search_call` plus `image_generation_call` output items when the model selects the tool.
+- Good: Google Responses search plus image tool uses a search-only decision prompt containing the image-tool selection protocol, then emits `web_search_call` plus `image_generation_call` only when the text decision selects the image tool; no upstream/request-log entry contains `include_server_side_tool_invocations`.
 - Good: User enters custom `3824x2144`; local validation accepts it as near-4K under the `<3840` edge rule.
 - Base: Text-only Responses chat stores assistant text and usage without calling an image-generation endpoint.
 - Bad: A key file containing both base URL and token is passed as a single Authorization header value.
@@ -119,7 +124,9 @@ Questions to answer:
 - Unit: interface-mode payload routing, upstream paths, response parsers, stream parsers, timeout propagation, and conversation `interface_mode` persistence for OpenAI Chat, Responses, Gemini, and Claude.
 - Unit: conversation CRUD, bulk delete, asset path containment, and rerun truncation.
 - Unit: Responses payload construction includes attachment blocks, reasoning, and image-generation tool options.
+- Unit: Responses stream parser extracts thinking from `response.reasoning_summary_text.delta/done` and reasoning `response.output_item.done`, and the Local Studio stream route persists that thinking into the completed conversation.
 - Unit: Responses payload construction includes provider-aware search tools when Local Studio search is enabled: `web_search_preview` for Google AI Studio and `web_search` for OpenAI-compatible providers. Preserve provider-aware image-generation tool ordering/compatibility.
+- Unit: Google Responses search plus image-tool decision sends exactly one decision chat request with `web_search_preview` and the image-tool selection protocol, and does not include the `image_generation` function tool in that decision request.
 - Unit: Local request cache miss/hit for non-stream chat and stream chat, including provider-type-aware keys, cache metadata on assistant messages, and no duplicate upstream call on hit.
 - Unit: `gpt-image-2` official size options and invalid custom sizes.
 - Unit: chat persists assistant errors for upstream 524/timeouts and rejects multiline tokens without leaking secrets.
@@ -194,6 +201,23 @@ try:
 	response.raise_for_status()
 except httpx.HTTPError:
 	raise
+```
+
+#### Wrong
+
+```python
+decision_payload = _responses_optional_image_payload(payload)
+chat_response = await handle_chat(build_decision_chat_req(decision_payload), client)
+```
+
+#### Correct
+
+```python
+decision_payload = _responses_optional_image_payload(payload)
+allowed_tool_names = _tool_names_from_payload(decision_payload.get("tools"))
+if _responses_tools_include_search(payload.get("tools")):
+	decision_payload = _responses_search_only_image_decision_payload(payload, tool)
+chat_response = await handle_chat(build_decision_chat_req(decision_payload), client)
 ```
 
 ## Scenario: Real WebUI System Test Plans
