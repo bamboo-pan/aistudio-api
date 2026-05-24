@@ -214,6 +214,8 @@ except httpx.HTTPError:
 - Credential paths may be referenced, but raw tokens, cookies, storage states, request-log exports, and generated assets must not be committed.
 - Request logging is part of the verification contract for provider/API flows. Critical cases must assert full request lifecycle phases and secret redaction.
 - Bug-driven plans must include explicit regression oracles copied from the observed failing path, including expected server-log and UI behavior.
+- Architecture-facing plans must include reusable architecture contract assertions, not only route-by-route smoke paths. For Local Studio-style orchestrators, cover provider routing isolation, interface payload/stream-parser isolation, optional tool semantics, reasoning/tool trace preservation, cache key isolation, base-module independence, error consistency, persistence recovery, and frontend state-machine cleanup.
+- If upstream responses can include intermediate process data such as reasoning summaries, tool calls, search citations, image-generation invocations, usage, or partial outputs, the plan must state where that data is expected to survive across API response, UI, persisted conversation, cache hit/rerun, and request-log export. If an upstream model does not return such data, the UI/API must expose a distinguishable empty/not-available state instead of silently looking like parsing or persistence lost it.
 
 ### 4. Validation & Error Matrix
 
@@ -222,17 +224,24 @@ except httpx.HTTPError:
 - Real credential values or copied secret artifacts in the repo -> reject the change.
 - Failure-path cases that do not assert service health after the error -> plan is incomplete.
 - Provider/tool matrices that only cover the happy path -> plan is incomplete.
+- Reasoning/tool/cache/provider behavior listed only as high-level dimensions, without provider-specific pass/fail oracles -> plan is incomplete.
+- Cache tests that prove only same-namespace hit/miss but not provider/interface/model/tool/reasoning/attachment/token-hash isolation -> plan is incomplete.
+- UI tests that do not assert cleanup of pending/tool-running/error/retry states after success or failure -> plan is incomplete.
 
 ### 5. Good/Base/Bad Cases
 
 - Good: The plan defines provider/interface/tool/cache/conversation/request-log matrices plus concrete pass/fail assertions and artifact handling.
+- Good: The plan defines architecture contract assertions and requires each API/UI case to record pass/fail/not-applicable evidence for the relevant contracts.
+- Good: An OpenAI Responses reasoning case asserts the request `reasoning` parameter plus preservation of returned reasoning summary/tool details across API, UI, conversation JSON, refresh, cache hit, and request logs, while distinguishing an upstream no-summary result from a parser/storage loss.
 - Base: The plan documents a narrow smoke route with both API and UI checks and states what is out of scope.
 - Bad: The plan says "test Local Studio manually" without credential setup, user paths, request-log expectations, bug oracle, or cleanup rules.
+- Bad: The plan says "Reasoning: on/off" but never names the provider/interface, expected request fields, response fields, UI persistence, or empty-state behavior.
 
 ### 6. Tests Required
 
 - Documentation-only plan changes should at minimum pass `git diff --check` and relevant existing focused tests when the plan references current contracts.
 - If a plan accompanies code changes, run the code tests required by that feature and the real WSL API/UI checks named in the plan.
+- For architecture-contract plan updates, verify the new plan maps every major architecture node or boundary to at least one concrete assertion, and explicitly marks documentation-only changes as not requiring real WSL execution.
 
 ### 7. Wrong vs Correct
 
