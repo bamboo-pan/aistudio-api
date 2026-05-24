@@ -285,6 +285,64 @@ def test_google_local_studio_provider_chat_uses_internal_image_tool(tmp_path, mo
     assert response.json()["cache"]["hit"] is False
 
 
+def test_openai_provider_chat_uses_openai_responses_search_tool(tmp_path, monkeypatch):
+    app, old_dir = local_studio_app(tmp_path)
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"content-type": "application/json"}
+        content = b'{"id":"resp_search","output_text":"ok","usage":{"input_tokens":1,"output_tokens":1}}'
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"id": "resp_search", "output_text": "ok", "usage": {"input_tokens": 1, "output_tokens": 1}}
+
+    class FakeClient:
+        def __init__(self, timeout):
+            captured["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def post(self, url, headers, json):
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["json"] = json
+            return FakeResponse()
+
+    monkeypatch.setattr(routes_local_studio, "_new_http_client", FakeClient)
+    try:
+        response = request_app(
+            app,
+            "POST",
+            "/api/local-studio/chat",
+            json={
+                "provider_type": "openai",
+                "base_url": "https://compat.example/v1",
+                "api_key": "token-1",
+                "interface_mode": "responses",
+                "model": "gpt-5.4-mini",
+                "message": "search today's tech news",
+                "options": {"search": True},
+            },
+        )
+    finally:
+        settings.local_studio_dir = old_dir
+
+    assert response.status_code == 200
+    assert captured["url"] == "https://compat.example/v1/responses"
+    assert captured["headers"]["Authorization"] == "Bearer token-1"
+    assert captured["json"]["tools"] == [{"type": "web_search"}]
+    assert "web_search_preview" not in json.dumps(captured["json"])
+    assert response.json()["conversation"]["messages"][-1]["content"] == "ok"
+
+
 def test_build_responses_payload_keeps_openai_image_tool_semantics():
     payload = build_responses_payload(
         model="gpt-5.4-mini",
@@ -466,6 +524,30 @@ def test_build_responses_payload_includes_web_search_tool():
 
     assert payload["tools"][0] == {"type": "web_search_preview"}
     assert payload["tools"][1]["type"] == "image_generation"
+
+
+def test_build_responses_payload_uses_openai_search_tool_for_openai_provider():
+    payload = build_responses_payload(
+        model="gpt-5.4-mini",
+        messages=[{"role": "user", "content": "latest docs"}],
+        options={"search": True, "image_tool_enabled": True, "image_tool_provider": "openai", "size": "1024x1024"},
+        provider_type="openai",
+    )
+
+    assert payload["tools"][0] == {"type": "web_search"}
+    assert payload["tools"][1]["type"] == "image_generation"
+    assert "web_search_preview" not in json.dumps(payload)
+
+
+def test_build_responses_payload_keeps_google_search_tool_for_google_provider():
+    payload = build_responses_payload(
+        model="gemini-3-flash-preview",
+        messages=[{"role": "user", "content": "latest docs"}],
+        options={"search": True},
+        provider_type="google-ai-studio",
+    )
+
+    assert payload["tools"] == [{"type": "web_search_preview"}]
 
 
 def test_gpt_image_2_size_options_match_official_constraints():

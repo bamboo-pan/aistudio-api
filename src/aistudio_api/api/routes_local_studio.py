@@ -366,6 +366,7 @@ async def chat(request: Request, payload: dict[str, Any] = Body(...)):
             messages=conversation.get("messages", []),
             options=options,
             asset_resolver=store.asset_to_data_url,
+            provider_type=provider_type,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=_error_detail(str(exc), "invalid_request_error")) from exc

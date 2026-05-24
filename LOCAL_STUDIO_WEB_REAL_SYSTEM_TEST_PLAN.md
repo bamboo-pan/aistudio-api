@@ -8,6 +8,7 @@
 
 * Google AI Studio provider 在 Local Studio Responses 模式下开启图片工具后，对话触发生图时上游返回 `Please enable tool_config.include_server_side_tool_invocations to use Built-in tools with Function calling.`。
 * 自定义 OpenAI-compatible provider 在 Local Studio Responses 模式下开启 search 后，上游流式 HTTP 400 被后端错误读取为 `httpx.ResponseNotRead`，导致 ASGI 异常。
+* 自定义 OpenAI-compatible provider 在 Local Studio Responses 模式下开启 search 后，请求体错误发送 `web_search_preview`，上游返回 `HTTP 400: Unsupported tool type: web_search_preview`。
 
 ## 测试原则
 
@@ -80,6 +81,8 @@ OPENAI_COMPAT_API_KEY="$(tr -d '\r\n' < "$OPENAI_COMPAT_KEY_FILE")"
 
 1. 对每个有效的 `Provider x Interface` 组合，必须运行基础聊天 `Stream on/off x Search off/on` 四种组合。
 2. 对每个 Responses 组合，必须额外运行 `Image Tool off/on x Search off/on` 四种组合，并验证普通问题不会因为工具开启而强制调用工具。
+	* Google AI Studio provider 的 Responses search 请求体必须使用 `web_search_preview`。
+	* OpenAI-compatible provider 的 Responses search 请求体必须使用 `web_search`，且不得出现 `web_search_preview`。
 3. 对每个 Provider 至少运行一次 cache miss/hit/namespace miss 三连测试。
 4. 对每个 Provider 至少运行一次图片附件和一次非图片附件路径；如果模型不支持附件，预期结果是 UI 阻止发送并给出错误提示。
 5. 对每个 Provider 至少运行一次会话恢复和重跑；其中一次必须在页面刷新后恢复。
@@ -117,7 +120,7 @@ OPENAI_COMPAT_API_KEY="$(tr -d '\r\n' < "$OPENAI_COMPAT_KEY_FILE")"
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | O-LS-01 | Models | 不适用 | 不适用 | 不适用 | 不适用 | 在 UI 新增 OpenAI-compatible provider，填 Base URL、从 key 文件读取 token，点击加载模型 | 模型列表加载；token 输入框不回显明文到日志；刷新后 provider 可恢复 |
 | O-LS-02 | Responses | on/off | off | off | miss | 选择聊天模型，发送 `回复 ok` | 流式和非流式均可完成；请求记录目标为自定义 Base URL `/responses` |
-| O-LS-03 | Responses | on | on | off | miss | 发送 `搜索今天一条科技新闻并总结` | 如果 provider 支持 search，应正常完成；如果返回 4xx，UI 只显示一个受控错误，服务端不得出现 `ResponseNotRead` 或 ASGI exception group |
+| O-LS-03 | Responses | on | on | off | miss | 发送 `搜索今天一条科技新闻并总结` | 请求体 `tools` 使用 `web_search` 且不出现 `web_search_preview`；如果 provider 支持 search，应正常完成；如果返回 4xx，UI 只显示一个受控错误，服务端不得出现 `ResponseNotRead` 或 ASGI exception group；不得出现 `Unsupported tool type: web_search_preview` |
 | O-LS-04 | Responses | on/off | off | on | miss | 选择 `gpt-image-2`，尺寸 `1024x1024`，发送 `生成一个测试图标` | 支持图片的 provider 返回图片并渲染一次；不支持时优雅失败且服务健康保持 200 |
 | O-LS-05 | Responses | on | on | on | miss | 普通聊天 `不要搜索，不要画图，只回复 ok` | 工具开启但不强制调用；不会错误生成图片 |
 | O-LS-06 | OpenAI Chat | on/off | off/on | 不适用 | miss | 切到 OpenAI Chat interface，测普通聊天和 search toggle | 正常完成或 provider 兼容性错误受控显示；无未捕获后端异常 |
@@ -136,6 +139,10 @@ OPENAI_COMPAT_API_KEY="$(tr -d '\r\n' < "$OPENAI_COMPAT_KEY_FILE")"
 | LS-UI-06 | Attachments | 上传图片、文本/PDF 附件后发送 | 支持模型正常发送；不支持模型 UI 阻止或给出明确错误；附件预览和移除可用 |
 | LS-UI-07 | Conversation | 新建、发送、刷新、恢复、重跑、重命名、单删、批量删除 | 历史列表、消息内容、图片、usage、错误和 cache 标记都能持久化并正确删除 |
 | LS-UI-08 | Cache Namespace | 同 prompt 改变 namespace 后发送 | namespace 改变触发 miss；切回原 namespace 可 hit；日志/usage 与 UI 标记一致 |
+| LS-UI-09 | Reasoning / Capability | 切换支持和不支持 reasoning 的模型，分别设置 off 与 high + summary auto 后发送 | 支持时请求体包含 reasoning；不支持时 UI 控件禁用或请求省略；会话恢复后 reasoning/tool details 仍可见或被保存 |
+| LS-UI-10 | Provider CRUD | 编辑 OpenAI-compatible provider 的 Base URL/token/timeout，再删除当前 provider | 编辑后重新加载模型走新配置；删除后回退到可用 provider；会话和请求日志不保存明文 token |
+| LS-UI-11 | Timeout | 设置极短 timeout 访问慢/不可达 Base URL 后发送 | UI 显示受控 timeout 错误；输入框恢复可用；会话保存错误；服务健康接口仍 200；请求记录阶段完整 |
+| LS-UI-12 | Cache Default | 新临时环境首次打开 Local Studio，使用默认设置重复发送同 prompt | cache 默认开启；首次 miss、重复 hit；切换 namespace 后 miss；UI 和日志 cache 标记一致 |
 
 ## P1 基础模块回归
 
@@ -156,8 +163,9 @@ OPENAI_COMPAT_API_KEY="$(tr -d '\r\n' < "$OPENAI_COMPAT_KEY_FILE")"
 | API-LS-02 | `POST /api/local-studio/models` | OpenAI-compatible provider + token | Authorization 发送到上游但 request log 脱敏 |
 | API-LS-03 | `POST /api/local-studio/chat` | Google Responses + `search=false` + `image_tool_enabled=false` | 文本回复，conversation JSON 保存 user/assistant |
 | API-LS-04 | `POST /api/local-studio/chat` | Google Responses + `search=true` + `image_tool_enabled=true` + image prompt | 覆盖 Gemini 图片工具故障路径；无 `include_server_side_tool_invocations` 错误 |
-| API-LS-05 | `POST /api/local-studio/chat` | OpenAI Responses stream + `search=true` | 覆盖 OpenAI search 4xx 流式路径；无 `ResponseNotRead` |
+| API-LS-05 | `POST /api/local-studio/chat` | OpenAI Responses stream + `search=true` | 请求体工具类型为 `web_search` 且不包含 `web_search_preview`；覆盖 OpenAI search 4xx 流式路径；无 `ResponseNotRead`；不得出现 `Unsupported tool type: web_search_preview` |
 | API-LS-06 | `GET /api/local-studio/assets/{path}` | 打开 Local Studio 生成图 URL | 返回图片 MIME；路径穿越返回 400/404 |
+| API-LS-07 | `POST /api/local-studio/chat` | Google Responses + `search=true`；OpenAI Responses + `search=true` | Provider-aware search oracle：Google upstream request 包含 `web_search_preview`；OpenAI-compatible upstream request 包含 `web_search`；两者均保留 search/image tool 可选语义 |
 | API-REQ-01 | `/request-logs/*` | status、list、detail、export、delete | lifecycle 完整且导出 JSON 可解析 |
 | API-BASE-01 | `/v1/chat/completions`、`/v1/responses`、`/v1/messages`、`/v1/images/generations` | 基础 API smoke | 基础兼容 API 不因 Local Studio 改造回归 |
 
@@ -187,6 +195,18 @@ OPENAI_COMPAT_API_KEY="$(tr -d '\r\n' < "$OPENAI_COMPAT_KEY_FILE")"
 * 服务端 stderr 不包含 `httpx.ResponseNotRead`、`ExceptionGroup`、`Exception in ASGI application`。
 * 请求记录包含 upstream 400 response body 和 client response，不缺阶段。
 * 故障后 `/api/local-studio/health`、`/request-logs/status` 仍返回 200。
+
+### BUG-OPENAI-SEARCH-TOOL-TYPE-01
+
+复现链路：OpenAI-compatible provider，Local Studio Responses interface，stream on/off，search on，发送任意搜索类 prompt。
+
+必须断言：
+
+* 请求记录 upstream request 的 `tools` 只包含 `{"type":"web_search"}` 作为搜索工具，不包含 `web_search_preview`。
+* API 响应和 UI 当前会话不得出现 `HTTP 400: Unsupported tool type: web_search_preview`。
+* 若上游仍因其他兼容性原因返回 4xx，错误必须是受控错误，服务端 stderr 不包含 `httpx.ResponseNotRead`、`ExceptionGroup`、`Exception in ASGI application`。
+* 故障或成功后 `/api/local-studio/health`、`/request-logs/status` 仍返回 200。
+* 同一轮回归还要验证 Google AI Studio provider 继续使用 `web_search_preview`，防止修复 OpenAI provider 时破坏内置 Google provider。
 
 ## 执行顺序
 
