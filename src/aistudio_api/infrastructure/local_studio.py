@@ -270,12 +270,13 @@ def build_local_studio_chat_payload(
     messages: list[Mapping[str, Any]],
     options: Mapping[str, Any] | None = None,
     asset_resolver: Callable[[Mapping[str, Any]], str] | None = None,
+    provider_type: str | None = None,
 ) -> dict[str, Any]:
     normalized_mode = normalize_interface_mode(mode)
     if normalized_mode == "openai":
         return build_chat_completions_payload(model=model, messages=messages, options=options, asset_resolver=asset_resolver)
     if normalized_mode == "responses":
-        return build_responses_payload(model=model, messages=messages, options=options, asset_resolver=asset_resolver)
+        return build_responses_payload(model=model, messages=messages, options=options, asset_resolver=asset_resolver, provider_type=provider_type)
     if normalized_mode == "gemini":
         return build_gemini_payload(model=model, messages=messages, options=options, asset_resolver=asset_resolver)
     return build_claude_payload(model=model, messages=messages, options=options, asset_resolver=asset_resolver)
@@ -458,10 +459,15 @@ def build_responses_payload(
     messages: list[Mapping[str, Any]],
     options: Mapping[str, Any] | None = None,
     asset_resolver: Callable[[Mapping[str, Any]], str] | None = None,
+    provider_type: str | None = None,
 ) -> dict[str, Any]:
     if not model:
         raise ValueError("model is required")
     options = options or {}
+    search_provider = normalize_provider_kind(
+        provider_type or str(options.get("provider_type") or options.get("providerType") or ""),
+        default=LOCAL_STUDIO_PROVIDER_GOOGLE,
+    )
     payload: dict[str, Any] = {
         "model": model,
         "input": [_message_to_response_input(message, asset_resolver) for message in messages if message.get("role") in {"user", "assistant"}],
@@ -477,8 +483,11 @@ def build_responses_payload(
         payload["reasoning"] = reasoning
     tools: list[dict[str, Any]] = []
     if options.get("search"):
-        tools.append({"type": "web_search_preview"})
-    image_tool = build_image_generation_tool(options)
+        tools.append({"type": "web_search_preview" if search_provider == LOCAL_STUDIO_PROVIDER_GOOGLE else "web_search"})
+    tool_options = options
+    if provider_type and not any(key in options for key in ("image_tool_provider", "image_provider", "provider_type", "providerType")):
+        tool_options = {**options, "provider_type": provider_type}
+    image_tool = build_image_generation_tool(tool_options)
     if image_tool:
         tools.append(image_tool)
     if tools:
