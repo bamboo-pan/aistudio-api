@@ -878,3 +878,40 @@ Verified and completed Local Studio as a provider-backed workspace. Added defaul
 ### Next Steps
 
 - None - task complete
+
+
+## Session 27: Local Studio real system test plan
+
+**Date**: 2026-05-24
+**Task**: Local Studio real system test plan
+**Branch**: `feature/local-studio-real-system-test-plan`
+
+### Summary
+
+Added the Local Studio real-system test plan, fixed and verified P0 real smoke regressions, moved the reusable plan to the repository root, updated the Trellis spec, and pushed the feature branch.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `26cbcc3` | (see git log) |
+| `0e85c1a` | (see git log) |
+| `f455f1c` | (see git log) |
+| `3962f35` | (see git log) |
+| `d12eacc` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

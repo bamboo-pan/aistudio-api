@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 26
-- **Last Active**: 2026-05-23
+- **Total Sessions**: 27
+- **Last Active**: 2026-05-24
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~880 | Active |
+| `journal-1.md` | ~917 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 27 | 2026-05-24 | Local Studio real system test plan | `26cbcc3`, `0e85c1a`, `f455f1c`, `3962f35`, `d12eacc` | `feature/local-studio-real-system-test-plan` |
 | 26 | 2026-05-23 | Local Studio provider management | `2c48ef6` | `fix/local-studio-provider-management` |
 | 25 | 2026-05-22 | Fix Local Studio stream image handling | `1000bf7` | `fix/local-studio-error-waiting-state` |
 | 24 | 2026-05-22 | Fix Local Studio inline image rendering | `ae1cc99` | `master` |
