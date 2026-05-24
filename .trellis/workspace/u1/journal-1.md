@@ -915,3 +915,36 @@ Added the Local Studio real-system test plan, fixed and verified P0 real smoke r
 ### Next Steps
 
 - None - task complete
+
+
+## Session 28: Fix OpenAI provider search tool
+
+**Date**: 2026-05-24
+**Task**: Fix OpenAI provider search tool
+**Branch**: `fix/openai-provider-search-tool`
+
+### Summary
+
+Updated Local Studio Responses search to select provider-aware tool types, expanded unit coverage and real test plan, verified full unit suite and WSL API/UI smoke.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `9ea4afc` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
