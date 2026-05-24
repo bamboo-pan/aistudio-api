@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend spec entry point for final compliance review."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Quality checklist for Local Studio streaming reasoning and real-system checks."}
+{"file":".trellis/tasks/archive/2026-05/05-24-local-studio-real-system-test-fixes/research/test-run-results.md","reason":"Baseline/failure evidence to compare the fixed streaming reasoning result against."}

@@ -910,6 +910,94 @@ def test_responses_stream_completed_event_extracts_image_candidates():
     assert parsed["image_candidates"] == [{"result": "ZmFrZQ==", "mime": "image/png"}]
 
 
+def test_responses_stream_reasoning_summary_events_extract_thinking():
+    delta = parse_local_studio_stream_event(
+        "responses",
+        {"type": "response.reasoning_summary_text.delta", "delta": "planning"},
+    )
+    done = parse_local_studio_stream_event(
+        "responses",
+        {"type": "response.reasoning_summary_text.done", "text": "planning done"},
+    )
+    item_done = parse_local_studio_stream_event(
+        "responses",
+        {
+            "type": "response.output_item.done",
+            "item": {"type": "reasoning", "summary": [{"type": "summary_text", "text": "final summary"}]},
+        },
+    )
+
+    assert delta["thinking"] == "planning"
+    assert done["thinking"] == "planning done"
+    assert item_done["thinking"] == "final summary"
+
+
+def test_stream_chat_persists_responses_reasoning_summary(tmp_path, monkeypatch):
+    app, old_dir = local_studio_app(tmp_path)
+
+    class FakeStreamResponse:
+        status_code = 200
+        headers = {"content-type": "text/event-stream"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        async def aiter_lines(self):
+            yield 'data: {"type":"response.reasoning_summary_text.delta","delta":"I will calculate."}'
+            yield ""
+            yield 'data: {"type":"response.output_text.delta","delta":"Answer"}'
+            yield ""
+            yield 'data: {"type":"response.completed","response":{"output_text":"Answer","usage":{"input_tokens":2,"output_tokens":3}}}'
+            yield ""
+
+    class FakeClient:
+        def __init__(self, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        def stream(self, method, url, headers, json):
+            return FakeStreamResponse()
+
+    monkeypatch.setattr(routes_local_studio, "_new_http_client", FakeClient)
+    try:
+        response = request_app(
+            app,
+            "POST",
+            "/api/local-studio/chat",
+            json={
+                "base_url": "http://compat.example/v1",
+                "api_key": "token-1",
+                "model": "gpt-5.4-mini",
+                "message": "calculate",
+                "options": {"stream": True, "reasoning_effort": "high", "reasoning_summary": "auto"},
+            },
+        )
+    finally:
+        settings.local_studio_dir = old_dir
+
+    completed = [
+        json.loads(line[6:])
+        for line in response.text.splitlines()
+        if line.startswith("data: ") and json.loads(line[6:]).get("type") == "local_studio.completed"
+    ][0]
+    assistant = completed["conversation"]["messages"][-1]
+
+    assert response.status_code == 200
+    assert assistant["content"] == "Answer"
+    assert assistant["thinking"] == "I will calculate."
+
+
 def test_stream_chat_persists_response_image_candidates(tmp_path, monkeypatch):
     app, old_dir = local_studio_app(tmp_path)
 
