@@ -220,14 +220,6 @@ def test_responses_search_image_fallback_splits_builtin_search_and_function_tool
     async def fake_handle_chat(req, client, request=None):
         captured_tools.append(req.tools)
         captured_messages.append(req.messages)
-        if len(captured_tools) == 1:
-            raise HTTPException(
-                502,
-                detail={
-                    "message": "HTTP 400: Please enable tool_config.include_server_side_tool_invocations to use Built-in tools with Function calling.",
-                    "type": "upstream_error",
-                },
-            )
         return {
             "choices": [
                 {
@@ -262,10 +254,9 @@ def test_responses_search_image_fallback_splits_builtin_search_and_function_tool
         )
     )
 
-    assert captured_tools[0][0].type == "web_search_preview"
-    assert captured_tools[0][1].function.name == "image_generation"
-    assert [tool.type for tool in captured_tools[1]] == ["web_search_preview"]
-    assert any("Image generation tool selection protocol" in message.content for message in captured_messages[1] if message.role == "system")
+    assert len(captured_tools) == 1
+    assert [tool.type for tool in captured_tools[0]] == ["web_search_preview"]
+    assert any("Image generation tool selection protocol" in message.content for message in captured_messages[0] if message.role == "system")
     assert response["output"][0]["type"] == "web_search_call"
     assert response["output"][1]["type"] == "image_generation_call"
     assert captured_image_request == {

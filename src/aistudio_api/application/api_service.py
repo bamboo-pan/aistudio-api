@@ -1546,6 +1546,8 @@ async def _complete_responses_optional_image_generation(
 ) -> dict[str, Any]:
     decision_payload = _responses_optional_image_payload(payload)
     allowed_tool_names = _tool_names_from_payload(decision_payload.get("tools"))
+    if _responses_tools_include_search(payload.get("tools")):
+        decision_payload = _responses_search_only_image_decision_payload(payload, tool)
     response_format = payload.get("response_format")
     text_config = payload.get("text")
     if response_format is None and isinstance(text_config, dict):

@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/index.md","reason":"Spec index for final compliance review."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Quality contracts and required automated plus real-system checks for Local Studio changes."}
+{"file":".trellis/tasks/05-24-local-studio-real-system-test-fixes/research/test-plan-oracle.md","reason":"Real system test oracle for final verification and evidence expectations."}
