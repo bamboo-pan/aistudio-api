@@ -6,7 +6,7 @@ Design and commit a new, complete, real-system frontend WebUI test plan for Loca
 
 ## Requirements
 
-* Add a durable repository test-plan document under `tests/system/`.
+* Add a durable repository test-plan document at the repository root for easy reuse.
 * Cover the WebUI architecture as users encounter it: Playground, Local Studio, image generation, request logs, and account management remain independent entry points.
 * Cover Local Studio as the high-level workbench: provider profile selection, interface modes, model loading, stream/non-stream, search, image tool, reasoning, attachments, cache, conversations, and request-log lifecycle.
 * Treat Google AI Studio and custom OpenAI-compatible providers as distinct real provider paths with provider-specific expected behavior.
@@ -46,7 +46,7 @@ Design and commit a new, complete, real-system frontend WebUI test plan for Loca
 
 ## Technical Approach
 
-The test plan is a Chinese-language Markdown runbook and matrix in `tests/system/local-studio-web-real-system-test-plan.md`. It defines exhaustive user-path coverage by dimensions and groups high-cost real tests into suites that still cover every real user path: direct API preflight, browser navigation, provider setup, Local Studio provider/interface/tool combinations, request log lifecycle, standalone base-module smoke, failure-path robustness, and artifact/security gates.
+The test plan is a Chinese-language Markdown runbook and matrix in `LOCAL_STUDIO_WEB_REAL_SYSTEM_TEST_PLAN.md`. It defines exhaustive user-path coverage by dimensions and groups high-cost real tests into suites that still cover every real user path: direct API preflight, browser navigation, provider setup, Local Studio provider/interface/tool combinations, request log lifecycle, standalone base-module smoke, failure-path robustness, and artifact/security gates.
 
 For execution, run the P0 subset first because it touches the user-reported failures and highest-risk provider/tool paths. When a P0 bug is found, add the narrowest reproducible automated test, fix the root cause, run focused automated tests, then re-run the matching WSL API/UI path before continuing.
 
@@ -54,9 +54,9 @@ For execution, run the P0 subset first because it touches the user-reported fail
 
 **Context**: The project already has unit/static tests, but the reported bugs only appear in full WebUI/API/provider chains with real credentials and request logging enabled.
 
-**Decision**: Commit a dedicated system test plan under `tests/system/` rather than burying it in a Trellis task only. The Trellis task stores the reasoning; the repository file becomes the durable plan future agents and humans can execute.
+**Decision**: Commit a dedicated system test plan at the repository root rather than burying it in a Trellis task only. The Trellis task stores the reasoning; the root repository file becomes the durable plan future agents and humans can execute.
 
-**Consequences**: The plan is immediately visible next to tests and can later be converted into scripts. It intentionally references secret locations but never includes secret values.
+**Consequences**: The plan is immediately visible from the repository root and can later be converted into scripts. It intentionally references secret locations but never includes secret values.
 
 ## Out of Scope
 

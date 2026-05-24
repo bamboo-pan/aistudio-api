@@ -201,11 +201,11 @@ except httpx.HTTPError:
 ### 1. Scope / Trigger
 
 - Trigger: Creating or updating a real-system test plan for WebUI/API behavior, especially for Local Studio, provider integrations, account/browser flows, request logging, image generation, or bug reports that only reproduce with real credentials.
-- Store durable plans under `tests/system/` so they live with the test surface, not only inside Trellis task notes.
+- Store reusable, operator-facing durable plans at the repository root so they are easy to find after task archive; narrower suite-specific plans may live under `tests/system/` when they primarily document test implementation details.
 
 ### 2. Signatures
 
-- Plan files should be Markdown runbooks named after the feature surface, for example `tests/system/local-studio-web-real-system-test-plan.md`.
+- Plan files should be Markdown runbooks named after the feature surface, for example `LOCAL_STUDIO_WEB_REAL_SYSTEM_TEST_PLAN.md` for a reusable root runbook or `tests/system/<feature>-system-test-plan.md` for a suite-local plan.
 - Each plan must name the WebUI route(s), API route(s), provider(s), credential source(s), environment variables, and artifact directory for every real system suite.
 
 ### 3. Contracts
