@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import httpx
 from fastapi import FastAPI
 
-from aistudio_api.api.app import _should_start_background_warmup
+from aistudio_api.api.app import _account_pool_warmup_account_ids, _should_start_account_pool_warmup, _should_start_background_warmup
 from aistudio_api.api.dependencies import get_account_service
 from aistudio_api.api.routes_accounts import router as accounts_router
 from aistudio_api.api.schemas import ChatRequest, ImageRequest, Message
@@ -56,6 +56,59 @@ def test_background_warmup_skips_redundant_account_pool_navigation():
     assert _should_start_background_warmup(use_pure_http=False, account_count=0) is True
     assert _should_start_background_warmup(use_pure_http=False, account_count=1) is False
     assert _should_start_background_warmup(use_pure_http=True, account_count=0) is False
+
+
+def test_account_pool_warmup_starts_only_for_browser_account_pool():
+    assert _should_start_account_pool_warmup(use_pure_http=False, account_count=1, warmup_limit=1) is True
+    assert _should_start_account_pool_warmup(use_pure_http=False, account_count=0, warmup_limit=1) is False
+    assert _should_start_account_pool_warmup(use_pure_http=True, account_count=1, warmup_limit=1) is False
+    assert _should_start_account_pool_warmup(use_pure_http=False, account_count=1, warmup_limit=0) is False
+
+
+def test_account_pool_warmup_candidates_cover_balanced_and_premium(tmp_path):
+    store = AccountStore(accounts_dir=tmp_path)
+    free = store.save_account("free", None, storage_state(cookie_name="free"), tier="free")
+    premium = store.save_account("premium", None, storage_state(cookie_name="premium"), activate=False, tier="pro")
+
+    assert _account_pool_warmup_account_ids(
+        store.list_accounts(),
+        active_account_id=free.id,
+        rotation_mode="round_robin",
+        warmup_limit=2,
+    ) == [free.id, premium.id]
+    assert _account_pool_warmup_account_ids(
+        store.list_accounts(),
+        active_account_id=free.id,
+        rotation_mode="round_robin",
+        warmup_limit=1,
+    ) == [free.id]
+
+
+def test_account_pool_warmup_candidates_prefer_active_for_exhaustion(tmp_path):
+    store = AccountStore(accounts_dir=tmp_path)
+    first = store.save_account("first", None, storage_state(cookie_name="first"), activate=False)
+    active = store.save_account("active", None, storage_state(cookie_name="active"), activate=True)
+
+    assert _account_pool_warmup_account_ids(
+        store.list_accounts(),
+        active_account_id=active.id,
+        rotation_mode="exhaustion",
+        warmup_limit=2,
+    ) == [active.id, first.id]
+
+
+def test_account_pool_warmup_candidates_skip_isolated_accounts(tmp_path):
+    store = AccountStore(accounts_dir=tmp_path)
+    isolated = store.save_account("isolated", None, storage_state(cookie_name="isolated"), activate=True)
+    premium = store.save_account("premium", None, storage_state(cookie_name="premium"), activate=False, tier="pro")
+    store.isolate_account(isolated.id, "test isolation")
+
+    assert _account_pool_warmup_account_ids(
+        store.list_accounts(),
+        active_account_id=isolated.id,
+        rotation_mode="exhaustion",
+        warmup_limit=2,
+    ) == [premium.id]
 
 
 def accounts_app(service: AccountService) -> FastAPI:

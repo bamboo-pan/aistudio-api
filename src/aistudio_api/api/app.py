@@ -7,6 +7,7 @@ import json
 import logging
 import time
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -35,6 +36,41 @@ logger = logging.getLogger("aistudio.server")
 
 def _should_start_background_warmup(*, use_pure_http: bool, account_count: int) -> bool:
     return not use_pure_http and account_count == 0
+
+
+def _should_start_account_pool_warmup(*, use_pure_http: bool, account_count: int, warmup_limit: int) -> bool:
+    return not use_pure_http and account_count > 0 and warmup_limit > 0
+
+
+def _account_pool_warmup_account_ids(
+    accounts: list[Any],
+    *,
+    active_account_id: str | None,
+    rotation_mode: str,
+    warmup_limit: int,
+) -> list[str]:
+    if warmup_limit <= 0:
+        return []
+
+    available = [account for account in accounts if not getattr(account, "is_isolated", False)]
+    if not available:
+        return []
+
+    candidates: list[str] = []
+
+    def add(account: Any | None) -> None:
+        if account is None or len(candidates) >= warmup_limit:
+            return
+        account_id = str(getattr(account, "id", "") or "")
+        if account_id and account_id not in candidates:
+            candidates.append(account_id)
+
+    if rotation_mode == "exhaustion" and active_account_id:
+        add(next((account for account in available if account.id == active_account_id), None))
+
+    add(available[0])
+    add(next((account for account in available if getattr(account, "is_premium", False)), None))
+    return candidates
 
 
 @asynccontextmanager
@@ -72,6 +108,7 @@ async def lifespan(app: FastAPI):
     account_service = AccountService(account_store, login_service)
     runtime_state.account_service = account_service
 
+    active_account = account_store.get_active_account()
     active_auth_path = account_store.get_active_auth_path()
     if active_auth_path is not None:
         await client.switch_auth(str(active_auth_path))
@@ -112,6 +149,37 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.warning("浏览器预热失败: %s", e)
         warmup_task = asyncio.create_task(_warmup())
+    elif _should_start_account_pool_warmup(
+        use_pure_http=settings.use_pure_http,
+        account_count=len(accounts),
+        warmup_limit=settings.account_warmup_limit,
+    ):
+        account_warmup_ids = _account_pool_warmup_account_ids(
+            accounts,
+            active_account_id=active_account.id if active_account is not None else None,
+            rotation_mode=rotation_mode,
+            warmup_limit=settings.account_warmup_limit,
+        )
+
+        async def _warmup_account_pool():
+            pool = runtime_state.account_client_pool
+            if pool is None:
+                return
+            for account_id in account_warmup_ids:
+                try:
+                    account_client = await pool.get_client(account_id)
+                    if account_client is None:
+                        continue
+                    await account_client.warmup()
+                    logger.info("Account browser warmup completed: account=%s", account_id)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.warning("Account browser warmup failed for account=%s: %s", account_id, e)
+
+        if account_warmup_ids:
+            logger.info("Starting account browser warmup: accounts=%s limit=%d", account_warmup_ids, settings.account_warmup_limit)
+            warmup_task = asyncio.create_task(_warmup_account_pool())
 
     yield
     logger.info("Shutting down")

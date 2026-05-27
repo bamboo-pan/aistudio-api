@@ -953,6 +953,81 @@ def clear_snapshot_cache(self) -> None:
 	self.clear_capture_state()
 ```
 
+## Scenario: Account Pool Startup Warmup
+
+### 1. Scope / Trigger
+
+- Trigger: Code changes FastAPI lifespan startup, account-client pool initialization, account rotation startup state, browser warmup, or account warmup configuration.
+- Use this contract whenever reducing browser cold-start latency for stored Google accounts.
+
+### 2. Signatures
+
+- `Settings.account_warmup_limit: int` reads `AISTUDIO_ACCOUNT_WARMUP_LIMIT`, defaults to `2`, and `0` disables account-pool startup warmup.
+- `_should_start_background_warmup(*, use_pure_http: bool, account_count: int) -> bool` remains the zero-account global-client warmup gate.
+- `_should_start_account_pool_warmup(*, use_pure_http: bool, account_count: int, warmup_limit: int) -> bool` gates stored-account warmup.
+- `_account_pool_warmup_account_ids(accounts, *, active_account_id, rotation_mode, warmup_limit) -> list[str]` selects bounded account IDs without mutating rotator state.
+- `AccountClientPool.get_client(account_id: str) -> AIStudioClient | None` returns the account-scoped client to warm.
+- `AIStudioClient.warmup() -> None` warms the browser context without capturing model templates.
+
+### 3. Contracts
+
+- Startup must preserve the existing global browser warmup only for browser mode with zero stored accounts.
+- Stored-account warmup must run only when browser mode is enabled, at least one stored account exists, and `AISTUDIO_ACCOUNT_WARMUP_LIMIT > 0`.
+- Stored-account warmup must run in the background and must not block FastAPI startup readiness.
+- Warmup must be bounded and sequential by default; do not launch every stored account browser at once.
+- Candidate order must cover likely first-use accounts without calling `AccountRotator.acquire_account()` because warmup must not change `in_flight`, affinity, or round-robin cursor state.
+- Exhaustion mode warms the active non-isolated account first. Balanced/default mode warms the first non-isolated registry account. A first non-isolated premium account may be added within the configured limit.
+- Warmup failures are logged per account and do not fail startup; the next real request can still open a fresh browser context and recover.
+- Default startup warmup must not pre-capture model templates because template capture sends probe prompts through AI Studio and can consume quota or create upstream side effects.
+
+### 4. Validation & Error Matrix
+
+- `use_pure_http=True` -> no global or account-pool browser warmup starts.
+- `account_count=0`, browser mode -> global client warmup starts.
+- `account_count>0`, browser mode, `warmup_limit>0` -> account-pool warmup starts for selected candidates.
+- `warmup_limit<=0` -> account-pool warmup is disabled.
+- All accounts isolated -> no account-pool warmup task is scheduled.
+- Candidate auth file missing or browser warmup fails -> log a warning for that account and continue startup.
+
+### 5. Good/Base/Bad Cases
+
+- Good: Service starts with two stored accounts, `AISTUDIO_ACCOUNT_WARMUP_LIMIT=2`, logs account-pool warmup start, completes at least the first account browser warmup, and the first `/v1/chat/completions` succeeds.
+- Base: Account warmup logs a recoverable AI Studio navigation failure, startup remains healthy, and a later request retries the browser path normally.
+- Bad: Startup calls `AccountRotator.acquire_account()` for warmup and shifts the first real request to a different account by incrementing in-flight or round-robin state.
+- Bad: Startup pre-captures templates for every model by default, sending hidden `template` prompts and consuming quota before any user request.
+
+### 6. Tests Required
+
+- Unit: zero-account browser mode still starts only the global background warmup.
+- Unit: account-pool warmup gate is false for pure HTTP, zero accounts, and warmup limit zero.
+- Unit: candidate selection covers balanced/default first account, exhaustion active account, isolated account skipping, premium extra candidate, and limit truncation.
+- Real: WSL smoke with real account credentials verifies account-pool warmup logs started/completed or a controlled warning, then verifies browser-backed API and frontend UI sends still succeed.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+lease = await rotator.acquire_account(model=None)
+client = await pool.get_client(lease.account.id)
+await client.capture_request("template", model="gemini-3.1-flash-lite")
+```
+
+#### Correct
+
+```python
+account_ids = _account_pool_warmup_account_ids(
+	accounts,
+	active_account_id=active_account.id if active_account else None,
+	rotation_mode=rotation_mode,
+	warmup_limit=settings.account_warmup_limit,
+)
+for account_id in account_ids:
+	account_client = await pool.get_client(account_id)
+	if account_client is not None:
+		await account_client.warmup()
+```
+
 ## Scenario: Premium-Preferred Model Account Selection
 
 ### 1. Scope / Trigger

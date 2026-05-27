@@ -386,6 +386,7 @@ Use environment variables or a `.env` file:
 | `AISTUDIO_ACCOUNT_ROTATION_MODE` | `round_robin` | Default account rotation mode; `round_robin` means balanced mode |
 | `AISTUDIO_ACCOUNT_COOLDOWN_SECONDS` | `60` | Cooldown after rate limit |
 | `AISTUDIO_ACCOUNT_MAX_RETRIES` | `3` | Account-related max retry setting |
+| `AISTUDIO_ACCOUNT_WARMUP_LIMIT` | `2` | Number of account browsers to warm in the background after startup; set `0` to disable account-pool warmup |
 | `AISTUDIO_MAX_CONCURRENCY` | `3` | Server-side concurrency semaphore size |
 | `AISTUDIO_USE_PURE_HTTP` | `0` | Enable experimental pure HTTP mode |
 
