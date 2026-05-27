@@ -386,6 +386,7 @@ curl -X POST http://localhost:8080/rotation/next
 | `AISTUDIO_ACCOUNT_ROTATION_MODE` | `round_robin` | 默认账号轮询模式；`round_robin` 表示均衡模式 |
 | `AISTUDIO_ACCOUNT_COOLDOWN_SECONDS` | `60` | 限流后冷却时间 |
 | `AISTUDIO_ACCOUNT_MAX_RETRIES` | `3` | 账号相关最大重试配置 |
+| `AISTUDIO_ACCOUNT_WARMUP_LIMIT` | `2` | 启动后后台预热的账号浏览器数量；设为 `0` 可关闭账号池预热 |
 | `AISTUDIO_MAX_CONCURRENCY` | `3` | 服务端并发信号量大小 |
 | `AISTUDIO_USE_PURE_HTTP` | `0` | 启用纯 HTTP 实验模式 |
 

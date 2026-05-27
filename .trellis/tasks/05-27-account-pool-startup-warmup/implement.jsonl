@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend spec index for relevant development guidelines."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Browser auth, account switching, and real-test quality contracts for backend changes."}
+{"file":".trellis/tasks/05-27-account-pool-startup-warmup/research/current-code-review.md","reason":"Code-path review and selected warmup approach for implementation."}

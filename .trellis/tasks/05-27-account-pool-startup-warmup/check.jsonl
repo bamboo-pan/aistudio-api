@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend spec index for final verification."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Quality and real-system verification contracts for account/browser changes."}
+{"file":".trellis/tasks/05-27-account-pool-startup-warmup/research/current-code-review.md","reason":"Expected warmup behavior and risk boundaries to verify."}
