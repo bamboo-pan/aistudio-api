@@ -65,7 +65,7 @@ def _account_pool_warmup_account_ids(
         if account_id and account_id not in candidates:
             candidates.append(account_id)
 
-    if rotation_mode == "exhaustion" and active_account_id:
+    if active_account_id:
         add(next((account for account in available if account.id == active_account_id), None))
 
     add(available[0])
@@ -140,13 +140,26 @@ async def lifespan(app: FastAPI):
         len(accounts),
     )
 
+    runtime_state.warmup_status = "idle"
+    runtime_state.warmup_target_accounts = []
+    runtime_state.warmup_completed_accounts = []
+    runtime_state.warmup_failed_accounts = []
+
     # 后台预热浏览器，避免首次请求延迟
     warmup_task = None
     if _should_start_background_warmup(use_pure_http=settings.use_pure_http, account_count=len(accounts)):
         async def _warmup():
+            runtime_state.warmup_status = "running"
+            runtime_state.warmup_target_accounts = ["default"]
+            runtime_state.warmup_completed_accounts = []
+            runtime_state.warmup_failed_accounts = []
             try:
                 await client.warmup()
+                runtime_state.warmup_completed_accounts = ["default"]
+                runtime_state.warmup_status = "complete"
             except Exception as e:
+                runtime_state.warmup_failed_accounts = ["default"]
+                runtime_state.warmup_status = "failed"
                 logger.warning("浏览器预热失败: %s", e)
         warmup_task = asyncio.create_task(_warmup())
     elif _should_start_account_pool_warmup(
@@ -169,15 +182,27 @@ async def lifespan(app: FastAPI):
                 try:
                     account_client = await pool.get_client(account_id)
                     if account_client is None:
+                        runtime_state.warmup_failed_accounts = [*runtime_state.warmup_failed_accounts, account_id]
                         continue
                     await account_client.warmup()
+                    runtime_state.warmup_completed_accounts = [*runtime_state.warmup_completed_accounts, account_id]
                     logger.info("Account browser warmup completed: account=%s", account_id)
                 except asyncio.CancelledError:
+                    runtime_state.warmup_status = "cancelled"
                     raise
                 except Exception as e:
+                    runtime_state.warmup_failed_accounts = [*runtime_state.warmup_failed_accounts, account_id]
                     logger.warning("Account browser warmup failed for account=%s: %s", account_id, e)
+            if runtime_state.warmup_failed_accounts:
+                runtime_state.warmup_status = "partial" if runtime_state.warmup_completed_accounts else "failed"
+            else:
+                runtime_state.warmup_status = "complete"
 
         if account_warmup_ids:
+            runtime_state.warmup_status = "running"
+            runtime_state.warmup_target_accounts = list(account_warmup_ids)
+            runtime_state.warmup_completed_accounts = []
+            runtime_state.warmup_failed_accounts = []
             logger.info("Starting account browser warmup: accounts=%s limit=%d", account_warmup_ids, settings.account_warmup_limit)
             warmup_task = asyncio.create_task(_warmup_account_pool())
 

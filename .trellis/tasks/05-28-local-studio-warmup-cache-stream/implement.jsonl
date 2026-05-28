@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend package spec index for Local Studio/API changes."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Local Studio contracts for provider routing, stream SSE, request cache, static UI, request logs, and real tests."}

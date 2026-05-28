@@ -1,7 +1,10 @@
 import asyncio
 import json
 
+import pytest
+
 from aistudio_api.infrastructure.cache.snapshot_cache import SnapshotCache
+from aistudio_api.config import DEFAULT_TEXT_MODEL
 from aistudio_api.infrastructure.gateway.client import AIStudioClient
 from aistudio_api.infrastructure.gateway.capture import RequestCaptureService
 
@@ -9,6 +12,7 @@ from aistudio_api.infrastructure.gateway.capture import RequestCaptureService
 class FakeBrowserSession:
     def __init__(self):
         self.template_calls = []
+        self.snapshot_calls = []
 
     async def capture_template(self, model):
         self.template_calls.append(model)
@@ -29,6 +33,7 @@ class FakeBrowserSession:
         }
 
     async def generate_snapshot(self, contents):
+        self.snapshot_calls.append(contents)
         return "fresh-snapshot"
 
 
@@ -38,6 +43,27 @@ class FlakyNavigationBrowserSession(FakeBrowserSession):
             self.template_calls.append(model)
             raise RuntimeError('Page.goto: Timeout 60000ms exceeded while navigating to "https://aistudio.google.com/"')
         return await super().capture_template(model)
+
+
+class WarmupSession:
+    def __init__(self):
+        self.ensure_context_calls = 0
+
+    async def ensure_context(self):
+        self.ensure_context_calls += 1
+
+
+class WarmupCaptureService:
+    def __init__(self):
+        self.warmup_calls = []
+
+    async def warmup(self, **kwargs):
+        self.warmup_calls.append(kwargs)
+
+
+class FailingWarmupCaptureService:
+    async def warmup(self, **kwargs):
+        raise RuntimeError("template warmup failed")
 
 
 def test_capture_rewrites_template_with_requested_model():
@@ -80,6 +106,18 @@ def test_capture_template_retries_transient_aistudio_navigation_failure():
     assert session.template_calls == ["gemini-3.1-flash-lite", "gemini-3.1-flash-lite"]
 
 
+def test_capture_warmup_does_not_store_reusable_prompt_snapshot():
+    session = FakeBrowserSession()
+    snapshot_cache = SnapshotCache(ttl=60, max_size=10)
+    service = RequestCaptureService(session, snapshot_cache)
+
+    asyncio.run(service.warmup(prompt="1", model="gemini-3.1-flash-lite"))
+
+    assert session.template_calls == ["gemini-3.1-flash-lite"]
+    assert len(session.snapshot_calls) == 1
+    assert snapshot_cache._cache == {}
+
+
 def test_client_switch_auth_clears_capture_templates(tmp_path):
     auth_file = tmp_path / "auth.json"
     auth_file.write_text("{}")
@@ -93,3 +131,39 @@ def test_client_switch_auth_clears_capture_templates(tmp_path):
     finally:
         if client._session is not None:
             client._session._executor.shutdown(wait=False)
+
+
+def test_client_warmup_prepares_default_text_capture_template():
+    client = AIStudioClient()
+    original_session = client._session
+    session = WarmupSession()
+    capture_service = WarmupCaptureService()
+    try:
+        client._session = session
+        client._capture_service = capture_service
+
+        asyncio.run(client.warmup())
+
+        assert session.ensure_context_calls == 1
+        assert capture_service.warmup_calls == [{"prompt": "1", "model": DEFAULT_TEXT_MODEL}]
+    finally:
+        if original_session is not None:
+            original_session._executor.shutdown(wait=False)
+
+
+def test_client_warmup_propagates_template_warmup_failure():
+    session = WarmupSession()
+    client = AIStudioClient(port=1)
+    original_session = client._session
+    try:
+        client._session = session
+        client._capture_service = FailingWarmupCaptureService()
+
+        with pytest.raises(RuntimeError, match="template warmup failed"):
+            asyncio.run(client.warmup())
+
+        assert session.ensure_context_calls == 1
+    finally:
+        client._session = None
+        if original_session is not None:
+            original_session._executor.shutdown(wait=False)

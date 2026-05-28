@@ -15,7 +15,7 @@ from aistudio_api.application.account_client_pool import AccountClientPool
 from aistudio_api.config import settings
 from aistudio_api.application.account_rotator import AccountRotator, RotationMode
 from aistudio_api.application.account_service import AccountService
-from aistudio_api.application.api_service import handle_chat, handle_image_generation
+from aistudio_api.application.api_service import handle_chat, handle_image_generation, health_response
 from aistudio_api.domain.errors import UsageLimitExceeded
 from aistudio_api.domain.models import Candidate, GeneratedImage, ModelOutput
 from aistudio_api.infrastructure.account.account_store import AccountStore
@@ -84,6 +84,19 @@ def test_account_pool_warmup_candidates_cover_balanced_and_premium(tmp_path):
     ) == [free.id]
 
 
+def test_account_pool_warmup_candidates_prefer_active_in_round_robin(tmp_path):
+    store = AccountStore(accounts_dir=tmp_path)
+    first = store.save_account("first", None, storage_state(cookie_name="first"), activate=False)
+    active = store.save_account("active", None, storage_state(cookie_name="active"), activate=True)
+
+    assert _account_pool_warmup_account_ids(
+        store.list_accounts(),
+        active_account_id=active.id,
+        rotation_mode="round_robin",
+        warmup_limit=2,
+    ) == [active.id, first.id]
+
+
 def test_account_pool_warmup_candidates_prefer_active_for_exhaustion(tmp_path):
     store = AccountStore(accounts_dir=tmp_path)
     first = store.save_account("first", None, storage_state(cookie_name="first"), activate=False)
@@ -109,6 +122,32 @@ def test_account_pool_warmup_candidates_skip_isolated_accounts(tmp_path):
         rotation_mode="exhaustion",
         warmup_limit=2,
     ) == [premium.id]
+
+
+def test_health_response_exposes_warmup_status():
+    previous_status = runtime_state.warmup_status
+    previous_targets = list(runtime_state.warmup_target_accounts)
+    previous_completed = list(runtime_state.warmup_completed_accounts)
+    previous_failed = list(runtime_state.warmup_failed_accounts)
+    try:
+        runtime_state.warmup_status = "running"
+        runtime_state.warmup_target_accounts = ["acc_active"]
+        runtime_state.warmup_completed_accounts = []
+        runtime_state.warmup_failed_accounts = []
+
+        response = health_response()
+
+        assert response["warmup"] == {
+            "status": "running",
+            "target_accounts": ["acc_active"],
+            "completed_accounts": [],
+            "failed_accounts": [],
+        }
+    finally:
+        runtime_state.warmup_status = previous_status
+        runtime_state.warmup_target_accounts = previous_targets
+        runtime_state.warmup_completed_accounts = previous_completed
+        runtime_state.warmup_failed_accounts = previous_failed
 
 
 def accounts_app(service: AccountService) -> FastAPI:

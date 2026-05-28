@@ -12,13 +12,16 @@
 * 自定义 OpenAI-compatible provider 在 Local Studio Responses 模式下开启 search 后，上游流式 HTTP 400 被后端错误读取为 `httpx.ResponseNotRead`，导致 ASGI 异常。
 * 自定义 OpenAI-compatible provider 在 Local Studio Responses 模式下开启 search 后，请求体错误发送 `web_search_preview`，上游返回 `HTTP 400: Unsupported tool type: web_search_preview`。
 * 自定义 OpenAI-compatible provider 在 Local Studio Responses 模式下开启 `reasoning=high` + stream 后，上游返回 reasoning summary 但最终 `local_studio.completed` conversation 和 UI 没有可见思考过程。
+* Google/Gemini 账号预热完成后，首次真实对话仍长时间无输出；预热必须准备首个文本请求的浏览器捕获/模板路径，并通过 `GET /health` 的 warmup 状态区分“API 已启动”和“账号浏览器预热已完成”。
+* Local Studio 重复发送历史 prompt 会立即复用旧结果；结果重放缓存必须移除，重复 prompt 必须 fresh upstream。
+* Local Studio stream 模式在 UI 中表现为一次性输出；SSE、no-buffer headers 和前端响应式更新必须让增量文本可见。
 
 ## 测试原则
 
 * 所有 P0/P1 用例都在 WSL 临时目录的新副本中运行，不能直接污染开发工作区。
 * 每个真实用户路径必须同时有 API 级验证和浏览器 UI 级验证。
 * 请求记录必须开启，关键用例要检查完整生命周期：`client_request`、`upstream_request`、`upstream_response`、`client_response`。
-* Provider、Interface、Stream、Search、Image Tool、Cache、Reasoning、附件和会话操作按下面的组合矩阵覆盖。
+* Provider、Interface、Stream、Search、Image Tool、Repeated Prompt、Reasoning、附件和会话操作按下面的组合矩阵覆盖。
 * 工具开关表示“允许使用”，不是“强制调用”。普通聊天在工具开启时仍必须能正常回答。
 * 每个 P0/P1 用例都必须套用“架构契约断言”；不适用的断言要在结果中标记 `not_applicable` 并说明原因，不能静默跳过。
 * 测试脚本中采集到的关键 oracle 字段必须进入失败判定，不能只写入结果文件。例如高推理用例里的 `assistant_has_thinking=false`、`reasoning_summary_visible=false`、`contains_*_error=true` 都必须让测试失败，除非同一结果明确标记 `not_applicable` 且有原因。
@@ -31,11 +34,12 @@
 
 | 高风险遗漏类 | 典型遗漏 | 必须硬断言 |
 | --- | --- | --- |
-| UI 可见性与状态 | 脚本只检查 API 200，但 UI 没显示结果；`Reasoning summary`、图片、工具过程、引用、错误、cache 标记或 usage 被隐藏；pending/tool-running 状态残留 | 所有 `*_visible`、`has_*`、`completed`、pending/error/disabled 状态字段都必须进入 pass/fail；成功路径必须截图或 DOM 断言用户可见结果；失败路径必须断言输入框恢复可用 |
+| UI 可见性与状态 | 脚本只检查 API 200，但 UI 没显示结果；`Reasoning summary`、图片、工具过程、引用、错误或 usage 被隐藏；pending/tool-running 状态残留 | 所有 `*_visible`、`has_*`、`completed`、pending/error/disabled 状态字段都必须进入 pass/fail；成功路径必须截图或 DOM 断言用户可见结果；失败路径必须断言输入框恢复可用 |
 | Provider 与 request-log 签名 | 请求走错 provider/base URL/tool schema；OpenAI-compatible 使用 Google-only tool；Google provider 泄露 token；日志阶段缺失但 summary 仍通过 | `contains_*` 错误签名、provider/tool 名、upstream URL、Authorization 脱敏、lifecycle phase、group id 都必须断言；发现错误签名或缺阶段必须 fail |
+| 账号预热状态 | 脚本在后台 warmup 未完成时开始计时，误把冷启动耗时算成“预热后首次请求”；只看启动日志不看实际 warmup 完成 | 预热相关 smoke 必须先轮询 `GET /health` 的 `warmup.status`，只有 `complete` 后才测首次 Google/Gemini 文本请求延迟；`partial`/`failed`/`cancelled` 必须 fail 或记录 controlled limitation |
 | 能力过程保留 | reasoning/tool/search/image/usage/attachments 在 request log 有，但 API/UI/conversation 丢失；脚本只看最终文本 | 上游返回的 reasoning summary、tool call、search citation、image generation call、usage、附件引用必须至少在 API、最终 SSE、UI、conversation JSON、刷新恢复、request log 中按本计划要求保留；只剩最终文本或图片时必须 fail |
-| 恢复与重复路径 | 首次发送通过，但刷新、rerun、cache hit、错误重试、删除/导出后状态不一致 | 每个能力至少覆盖一个恢复路径；刷新后 UI 和 conversation JSON 一致；rerun 不污染旧消息；cache hit 保留可见详情和 cache 标记；删除/导出 lifecycle 可审计 |
-| Cache 隔离 | 同 prompt 在 provider/interface/model/tool/reasoning/附件/token/namespace 变化后误 hit；只验证 namespace miss | cache key 维度必须逐项变更并断言 miss；切回完全等价配置才允许 hit；命中结果必须按当前协议返回，不能丢 UI/usage/tool/reasoning details |
+| 恢复与重复路径 | 首次发送通过，但刷新、rerun、重复 prompt、错误重试、删除/导出后状态不一致 | 每个能力至少覆盖一个恢复路径；刷新后 UI 和 conversation JSON 一致；rerun 不污染旧消息；重复 prompt 必须再次走 upstream 且无 cache 标记；删除/导出 lifecycle 可审计 |
+| 结果缓存回归 | 同 prompt 第二次立即返回旧结果；UI 或 API 仍暴露 cache namespace / cache hit；脚本只看文本成功 | 重复 prompt 必须新增 upstream request-log phase；API 响应、SSE completed、assistant message 和 UI 均不得出现 Local Studio `cache.hit`/namespace 控件；provider-native 或浏览器底层缓存不得复用最终 assistant 结果 |
 | `not_applicable` 滥用 | provider/model 没返回能力时直接跳过，掩盖未覆盖的正向路径 | 每个 `not_applicable` 必须写明具体条件、模型/provider、证据字段和替代正向覆盖用例；同一能力在整轮测试中不能只有 `not_applicable` |
 | 测试 harness 漏判 | 结果文件记录 `assistant_has_thinking=false`、`secret_redacted=false`、`contains_*_error=true`、`reasoning_summary_visible=false`，但 `failures=[]` | 任何 expected/oracle 字段都必须映射到 fail 条件；计划-脚本对齐审计发现未映射字段时，本轮系统测试结论为失败或不完整 |
 | 安全与 artifact 边界 | 截图、server.log、request-log export、conversation JSON 或任务文件带真实 token/cookie/storage state/大图 payload | 提交前和归档前必须扫描 artifacts 与仓库变更；真实凭据、Authorization 明文、Google cookie、storage state、原始大图 payload 出现即 fail，并不得提交 |
@@ -91,7 +95,7 @@ OPENAI_COMPAT_API_KEY="$(tr -d '\r\n' < "$OPENAI_COMPAT_KEY_FILE")"
 | Search | off、on | on 时必须作为可选能力，不得强制普通问题走工具 |
 | Image Tool | off、on | 仅 Responses 面板有效；Google 和 OpenAI-compatible 控件/参数不同 |
 | Reasoning | off、high + summary auto | 仅在能力可用时发送；不可用时 UI 控件禁用或请求省略；如果上游返回 reasoning summary/tool details，API、UI、conversation 和 request log 不得丢失；stream parser 必须覆盖 `response.reasoning.*`、`response.reasoning_text.*`、`response.reasoning_summary_text.*`、`response.reasoning_summary_part.*` 和 reasoning `response.output_item.*`；不要求展示私有完整 chain-of-thought |
-| Cache | 首次 miss、重复 hit、不同 namespace miss | Local request cache 必须按 provider/mode/model/body/tools/reasoning/attachments/token hash 隔离 |
+| Repeated Prompt | 同 prompt 连续发送、刷新后再发送、rerun 后再发送 | Local Studio 不允许 final-result replay cache；每次发送都必须再次走 provider/upstream，并且 API/UI/request log 不出现 cache hit 或 namespace 控件 |
 | 附件 | 无附件、图片、文本/PDF 类文件 | 只在当前模型能力允许时发送；不支持时 UI 必须阻止或提示 |
 | 会话 | 新建、发送、刷新恢复、重跑、重命名、单删、批量删除 | 验证本地持久化和 UI 状态恢复 |
 | 请求记录 | 关闭、开启、查看详情、导出、删除 | 开启后必须保存完整 lifecycle，敏感字段必须脱敏 |
@@ -105,13 +109,13 @@ OPENAI_COMPAT_API_KEY="$(tr -d '\r\n' < "$OPENAI_COMPAT_KEY_FILE")"
 | Provider 路由隔离 | 当前 provider 决定 model list 来源、upstream URL、鉴权方式和 tool schema。Google AI Studio provider 不需要也不转发用户 token；OpenAI-compatible provider 只向配置的 Base URL 转发脱敏后的 Authorization；切换 provider 后不能残留上一 provider 的模型、图片工具参数或错误状态。 |
 | Interface 语义隔离 | OpenAI Chat、OpenAI Responses、Gemini、Claude 的请求路径、请求体、stream parser、错误格式和会话 `interface_mode` 必须互相隔离；不兼容组合要受控失败，不能串用另一个 interface 的 payload。 |
 | 工具可选语义 | Search/Image Tool 开启只表示模型可用这些能力。普通 prompt 不应强制触发 search、image 或多余 upstream call；当模型选择工具时，工具调用过程、引用、图片候选和最终结果必须可追踪。 |
-| Reasoning / Tool 过程保留 | 如果上游返回 reasoning summary、reasoning item、tool call、search citation、image generation invocation 或 usage，API 响应、UI、conversation JSON、刷新恢复、rerun/cache hit 和 request log 至少保留一份可展示或可审计结构；流式路径只要收到 reasoning 相关 SSE event，最终 `local_studio.completed` 的 assistant 必须有 `thinking`，UI 刷新后必须能看到 `Reasoning summary` 或等价入口；如果上游没有返回 summary，UI 必须显示可理解的空状态或省略入口，不能像丢失数据一样静默消失。 |
-| Cache 隔离 | Cache key 必须随 provider type/id/name、normalized base URL、token hash、interface、model、namespace、请求 body、search/image tool、reasoning、attachments 改变而改变；只有 stream flag 改变可以复用等价内容但仍保持对应响应协议。 |
-| 基础模块独立性 | Local Studio provider、cache、tool、reasoning 设置不能污染 `#chat`、`#images`、`#accounts` 的原始业务线；即使 Local Studio 当前 provider 配置错误，基础入口仍应走原始账号池/基础 API 并可用。 |
+| Reasoning / Tool 过程保留 | 如果上游返回 reasoning summary、reasoning item、tool call、search citation、image generation invocation 或 usage，API 响应、UI、conversation JSON、刷新恢复、rerun、重复 prompt 和 request log 至少保留一份可展示或可审计结构；流式路径只要收到 reasoning 相关 SSE event，最终 `local_studio.completed` 的 assistant 必须有 `thinking`，UI 刷新后必须能看到 `Reasoning summary` 或等价入口；如果上游没有返回 summary，UI 必须显示可理解的空状态或省略入口，不能像丢失数据一样静默消失。 |
+| 无结果缓存 | Local Studio chat route 不得把最终 assistant 结果缓存并在等价 prompt 上复用；重复 prompt、跨 provider/mode/model/tool/reasoning/附件/token 变化都必须发起新的 upstream 调用；旧 `cache_enabled`/`cache_namespace` 字段如由兼容脚本发送必须被忽略。 |
+| 基础模块独立性 | Local Studio provider、tool、reasoning 设置不能污染 `#chat`、`#images`、`#accounts` 的原始业务线；即使 Local Studio 当前 provider 配置错误，基础入口仍应走原始账号池/基础 API 并可用。 |
 | 请求记录横向服务 | Local Studio 和基础模块都必须以 group 展示完整生命周期；失败路径也必须保存 upstream request/response 或明确的未发起原因，导出 JSON 可解析且脱敏。 |
 | 错误一致性 | API error、SSE error、UI 当前会话错误、conversation JSON、request log、server stderr 和 health 状态必须一致；错误后输入框恢复可用，服务健康接口继续 200。 |
 | 敏感信息边界 | 真实 token、Authorization、Google cookie、storage state、账号凭据、原始大图 payload 不得出现在 UI 文案、conversation JSON、request log 导出、截图、server.log 或本仓库提交文件中。 |
-| 持久化恢复 | 刷新页面后 provider、interface、model、stream、reasoning、search/cache/image settings、消息、图片、usage、cache 标记、错误和 tool/reasoning details 必须恢复一致。 |
+| 持久化恢复 | 刷新页面后 provider、interface、model、stream、reasoning、search/image settings、消息、图片、usage、错误和 tool/reasoning details 必须恢复一致；不得恢复或显示 Local Studio cache 控件/标记。 |
 | 前端状态机 | idle、pending、streaming、tool-running、completed、error、retry/rerun 状态必须单向可解释地转换；结束后不能残留“正在等待模型/工具”、空 assistant 卡片、禁用输入框或重复发送按钮状态。 |
 
 ## 组合规则
@@ -125,7 +129,7 @@ OPENAI_COMPAT_API_KEY="$(tr -d '\r\n' < "$OPENAI_COMPAT_KEY_FILE")"
 3. 对每个 Responses provider 至少运行一次 `reasoning=off` 和一次 `reasoning=high + summary=auto`；支持 reasoning 的模型必须断言请求体包含 provider 支持的 reasoning 参数，且上游返回的 reasoning summary/tool details 不在 API/UI/持久化/request log 之间丢失。
 	* 流式 reasoning 用例必须同时断言：最终 SSE `local_studio.completed` conversation 的最后一条 assistant `thinking` 非空、刷新后的 UI 显示 `Reasoning summary` 或等价入口、request log/export 中可审计到对应 reasoning upstream event 或 response item。
 	* 如果脚本记录了 `assistant_has_thinking`、`thinking_length`、`reasoning_summary_visible`、`no_reasoning_summary` 等字段，必须把它们纳入 pass/fail 逻辑；禁止只记录不判定。
-4. 对每个 Provider 至少运行一次 cache miss/hit/namespace miss 三连测试，并额外验证 provider、interface、model、tool、reasoning、attachment 或 token hash 任一维度变化都会 miss。
+4. 对每个 Provider 至少运行一次 repeated-prompt 测试，并额外验证 provider、interface、model、tool、reasoning、attachment 或 token 任一维度变化后仍会 fresh upstream，而不是复用旧 assistant 结果。
 5. 对每个 Provider 至少运行一次图片附件和一次非图片附件路径；如果模型不支持附件，预期结果是 UI 阻止发送并给出错误提示。
 6. 对每个 Provider 至少运行一次会话恢复和重跑；其中一次必须在页面刷新后恢复，并检查 reasoning/tool/search/image details 仍可见或可审计。
 7. 每个预期失败或 provider 不兼容组合必须验证“优雅失败”：前端显示可理解错误、会话保存错误、请求记录完整、服务健康接口仍可用。
@@ -143,34 +147,34 @@ OPENAI_COMPAT_API_KEY="$(tr -d '\r\n' < "$OPENAI_COMPAT_KEY_FILE")"
 
 ## P0 Local Studio - Google AI Studio Provider
 
-| ID | Interface | Stream | Search | Image Tool | Cache | 用户路径 | 通过标准 |
+| ID | Interface | Stream | Search | Image Tool | Repeat | 用户路径 | 通过标准 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| G-LS-01 | Responses | on | off | off | miss | 选择 Google AI Studio，加载模型，选聊天模型，发送 `回复 ok` | UI 流式显示 assistant；请求记录含 `/api/local-studio/chat` 和内部 `/v1/responses`；无 error event |
-| G-LS-02 | Responses | off | off | off | hit | 重复 G-LS-01 的同一 prompt 与 namespace | 返回 cache hit；会话新增 assistant；请求体不泄露凭据 |
-| G-LS-03 | Responses | on | on | off | miss | 发送 `搜索今天一条科技新闻并用一句话总结` | 请求体包含 `web_search_preview`；UI 正常结束或受控显示上游错误；服务不崩溃 |
-| G-LS-04 | Responses | on | off | on | miss | 选择 Gemini 图片模型和尺寸，发送 `生成一张简单蓝色方形图标` | 生成图片只渲染一次；图片 URL 可打开；请求记录不出现重复大图 payload |
-| G-LS-05 | Responses | on | on | on | miss | 普通聊天 `你好，只回复文本` | Search/Image 均为可选能力；不得强制生成图片；UI 返回文本 |
-| G-LS-06 | Responses | on | on | on | miss | 复现用户路径：先问候、询问身份、请求新闻，再发送 `做成图片` | 不再出现 `include_server_side_tool_invocations` 错误；如触发图片工具则只保存/展示一张对应图片；思考/工具过程不丢失 |
-| G-LS-07 | Responses | off | on | on | miss | 发送 `把今天科技新闻做成简洁信息图` | 非流式也能保存图片/文本/错误；不会依赖 SSE 才正确 |
-| G-LS-08 | Responses | on/off | off/on | off/on | miss | 选择支持 thinking/reasoning 的 Gemini 模型，设置 `reasoning=high`、`summary=auto`，发送需要分步判断的 prompt | 能力可用时请求体包含对应 thinking/reasoning 设置；如果上游返回思考摘要、搜索引用或工具过程，API/UI/conversation/request log 不丢失；不支持时请求省略且 UI 明确禁用或说明 |
-| G-LS-09 | Gemini | on/off | off/on | 不适用 | miss | 切到 Gemini interface，分别测普通聊天和 search prompt | `#studio` 调用内部 `/v1beta/models/...:generateContent` 或 `streamGenerateContent`；search on 时使用 Google Search；无 Responses 图片工具面板 |
-| G-LS-10 | OpenAI Chat | on/off | off/on | 不适用 | miss | 切到 OpenAI Chat interface，测普通聊天和 search prompt | 内部 `/v1/chat/completions` 正常；search on 映射为当前项目支持的搜索字段；UI/日志完整 |
-| G-LS-11 | Claude | on/off | off/on | 不适用 | miss | 切到 Claude interface，测普通聊天和 search prompt | 内部 `/v1/messages` 正常或受控失败；失败时会话/请求记录/服务健康均正常 |
+| G-LS-01 | Responses | on | off | off | first | 选择 Google AI Studio，加载模型，选聊天模型，发送 `回复 ok` | UI 流式显示 assistant；请求记录含 `/api/local-studio/chat` 和内部 `/v1/responses`；无 error event |
+| G-LS-02 | Responses | off | off | off | repeat | 重复 G-LS-01 的同一 prompt | 仍发起新的 upstream 调用；API/UI/SSE/conversation 均无 cache hit 或 namespace 标记；请求体不泄露凭据 |
+| G-LS-03 | Responses | on | on | off | first | 发送 `搜索今天一条科技新闻并用一句话总结` | 请求体包含 `web_search_preview`；UI 正常结束或受控显示上游错误；服务不崩溃 |
+| G-LS-04 | Responses | on | off | on | first | 选择 Gemini 图片模型和尺寸，发送 `生成一张简单蓝色方形图标` | 生成图片只渲染一次；图片 URL 可打开；请求记录不出现重复大图 payload |
+| G-LS-05 | Responses | on | on | on | first | 普通聊天 `你好，只回复文本` | Search/Image 均为可选能力；不得强制生成图片；UI 返回文本 |
+| G-LS-06 | Responses | on | on | on | first | 复现用户路径：先问候、询问身份、请求新闻，再发送 `做成图片` | 不再出现 `include_server_side_tool_invocations` 错误；如触发图片工具则只保存/展示一张对应图片；思考/工具过程不丢失 |
+| G-LS-07 | Responses | off | on | on | first | 发送 `把今天科技新闻做成简洁信息图` | 非流式也能保存图片/文本/错误；不会依赖 SSE 才正确 |
+| G-LS-08 | Responses | on/off | off/on | off/on | first/repeat | 选择支持 thinking/reasoning 的 Gemini 模型，设置 `reasoning=high`、`summary=auto`，发送需要分步判断的 prompt | 能力可用时请求体包含对应 thinking/reasoning 设置；如果上游返回思考摘要、搜索引用或工具过程，API/UI/conversation/request log 不丢失；重复 prompt 仍为 fresh upstream；不支持时请求省略且 UI 明确禁用或说明 |
+| G-LS-09 | Gemini | on/off | off/on | 不适用 | first/repeat | 切到 Gemini interface，分别测普通聊天和 search prompt | `#studio` 调用内部 `/v1beta/models/...:generateContent` 或 `streamGenerateContent`；search on 时使用 Google Search；无 Responses 图片工具面板；重复 prompt fresh upstream |
+| G-LS-10 | OpenAI Chat | on/off | off/on | 不适用 | first/repeat | 切到 OpenAI Chat interface，测普通聊天和 search prompt | 内部 `/v1/chat/completions` 正常；search on 映射为当前项目支持的搜索字段；UI/日志完整；重复 prompt fresh upstream |
+| G-LS-11 | Claude | on/off | off/on | 不适用 | first/repeat | 切到 Claude interface，测普通聊天和 search prompt | 内部 `/v1/messages` 正常或受控失败；失败时会话/请求记录/服务健康均正常；重复 prompt fresh upstream |
 
 ## P0 Local Studio - OpenAI-Compatible Provider
 
-| ID | Interface | Stream | Search | Image Tool | Cache | 用户路径 | 通过标准 |
+| ID | Interface | Stream | Search | Image Tool | Repeat | 用户路径 | 通过标准 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | O-LS-01 | Models | 不适用 | 不适用 | 不适用 | 不适用 | 在 UI 新增 OpenAI-compatible provider，填 Base URL、从 key 文件读取 token，点击加载模型 | 模型列表加载；token 输入框不回显明文到日志；刷新后 provider 可恢复 |
-| O-LS-02 | Responses | on/off | off | off | miss | 选择聊天模型，发送 `回复 ok` | 流式和非流式均可完成；请求记录目标为自定义 Base URL `/responses` |
-| O-LS-03 | Responses | on | on | off | miss | 发送 `搜索今天一条科技新闻并总结` | 请求体 `tools` 使用 `web_search` 且不出现 `web_search_preview`；如果 provider 支持 search，应正常完成；如果返回 4xx，UI 只显示一个受控错误，服务端不得出现 `ResponseNotRead` 或 ASGI exception group；不得出现 `Unsupported tool type: web_search_preview` |
-| O-LS-04 | Responses | on/off | off | on | miss | 选择 `gpt-image-2`，尺寸 `1024x1024`，发送 `生成一个测试图标` | 支持图片的 provider 返回图片并渲染一次；不支持时优雅失败且服务健康保持 200 |
-| O-LS-05 | Responses | on | on | on | miss | 普通聊天 `不要搜索，不要画图，只回复 ok` | 工具开启但不强制调用；不会错误生成图片 |
-| O-LS-06 | Responses | on/off | off/on | off/on | miss | 选择支持 reasoning 的 OpenAI-compatible Responses 模型，设置 `reasoning=high`、`summary=auto`，发送 `请分步骤判断 17*23 是否大于 390，并给出简短结论` | upstream request 包含 Responses reasoning 参数；若上游返回 `response.reasoning*`、`response.reasoning_text*`、`response.reasoning_summary_text*`、`response.reasoning_summary_part*` 或 reasoning `response.output_item.*`，API 响应、最终 SSE completed、UI、conversation JSON、刷新恢复和 request log 均保留；stream on 时 assistant `thinking` 非空且 UI 显示 `Reasoning summary`；若上游不返回 summary，UI 显示受控空状态；结束后不残留 pending/tool-running 状态 |
-| O-LS-07 | Responses | on/off | on | on | miss | 开启 search、image tool、reasoning，发送普通聊天 `不要搜索，不要画图，只解释 2+2` | 三个能力均为可选；请求体允许工具但不得强制调用；如果只返回文本，也要保留 reasoning/usage 或明确无 reasoning summary；不会出现空 assistant 卡片 |
-| O-LS-08 | OpenAI Chat | on/off | off/on | 不适用 | miss | 切到 OpenAI Chat interface，测普通聊天和 search toggle | 正常完成或 provider 兼容性错误受控显示；无未捕获后端异常；不会发送 Responses-only reasoning/tool 字段 |
-| O-LS-09 | Claude | on/off | off/on | 不适用 | miss | 如果 provider 支持 Messages，测普通聊天；否则保留负向兼容测试 | 成功或优雅失败；请求路径、状态码、错误文案记录完整 |
-| O-LS-10 | Gemini | on/off | off/on | 不适用 | miss | 用户误选 Gemini interface 连接 OpenAI-compatible Base URL | UI 不崩溃；API 返回受控错误；会话错误可见；服务健康仍 200 |
+| O-LS-02 | Responses | on/off | off | off | first/repeat | 选择聊天模型，发送 `回复 ok` | 流式和非流式均可完成；请求记录目标为自定义 Base URL `/responses`；重复 prompt fresh upstream |
+| O-LS-03 | Responses | on | on | off | first | 发送 `搜索今天一条科技新闻并总结` | 请求体 `tools` 使用 `web_search` 且不出现 `web_search_preview`；如果 provider 支持 search，应正常完成；如果返回 4xx，UI 只显示一个受控错误，服务端不得出现 `ResponseNotRead` 或 ASGI exception group；不得出现 `Unsupported tool type: web_search_preview` |
+| O-LS-04 | Responses | on/off | off | on | first | 选择 `gpt-image-2`，尺寸 `1024x1024`，发送 `生成一个测试图标` | 支持图片的 provider 返回图片并渲染一次；不支持时优雅失败且服务健康保持 200 |
+| O-LS-05 | Responses | on | on | on | first | 普通聊天 `不要搜索，不要画图，只回复 ok` | 工具开启但不强制调用；不会错误生成图片 |
+| O-LS-06 | Responses | on/off | off/on | off/on | first/repeat | 选择支持 reasoning 的 OpenAI-compatible Responses 模型，设置 `reasoning=high`、`summary=auto`，发送 `请分步骤判断 17*23 是否大于 390，并给出简短结论` | upstream request 包含 Responses reasoning 参数；若上游返回 `response.reasoning*`、`response.reasoning_text*`、`response.reasoning_summary_text*`、`response.reasoning_summary_part*` 或 reasoning `response.output_item.*`，API 响应、最终 SSE completed、UI、conversation JSON、刷新恢复和 request log 均保留；重复 prompt fresh upstream；stream on 时 assistant `thinking` 非空且 UI 显示 `Reasoning summary`；若上游不返回 summary，UI 显示受控空状态；结束后不残留 pending/tool-running 状态 |
+| O-LS-07 | Responses | on/off | on | on | first | 开启 search、image tool、reasoning，发送普通聊天 `不要搜索，不要画图，只解释 2+2` | 三个能力均为可选；请求体允许工具但不得强制调用；如果只返回文本，也要保留 reasoning/usage 或明确无 reasoning summary；不会出现空 assistant 卡片 |
+| O-LS-08 | OpenAI Chat | on/off | off/on | 不适用 | first/repeat | 切到 OpenAI Chat interface，测普通聊天和 search toggle | 正常完成或 provider 兼容性错误受控显示；无未捕获后端异常；不会发送 Responses-only reasoning/tool 字段；重复 prompt fresh upstream |
+| O-LS-09 | Claude | on/off | off/on | 不适用 | first/repeat | 如果 provider 支持 Messages，测普通聊天；否则保留负向兼容测试 | 成功或优雅失败；请求路径、状态码、错误文案记录完整；重复 prompt fresh upstream |
+| O-LS-10 | Gemini | on/off | off/on | 不适用 | first/repeat | 用户误选 Gemini interface 连接 OpenAI-compatible Base URL | UI 不崩溃；API 返回受控错误；会话错误可见；服务健康仍 200；重复 prompt 不复用旧 assistant 结果 |
 
 ## P1 Local Studio UI 状态与持久化
 
@@ -179,18 +183,18 @@ OPENAI_COMPAT_API_KEY="$(tr -d '\r\n' < "$OPENAI_COMPAT_KEY_FILE")"
 | LS-UI-01 | Provider | 新增两个 OpenAI-compatible provider，切换后刷新页面 | 每个 provider 保留独立 Base URL、token、timeout、interface；当前 provider 恢复正确 |
 | LS-UI-02 | Image Tool UI | Google provider 与 OpenAI-compatible provider 间切换 | Google 显示 Gemini 图片模型/尺寸；OpenAI 显示 `gpt-image-2` 和质量/背景/格式/压缩；无跨 provider 残留 |
 | LS-UI-03 | Model Filtering | Responses 模式加载模型 | 聊天模型列表不出现 `gpt-image-*` 或 Gemini image-only 模型；图片模型出现在 Image Tool 选择器 |
-| LS-UI-04 | Pending State | 发送流式请求时观察 pending 区域 | 显示当前 interface、model、stream、search/cache/image tool/reasoning 摘要；进入工具调用时状态文案更新；结束或错误后消失 |
+| LS-UI-04 | Pending State | 发送流式请求时观察 pending 区域 | 显示当前 interface、model、stream、search/image tool/reasoning 摘要；流式文本逐段可见；进入工具调用时状态文案更新；结束或错误后消失 |
 | LS-UI-05 | Error State | 故意使用错误 token 或错误 Base URL | 错误显示在当前会话；输入框可继续使用；请求记录保存失败阶段 |
 | LS-UI-06 | Attachments | 上传图片、文本/PDF 附件后发送 | 支持模型正常发送；不支持模型 UI 阻止或给出明确错误；附件预览和移除可用 |
-| LS-UI-07 | Conversation | 新建、发送、刷新、恢复、重跑、重命名、单删、批量删除 | 历史列表、消息内容、图片、usage、错误和 cache 标记都能持久化并正确删除 |
-| LS-UI-08 | Cache Namespace | 同 prompt 改变 namespace 后发送 | namespace 改变触发 miss；切回原 namespace 可 hit；日志/usage 与 UI 标记一致 |
+| LS-UI-07 | Conversation | 新建、发送、刷新、恢复、重跑、重命名、单删、批量删除 | 历史列表、消息内容、图片、usage 和错误都能持久化并正确删除；不会出现 cache 标记 |
+| LS-UI-08 | Repeated Prompt | 同 prompt 连续发送，刷新页面后再发送一次 | 每次都显示新的发送/等待/完成流程；request log 新增 upstream 调用；UI 无 Cache Namespace 控件或 cache hit 标记 |
 | LS-UI-09 | Reasoning / Capability | 在 Google 和 OpenAI-compatible Responses 下切换支持/不支持 reasoning 的模型，分别设置 off 与 high + summary auto 后发送，stream on/off 都覆盖；对 stream on 用例刷新页面后重新打开同一会话 | 支持时请求体包含 provider 支持的 reasoning/thinking 参数；不支持时 UI 控件禁用或请求省略；上游返回 reasoning 时当前消息和刷新恢复后都显示 `Reasoning summary` 或等价入口；conversation JSON 的 assistant `thinking` 非空；没有上游 summary 时显示受控空状态 |
 | LS-UI-10 | Provider CRUD | 编辑 OpenAI-compatible provider 的 Base URL/token/timeout，再删除当前 provider | 编辑后重新加载模型走新配置；删除后回退到可用 provider；会话和请求日志不保存明文 token |
 | LS-UI-11 | Timeout | 设置极短 timeout 访问慢/不可达 Base URL 后发送 | UI 显示受控 timeout 错误；输入框恢复可用；会话保存错误；服务健康接口仍 200；请求记录阶段完整 |
-| LS-UI-12 | Cache Default | 新临时环境首次打开 Local Studio，使用默认设置重复发送同 prompt | cache 默认开启；首次 miss、重复 hit；切换 namespace 后 miss；UI 和日志 cache 标记一致 |
-| LS-UI-13 | Cache Isolation | 同 prompt 依次改变 provider、interface、model、search、image tool、reasoning、附件、namespace，再切回原配置 | 任一隔离维度变化均触发 miss；切回完全相同配置才允许 hit；cache hit 的 UI、conversation 和 request log 标记一致 |
+| LS-UI-12 | No Result Cache Default | 新临时环境首次打开 Local Studio，使用默认设置重复发送同 prompt | 不存在 cache 默认开启文案、开关或 namespace；首次和重复发送都走正常请求流程并新增 upstream log |
+| LS-UI-13 | No Result Cache Isolation | 同 prompt 依次改变 provider、interface、model、search、image tool、reasoning、附件，再切回原配置 | 任一配置下都不得复用旧 assistant 结果；切回完全相同配置也必须 fresh upstream；UI、conversation 和 request log 无 cache hit 标记 |
 | LS-UI-14 | Provider Independence | 在 Local Studio 配置错误 OpenAI-compatible Base URL/token 后，切到 `#chat`、`#images`、`#accounts` 执行基础路径 | 基础入口仍走原始账号池和基础 API；不继承 Local Studio 错误 provider/token/base URL；request log 路径能区分基础模块与 Local Studio |
-| LS-UI-15 | UI State Machine | 分别触发成功流式、非流式成功、工具调用成功、上游 4xx、timeout、rerun、cache hit | idle/pending/streaming/tool-running/completed/error/retry 状态转换清晰；结束后无残留等待文案、空 assistant 卡片、重复禁用输入框或重复发送按钮状态 |
+| LS-UI-15 | UI State Machine | 分别触发成功流式、非流式成功、工具调用成功、上游 4xx、timeout、rerun、重复 prompt | idle/pending/streaming/tool-running/completed/error/retry 状态转换清晰；结束后无残留等待文案、空 assistant 卡片、重复禁用输入框或重复发送按钮状态 |
 
 ## P1 基础模块回归
 
@@ -215,7 +219,7 @@ OPENAI_COMPAT_API_KEY="$(tr -d '\r\n' < "$OPENAI_COMPAT_KEY_FILE")"
 | API-LS-06 | `GET /api/local-studio/assets/{path}` | 打开 Local Studio 生成图 URL | 返回图片 MIME；路径穿越返回 400/404 |
 | API-LS-07 | `POST /api/local-studio/chat` | Google Responses + `search=true`；OpenAI Responses + `search=true` | Provider-aware search oracle：Google upstream request 包含 `web_search_preview`；OpenAI-compatible upstream request 包含 `web_search`；两者均保留 search/image tool 可选语义 |
 | API-LS-08 | `POST /api/local-studio/chat` | OpenAI-compatible Responses + `reasoning_effort=high` + `reasoning_summary=auto`，分别 stream on/off | upstream request 包含 Responses reasoning 参数；响应解析不丢弃上游返回的 reasoning summary/item/tool details；stream on 时最终 SSE completed event 的 assistant `thinking` 非空，非流式 JSON 的 assistant `thinking` 非空，conversation JSON 和 request log 可审计；若上游没有 summary，必须返回 `no_reasoning_summary` 或等价受控空状态，不能与解析丢失混淆 |
-| API-LS-09 | `POST /api/local-studio/chat` | 同 prompt 分别改变 provider、interface、model、tools、reasoning、attachments、token、namespace | 只有完全等价请求允许 cache hit；任一隔离维度变化均 miss；cache key 和导出日志只含 token hash 不含真实 token |
+| API-LS-09 | `POST /api/local-studio/chat` | 同 prompt 连续发送，并分别改变 provider、interface、model、tools、reasoning、attachments、token；兼容性 payload 可额外携带旧 `cache_enabled/cache_namespace` | 每次都发起新的 upstream 调用；响应、SSE completed、assistant message、request log 均无 Local Studio `cache.hit`；导出日志不含真实 token |
 | API-LS-10 | `POST /api/local-studio/chat` | Local Studio 使用错误 OpenAI-compatible provider 后再调用基础 `/v1/*` 与 `/v1beta/*` API smoke | Local Studio 错误被保存为受控错误；基础 API 不受影响；请求日志 group 能清楚区分 Local Studio provider 请求与基础业务线请求 |
 | API-REQ-01 | `/request-logs/*` | status、list、detail、export、delete | lifecycle 完整且导出 JSON 可解析 |
 | API-BASE-01 | `/v1/chat/completions`、`/v1/responses`、`/v1/messages`、`/v1/images/generations` | 基础 API smoke | 基础兼容 API 不因 Local Studio 改造回归 |
@@ -270,7 +274,7 @@ OPENAI_COMPAT_API_KEY="$(tr -d '\r\n' < "$OPENAI_COMPAT_KEY_FILE")"
 * 如果 upstream response 或 SSE event 返回 reasoning summary、reasoning item、tool call、search citation、image generation call 或 usage，后端解析后的 API 响应、最终 SSE `local_studio.completed`、conversation JSON、UI 当前消息和 request log detail/export 都能保留或展示对应结构。
 * 测试脚本必须 hard-fail：当 upstream 有 reasoning event/item 而 `local_studio.completed` 的最后一条 assistant 没有非空 `thinking`，或浏览器 UI/刷新恢复后没有 `Reasoning summary` 等价入口时，不能只把 `assistant_has_thinking=false` 写进结果。
 * 如果上游模型没有返回 reasoning summary，UI 必须显示受控空状态或隐藏 reasoning 入口，并在 API/UI 结果中记录 `no_reasoning_summary` 这类可解释状态；不得把“没有返回”和“解析/保存丢失”混在一起。
-* 刷新页面、重跑该轮、命中 cache 后，reasoning/tool details、usage、cache 标记和错误状态仍一致。
+* 刷新页面、重跑该轮、重复 prompt 后，reasoning/tool details、usage 和错误状态仍一致，且不出现 Local Studio cache 标记。
 * 当前 assistant 消息不能只剩最终文本或图片而完全丢失过程；不能残留“正在等待模型与图片工具”等 pending 状态；不能生成空 assistant 卡片。
 * 服务端 stderr 不包含 `ResponseNotRead`、`ExceptionGroup`、`Exception in ASGI application`，故障或成功后 `/api/local-studio/health`、`/request-logs/status` 仍返回 200。
 
@@ -280,7 +284,7 @@ OPENAI_COMPAT_API_KEY="$(tr -d '\r\n' < "$OPENAI_COMPAT_KEY_FILE")"
 2. 开启 request logs。
 3. 执行 API 级 P0 smoke，先验证 provider/model/chat/search/image/reasoning 基础链路。
 4. 执行浏览器 P0 Local Studio 矩阵，覆盖 bug 专项和架构契约断言。
-5. 执行 P1 UI 状态、会话、cache、附件、基础模块回归和 provider/cache/reasoning 隔离用例。
+5. 执行 P1 UI 状态、会话、无结果缓存回归、附件、基础模块回归和 provider/reasoning 隔离用例。
 6. 汇总 `architecture-contract-results`，逐项标记每条架构契约断言的 pass/fail/not_applicable。
 7. 导出必要请求记录和截图到本次临时目录的 `artifacts/`，检查脱敏后再附到人工报告；不要提交。
 8. 清理临时服务、浏览器进程和临时数据目录。
@@ -294,7 +298,7 @@ OPENAI_COMPAT_API_KEY="$(tr -d '\r\n' < "$OPENAI_COMPAT_KEY_FILE")"
 * 所有适用的架构契约断言必须通过；`not_applicable` 必须有明确原因，不能用于掩盖未覆盖路径。
 * 测试 harness 本身也要通过门禁：每个 P0/P1 expected 字段、`contains_*` 错误签名、`assistant_has_*`/`*_visible` 可见性字段都必须有对应 fail 条件；只采集不判定的脚本不能作为“全部通过”的依据。
 * Reasoning/tool/search/image 过程信息如果由上游返回，不能只在 request log 里存在而 UI/conversation 完全丢失；如果上游未返回，必须有可解释空状态。
-* Cache 不能跨 provider、interface、model、tool、reasoning、attachment、token hash 或 namespace 串线命中。
+* Local Studio 不得跨 provider、interface、model、tool、reasoning、attachment 或 token 复用旧 assistant 结果；重复 prompt 也必须 fresh upstream。
 * Request log、截图、导出文件不包含真实 OpenAI token、Google cookie、Authorization header 明文或账号 storage state。
 * Local Studio 的 provider 封装不影响 Playground、图片生成、请求记录和账号管理独立入口。
 

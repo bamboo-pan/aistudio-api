@@ -280,15 +280,18 @@ def test_static_frontend_exposes_local_studio_workbench():
     assert "localStudioControlAvailable('stream')" in app_js
     assert "localStudioSearch:'off'" in app_js
     assert "search:this.localStudioSearch==='on'" in app_js
-    assert "localStudioCacheEnabled:true" in app_js
-    assert "cacheEnabled:true" in app_js
-    assert "cache_enabled:true" in app_js
-    assert "cache_namespace:this.localStudioCacheNamespace" in app_js
+    assert "localStudioCacheEnabled" not in app_js
+    assert "localStudioCacheNamespace" not in app_js
+    assert "cacheEnabled:true" not in app_js
+    assert "cache_enabled:true" not in app_js
+    assert "cache_namespace:this.localStudioCacheNamespace" not in app_js
+    assert "Cache Namespace" not in index_html
     assert "Web search" in index_html
     assert "Local request cache" not in index_html
     assert "localStudioCacheEnabled=!localStudioCacheEnabled" not in index_html
     assert "sendLocalStudioStream(body)" in app_js
     assert "local_studio.delta" in app_js
+    assert "refreshLocalStudioStreamMessage()" in app_js
     assert "localStudioPendingTitle" in app_js
     assert "localStudioBusyTimer" in app_js
     assert "Local Studio 流式响应中断，已保存结果" in app_js
