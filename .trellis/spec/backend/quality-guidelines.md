@@ -368,6 +368,89 @@ def normalize_chat_request(messages, requested_model, tmp_dir=None):
 		...
 ```
 
+## Scenario: Visual Runtime Configuration API
+
+### 1. Scope / Trigger
+
+- Trigger: Code changes `src/aistudio_api/api/routes_system.py` configuration endpoints, `src/aistudio_api/config.py` environment defaults, or the static `#config` System Configuration page.
+- Use this contract whenever runtime environment values become visually editable or their defaults/descriptions change.
+
+### 2. Signatures
+
+- `GET /config` returns `{"env_file": str, "groups": list[group], "data": list[item]}`.
+- `PUT /config/{key}` accepts `{"value": any}` for allowlisted keys only and returns the updated item.
+- `DELETE /config/{key}` removes the key from the configured `.env` file and returns the reset item.
+- `AISTUDIO_CONFIG_ENV_FILE` may override the editable `.env` target for tests and smoke runs; otherwise the project-root `.env` is used.
+- Frontend route/hash: `#config`; frontend entry points include `loadConfig()`, `saveConfigItem(item)`, and `resetConfigItem(item)`.
+
+### 3. Contracts
+
+- Editable keys must come from a backend allowlist, not from enumerating process environment variables.
+- The allowlist must exclude raw credentials and auth material such as account cookies, provider tokens, API keys, and proxy secrets.
+- Do not duplicate settings that already have a richer visual control elsewhere, such as request-log enablement, account rotation mode/cooldown, Local Studio provider profiles, chat interface/model controls, and image-generation controls.
+- Item responses must include key, label, category, type, description, default value, current runtime value, configured `.env` value/raw string, configured parse error, override state, restart-required state, pending-restart state, and numeric bounds/options where applicable.
+- Startup-sensitive values are saved to `.env` but do not mutate the already-running `settings` object; the UI must show restart-required/pending-restart metadata instead of implying hot reload.
+- `AISTUDIO_USE_PURE_HTTP` defaults to off. Turning it on selects the experimental pure HTTP path, skips browser startup, and also skips account browser warmup.
+- Automatic account browser warmup is controlled by `AISTUDIO_ACCOUNT_WARMUP_LIMIT`, and it only has an effect when Pure HTTP is off, accounts exist, and the limit is greater than zero.
+- Backend `.env` writes must use `python-dotenv` helpers instead of ad hoc string rewriting.
+- The static UI must not render hidden placeholder errors such as `configured_error=null`; only real configured parse errors should produce an error notice.
+
+### 4. Validation & Error Matrix
+
+- Unknown or non-editable key -> HTTP 404 with `detail.type == "not_found"`.
+- Missing JSON `value` -> HTTP 400 with a clear message.
+- Boolean values accept booleans and common string forms (`1/0`, `true/false`, `yes/no`, `on/off`) and serialize as `1` or `0`.
+- Integer values reject booleans and enforce configured minimum/maximum bounds.
+- Float values reject booleans and enforce configured minimum/maximum bounds.
+- String/path values must be single-line; newline or carriage return values are rejected before writing `.env`.
+- Invalid existing `.env` values should be reported in the affected item as `configured_error` without breaking the whole `GET /config` response.
+
+### 5. Good/Base/Bad Cases
+
+- Good: `GET /config` lists `AISTUDIO_USE_PURE_HTTP` and `AISTUDIO_ACCOUNT_WARMUP_LIMIT` with descriptions that distinguish Pure HTTP from account warmup.
+- Good: User changes `AISTUDIO_ACCOUNT_WARMUP_LIMIT`, sees `.env` and pending-restart indicators, then resets it and the indicators disappear.
+- Base: No `.env` exists; `GET /config` still returns defaults/current runtime values and `PUT` creates the configured env file.
+- Bad: The UI exposes `AISTUDIO_AUTH_FILE`, account cookie JSON, provider API keys, or proxy secrets.
+- Bad: A change flips `AISTUDIO_USE_PURE_HTTP` default to on to try to enable automatic account warmup.
+
+### 6. Tests Required
+
+- Unit/API: `GET /config` returns only allowlisted keys, includes `AISTUDIO_USE_PURE_HTTP` and `AISTUDIO_ACCOUNT_WARMUP_LIMIT`, and excludes credential/already-visualized keys.
+- Unit/API: `PUT` and `DELETE` save/reset values through a temporary `AISTUDIO_CONFIG_ENV_FILE` without touching the developer's real `.env`.
+- Unit/API: invalid values and unknown keys return the expected 400/404 errors.
+- Unit/static: `#config` route/sidebar, dynamic item rendering, save/reset calls, restart counters, configured-error rendering, and config CSS classes are present.
+- Static syntax: when editing `src/aistudio_api/static/app.js`, run `node --check src/aistudio_api/static/app.js`.
+- Real: WSL API smoke must start the server from a temporary home-directory copy, call `GET /config`, save/reset a non-secret key, and assert Pure HTTP remains default-off while warmup metadata points to `AISTUDIO_ACCOUNT_WARMUP_LIMIT`.
+- Real: If WSL reaches AI Studio through a proxy, pass that proxy to the service as `AISTUDIO_PROXY_SERVER`; generic `HTTP_PROXY`/`HTTPS_PROXY` may make `curl` pass but does not configure Camoufox browser sessions.
+- Real: Browser UI smoke must open `#config`, verify Pure HTTP and account-warmup rows, save/reset a non-secret value, and confirm no secret values or null configured-error placeholders render.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+items = [{"key": key, "value": value} for key, value in os.environ.items()]
+```
+
+#### Correct
+
+```python
+items = [_config_item(option, env_values) for option in CONFIG_OPTIONS]
+```
+
+#### Wrong
+
+```python
+use_pure_http = os.getenv("AISTUDIO_USE_PURE_HTTP", "1") == "1"
+```
+
+#### Correct
+
+```python
+use_pure_http = os.getenv("AISTUDIO_USE_PURE_HTTP", "0") in ("1", "true", "True")
+account_warmup_limit = int(os.getenv("AISTUDIO_ACCOUNT_WARMUP_LIMIT", "2"))
+```
+
 ## Scenario: Dynamic Model List Refresh
 
 ### 1. Scope / Trigger

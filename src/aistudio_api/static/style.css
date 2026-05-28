@@ -171,6 +171,33 @@ select.sel:focus,.sel:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(
 .request-phase-head>span{flex-shrink:0;text-align:right;max-width:44%}
 .request-phase-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
 
+/* System configuration */
+.config-pad{max-width:none;padding-top:24px;background:#fbfcfd}
+.config-hero p{max-width:920px;word-break:break-all}
+.config-hero .btn svg,.config-actions .btn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.config-notice{margin-bottom:16px}
+.config-metrics{display:grid;grid-template-columns:repeat(3,minmax(140px,1fr));gap:10px;margin-bottom:16px}
+.config-panel{overflow:visible}
+.config-panel-head{align-items:center}
+.config-list{display:flex;flex-direction:column}
+.config-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,360px);gap:16px;align-items:center;padding:16px 18px;border-bottom:1px solid var(--border);min-width:0}
+.config-row:last-child{border-bottom:none}
+.config-row.dirty{background:#fffdf5}
+.config-row.pending{box-shadow:inset 3px 0 0 var(--amber)}
+.config-info-block{min-width:0;display:flex;flex-direction:column;gap:7px}
+.config-label-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
+.config-label-row strong{font-size:15px;font-weight:750;line-height:1.25;min-width:0;word-break:break-word}
+.config-info-block code{align-self:flex-start;border:1px solid var(--border);border-radius:6px;background:var(--bg-alt);padding:3px 6px;font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#374151;word-break:break-all}
+.config-info-block p{font-size:13px;line-height:1.45;color:var(--muted);word-break:break-word}
+.config-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+.config-meta span{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--border);border-radius:999px;background:#fff;padding:4px 8px;max-width:100%}
+.config-meta strong{font-weight:750;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:280px}
+.config-control-block{min-width:0;display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap}
+.config-input{min-width:0;width:min(100%,260px);height:38px;border:1px solid var(--border);border-radius:8px;background:#fff;padding:8px 10px;font-family:inherit;font-size:14px;color:var(--text);outline:none}
+.config-input:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(16,163,127,.12)}
+.config-toggle{min-width:104px;justify-content:center}
+.config-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
+
 /* Account management */
 .account-pad{max-width:none;padding-top:24px;background:#fbfcfd}
 .account-hero{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin-bottom:18px}
@@ -673,6 +700,9 @@ select.sel:focus,.sel:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(
   .image-form-panel,.image-main-column,.image-side-column{grid-column:auto;grid-row:auto}
   .image-results-panel{min-height:auto}
   .account-metrics{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .config-metrics{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .config-row{grid-template-columns:1fr;align-items:start}
+  .config-control-block{justify-content:flex-start}
   .request-metrics{grid-template-columns:repeat(3,minmax(0,1fr))}
   .metric-wide{grid-column:1 / -1}
   .account-control-row{grid-template-columns:1fr}
@@ -738,7 +768,13 @@ select.sel:focus,.sel:focus{border-color:var(--green);box-shadow:0 0 0 2px rgba(
   .request-panel-actions{width:100%;justify-content:flex-start}
   .request-panel-actions .btn{flex:1;justify-content:center;min-width:112px}
   .account-metrics{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .config-metrics{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
   .request-metrics{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .config-pad{padding:20px 14px 64px}
+  .config-row{padding:14px;gap:12px}
+  .config-control-block{align-items:stretch;flex-direction:column}
+  .config-input,.config-toggle,.config-actions,.config-actions .btn{width:100%;justify-content:center}
+  .config-meta strong{max-width:180px}
   .account-metric{min-height:66px;padding:11px 12px}
   .account-metric strong{font-size:18px}
   .metric-wide{grid-column:1 / -1}
