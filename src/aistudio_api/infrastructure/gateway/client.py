@@ -65,10 +65,15 @@ class AIStudioClient:
         return self._use_pure_http
 
     async def warmup(self) -> None:
-        """预热浏览器，启动 Camoufox 并加载 AI Studio 页面。"""
+        """预热浏览器，启动 Camoufox 并准备首个文本请求所需的捕获模板。"""
         if self._session is not None:
             await self._session.ensure_context()
-            logger.info("浏览器预热完成")
+            try:
+                await self._capture_service.warmup(prompt="1", model=DEFAULT_TEXT_MODEL)
+                logger.info("浏览器预热完成，文本请求模板已就绪")
+            except Exception as exc:
+                logger.warning("浏览器文本请求模板预热失败，仅完成页面预热: %s", exc)
+                raise
 
     async def close(self) -> None:
         if self._session is not None:

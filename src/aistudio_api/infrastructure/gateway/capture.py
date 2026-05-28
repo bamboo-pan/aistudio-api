@@ -51,6 +51,11 @@ class RequestCaptureService:
     def clear_templates(self) -> None:
         self._templates.clear()
 
+    async def warmup(self, prompt: str = "1", model: str = DEFAULT_TEXT_MODEL) -> None:
+        capture_model = resolve_aistudio_wire_model(model)
+        await self._ensure_template(capture_model)
+        await self._session.generate_snapshot([self._build_capture_content(prompt=prompt, images=None)])
+
     async def capture(
         self,
         prompt: str,

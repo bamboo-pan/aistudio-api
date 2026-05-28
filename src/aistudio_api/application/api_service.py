@@ -826,7 +826,16 @@ async def _ensure_account_for_model(model: str | None) -> None:
 
 def health_response() -> dict:
     busy_lock = runtime_state.busy_lock
-    return {"status": "ok", "busy": busy_lock.locked() if busy_lock else False}
+    return {
+        "status": "ok",
+        "busy": busy_lock.locked() if busy_lock else False,
+        "warmup": {
+            "status": runtime_state.warmup_status,
+            "target_accounts": list(runtime_state.warmup_target_accounts),
+            "completed_accounts": list(runtime_state.warmup_completed_accounts),
+            "failed_accounts": list(runtime_state.warmup_failed_accounts),
+        },
+    }
 
 
 def stats_response() -> dict:

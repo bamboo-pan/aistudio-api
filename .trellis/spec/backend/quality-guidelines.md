@@ -34,22 +34,22 @@ Questions to answer:
 
 (To be filled by the team)
 
-## Scenario: Local Studio API, Provider Profiles, Request Cache, Interface Modes, and Tools
+## Scenario: Local Studio API, Provider Profiles, No Result Cache, Interface Modes, and Tools
 
 ### 1. Scope / Trigger
 
 - Trigger: Code changes `src/aistudio_api/api/routes_local_studio.py`, `src/aistudio_api/infrastructure/local_studio.py`, `src/aistudio_api/api/app.py` request-log eligibility, `AISTUDIO_LOCAL_STUDIO_DIR`, or the static `#studio` Local Studio workbench.
-- Use this contract for server-side local conversation persistence, arbitrary compatible endpoint forwarding, browser-local provider profiles, selectable OpenAI Chat / OpenAI Responses / Gemini / Claude interface modes, Local request cache, attachment storage, request-log capture, and Responses-mode `web_search` / provider-aware image-generation tool behavior.
+- Use this contract for server-side local conversation persistence, arbitrary compatible endpoint forwarding, browser-local provider profiles, selectable OpenAI Chat / OpenAI Responses / Gemini / Claude interface modes, attachment storage, request-log capture, no Local Studio final-result replay cache, and Responses-mode `web_search` / provider-aware image-generation tool behavior.
 
 ### 2. Signatures
 
-- `AISTUDIO_LOCAL_STUDIO_DIR` defaults to `data/local-studio` and stores `conversations/*.json`, `files/<yyyymmdd>/<asset-id>.<ext>`, and Local request cache entries under `cache/requests/<prefix>/<sha256>.json`.
+- `AISTUDIO_LOCAL_STUDIO_DIR` defaults to `data/local-studio` and stores `conversations/*.json` plus `files/<yyyymmdd>/<asset-id>.<ext>`. Legacy `cache/requests/<prefix>/<sha256>.json` entries may exist on disk, but the Local Studio chat route must not read or write them for result reuse.
 - `POST /api/local-studio/models` accepts `{"provider_type"?: "google-ai-studio"|"openai", "base_url"?: str, "api_key"?: str, "timeout"?: int, "interface_mode"?: "openai"|"responses"|"gemini"|"claude", "provider_id"?: str, "provider_name"?: str}` and returns `{"object": "list", "data": list[text_model], "image_models": list[image_model], "interface_mode": str}`.
 - `GET/POST/PATCH/DELETE /api/local-studio/conversations` and `POST /api/local-studio/conversations/bulk-delete {"ids": string[]}` manage local JSON conversations.
 - `GET /api/local-studio/assets/{asset_path:path}` serves generated/uploaded local assets after path containment validation.
 - `POST /api/local-studio/chat` accepts provider settings, optional `provider_id`, optional `provider_name`, `interface_mode`, `model`, optional `conversation_id`, `message`, `files`, `options`, and optional `rerun_from`.
-- Local Studio `options` may include `stream`, `reasoning_effort`, `reasoning_summary`, `search`, `cache_enabled`, `cache_namespace`, image-tool fields (`image_tool_enabled`, `image_tool_provider`, `image_model`, `size`, and provider-supported parameters), and mode-specific generation settings.
-- Non-stream chat returns `{"conversation": ..., "request": ..., "elapsed_ms": int, "upstream_id"?: str, "interface_mode": str, "cache"?: {"hit": bool, "cache_key": str}}`. Stream chat returns Server-Sent Events with `local_studio.delta` and final `local_studio.completed` events; stream cache hits must still return SSE, not JSON.
+- Local Studio `options` may include `stream`, `reasoning_effort`, `reasoning_summary`, `search`, image-tool fields (`image_tool_enabled`, `image_tool_provider`, `image_model`, `size`, and provider-supported parameters), and mode-specific generation settings. Legacy `cache_enabled` and `cache_namespace` inputs are ignored if older callers send them.
+- Non-stream chat returns `{"conversation": ..., "request": ..., "elapsed_ms": int, "upstream_id"?: str, "interface_mode": str}` and must not include a Local Studio `cache` result. Stream chat returns Server-Sent Events with incremental `local_studio.delta` events and a final `local_studio.completed` event containing the saved conversation.
 - Payload helpers: `normalize_interface_mode(...)`, `local_studio_models_path(mode)`, `local_studio_chat_path(mode, model, stream=False)`, `build_local_studio_chat_payload(...)`, `parse_local_studio_output(...)`, `parse_local_studio_stream_event(...)`, `build_responses_payload(...)`, `validate_gpt_image_2_size(value)`, and `parse_responses_output(payload)`.
 
 ### 3. Contracts
@@ -66,10 +66,9 @@ Questions to answer:
 - Responses stream parsers must preserve all provider reasoning variants as Local Studio `thinking`, including `response.reasoning.delta/done`, `response.reasoning_text.delta/done`, `response.reasoning_summary_text.delta/done`, reasoning summary parts, and reasoning `response.output_item.done` payloads. The UI already renders the reasoning block from `message.thinking`; missing thinking in the completed conversation is a backend stream parsing/persistence regression, not a frontend empty-state.
 - Request logging must include `/api/local-studio/models` and `/api/local-studio/chat` client requests plus manually recorded upstream request/response phases. Client `api_key`, `apiKey`, and `token` body fields and upstream `Authorization` headers must be redacted.
 - The `timeout` setting must be passed into every Local Studio upstream client, including model list, non-stream chat, and stream chat.
-- The static UI must clear an accepted Local Studio draft immediately after send, restore it on non-rerun failure, and keep provider profiles, active provider id, stream/non-stream, interface mode, reasoning, model, search, cache namespace, and image settings in `openai.localStudio.settings.v1`.
-- Browser-local provider profiles may store runtime tokens, but server-side conversation files and task/spec artifacts must not persist tokens. Backend cache keys may include only a token hash, never the raw token.
-- Local request cache is a Local Studio result-reuse cache, not provider-native cache. The static UI keeps it enabled by default without a manual on/off toggle. Cache keys must include normalized base URL, token hash, interface mode, model, provider type, provider id/name, namespace, and request body with the stream flag removed.
-- Cache-hit assistant messages must be appended to the current conversation with visible `cache` metadata, and non-stream responses / final stream events must expose `cache.hit`.
+- The static UI must clear an accepted Local Studio draft immediately after send, restore it on non-rerun failure, and keep provider profiles, active provider id, stream/non-stream, interface mode, reasoning, model, search, and image settings in `openai.localStudio.settings.v1`.
+- Browser-local provider profiles may store runtime tokens, but server-side conversation files and task/spec artifacts must not persist tokens.
+- Local Studio must not implement a final-result replay cache. Repeating the same prompt must call the selected upstream/provider path again, and neither API responses nor assistant messages should expose `cache.hit` metadata. Provider-native or browser-capture caches used by lower layers are separate mechanisms and must not return a previous assistant answer as if it were freshly generated.
 - Responses-mode `search: true` must add a provider-aware search tool to the `/responses` `tools` list and must coexist with the provider-aware `image_generation` tool. Built-in Google AI Studio providers use `{"type": "web_search_preview"}` for the internal compatibility route; custom OpenAI-compatible providers use `{"type": "web_search"}` and must not send `web_search_preview` upstream.
 - The Local Studio image-generation tool is Responses-mode only. When enabled, Local Studio must send the `image_generation` tool through `/responses` and must not fall back to `/images/generations`; HTTP/transport failures surface as upstream errors, and no-candidate completions remain image-less. OpenAI providers keep OpenAI image tool options such as quality/background/format/compression. Google AI Studio providers send `provider: "google-ai-studio"`, the selected Gemini image model, and only model-supported size/options.
 - The internal Google AI Studio `/v1/responses` compatibility route must expose image generation as an optional model-selected tool, not as a forced call. Plain chat prompts with the image tool enabled must still be able to return a normal message without invoking image generation.
@@ -90,7 +89,6 @@ Questions to answer:
 - Missing custom OpenAI provider token -> HTTP 400 `API token is required for OpenAI providers`.
 - Missing `model` -> HTTP 400 `model is required`.
 - Missing `message` and no files for a non-rerun chat -> HTTP 400 `message or files are required`.
-- Empty Local request cache key -> HTTP 400 `cache key is required`; corrupt or missing cache files are treated as cache misses.
 - Invalid conversation id/path traversal asset path -> HTTP 400; missing conversation/asset -> HTTP 404.
 - Upstream 4xx -> mirror the 4xx status with `upstream_error`; upstream 5xx/524 -> HTTP 502 with the upstream status embedded in the message.
 - Upstream timeout -> HTTP 504 and persist an assistant error message.
@@ -109,8 +107,8 @@ Questions to answer:
 - Good: Responses image tool emits `response.image_generation_call.partial_image`, then the transport raises an incomplete chunked read; Local Studio saves the partial image, preserves any text/usage already received, and shows the upstream interruption as an error note beside the partial result.
 - Good: Responses image tool emits a partial image, then completes with a final image for the same output; Local Studio saves/renders only one final image instead of showing duplicate thumbnails.
 - Good: Responses image tool returns no image candidate; Local Studio saves the completed conversation without generated images and does not call `/images/generations`.
-- Good: Local request cache enabled; the first equivalent request calls the upstream provider and returns `cache.hit=false`, while the second equivalent request appends the cached assistant result to the active conversation and returns `cache.hit=true` without another upstream call.
-- Good: Streamed Local request cache hit returns `text/event-stream` with `local_studio.delta` and final `local_studio.completed`, preserving the frontend stream contract.
+- Good: Repeating an equivalent Local Studio prompt calls the upstream provider again, appends a fresh assistant result, and returns no `cache` metadata even if a legacy caller sends `cache_enabled` or `cache_namespace`.
+- Good: Streamed Local Studio responses always use `text/event-stream`, emit incremental `local_studio.delta` chunks before `local_studio.completed` when upstream chunks arrive, and include no cache-hit shortcut path.
 - Good: Responses mode enables both search and image generation; built-in Google payloads contain `web_search_preview` plus provider-aware `image_generation`, while OpenAI-compatible payloads contain `web_search` plus provider-aware `image_generation`. Ordinary text prompts may still return only message output, and image prompts can produce `web_search_call` plus `image_generation_call` output items when the model selects the tool.
 - Good: Google Responses search plus image tool uses a search-only decision prompt containing the image-tool selection protocol, then emits `web_search_call` plus `image_generation_call` only when the text decision selects the image tool; no upstream/request-log entry contains `include_server_side_tool_invocations`.
 - Good: User enters custom `3824x2144`; local validation accepts it as near-4K under the `<3840` edge rule.
@@ -127,7 +125,7 @@ Questions to answer:
 - Unit: Responses stream parser extracts thinking from `response.reasoning_summary_text.delta/done` and reasoning `response.output_item.done`, and the Local Studio stream route persists that thinking into the completed conversation.
 - Unit: Responses payload construction includes provider-aware search tools when Local Studio search is enabled: `web_search_preview` for Google AI Studio and `web_search` for OpenAI-compatible providers. Preserve provider-aware image-generation tool ordering/compatibility.
 - Unit: Google Responses search plus image-tool decision sends exactly one decision chat request with `web_search_preview` and the image-tool selection protocol, and does not include the `image_generation` function tool in that decision request.
-- Unit: Local request cache miss/hit for non-stream chat and stream chat, including provider-type-aware keys, cache metadata on assistant messages, and no duplicate upstream call on hit.
+- Unit: Repeated Local Studio non-stream and stream chat requests call upstream again, ignore legacy cache options, and return no response-level or assistant-message cache metadata.
 - Unit: `gpt-image-2` official size options and invalid custom sizes.
 - Unit: chat persists assistant errors for upstream 524/timeouts and rejects multiline tokens without leaking secrets.
 - Unit: Responses image-tool HTTP failures, transport failures, and no-candidate completions do not call `/images/generations`.
@@ -135,7 +133,7 @@ Questions to answer:
 - Unit: Responses stream partial-image plus final-image events persist only one generated image candidate.
 - Unit: request-log middleware records Local Studio client/upstream/client response phases and redacts client tokens plus upstream Authorization headers.
 - Static: `#studio` route/sidebar, Local Studio interface selector, stream toggle, capability grid, immediate draft clearing, provider-aware image model list, provider-specific size/parameter controls, custom size, Responses-only image panel, and no `3840x2160` option.
-- Static: provider dropdown/add/delete button, built-in Google provider with no URL/token fields, OpenAI provider URL/token validation, provider type/id in request settings, `web_search` toggle, always-on Local request cache, and cache namespace wiring.
+- Static: provider dropdown/add/delete button, built-in Google provider with no URL/token fields, OpenAI provider URL/token validation, provider type/id in request settings, `web_search` toggle, no result-cache toggle/namespace wiring, and stream delta UI refresh wiring.
 - Static syntax: when editing `src/aistudio_api/static/app.js`, run `node --check src/aistudio_api/static/app.js`.
 - Real: WSL API smoke with real account data must verify original Playground OpenAI Chat, Responses, Gemini, and Claude routes still return text/stream/usage as applicable.
 - Real: WSL API smoke must verify Local Studio OpenAI Chat, Responses, Gemini, Claude, stream mode, timeout settings, request logs, and runtime-only compatible key credentials. If the key file stores `base_url` plus token on separate lines, pass them as separate request fields; never pass the whole file as one Authorization value.
@@ -238,8 +236,8 @@ chat_response = await handle_chat(build_decision_chat_req(decision_payload), cli
 - Credential paths may be referenced, but raw tokens, cookies, storage states, request-log exports, and generated assets must not be committed.
 - Request logging is part of the verification contract for provider/API flows. Critical cases must assert full request lifecycle phases and secret redaction.
 - Bug-driven plans must include explicit regression oracles copied from the observed failing path, including expected server-log and UI behavior.
-- Architecture-facing plans must include reusable architecture contract assertions, not only route-by-route smoke paths. For Local Studio-style orchestrators, cover provider routing isolation, interface payload/stream-parser isolation, optional tool semantics, reasoning/tool trace preservation, cache key isolation, base-module independence, error consistency, persistence recovery, and frontend state-machine cleanup.
-- If upstream responses can include intermediate process data such as reasoning summaries, tool calls, search citations, image-generation invocations, usage, or partial outputs, the plan must state where that data is expected to survive across API response, UI, persisted conversation, cache hit/rerun, and request-log export. If an upstream model does not return such data, the UI/API must expose a distinguishable empty/not-available state instead of silently looking like parsing or persistence lost it.
+- Architecture-facing plans must include reusable architecture contract assertions, not only route-by-route smoke paths. For Local Studio-style orchestrators, cover provider routing isolation, interface payload/stream-parser isolation, optional tool semantics, reasoning/tool trace preservation, repeated-prompt no-result-cache behavior, base-module independence, error consistency, persistence recovery, and frontend state-machine cleanup.
+- If upstream responses can include intermediate process data such as reasoning summaries, tool calls, search citations, image-generation invocations, usage, or partial outputs, the plan must state where that data is expected to survive across API response, UI, persisted conversation, rerun, repeated prompt, and request-log export. If an upstream model does not return such data, the UI/API must expose a distinguishable empty/not-available state instead of silently looking like parsing or persistence lost it.
 
 ### 4. Validation & Error Matrix
 
@@ -248,15 +246,15 @@ chat_response = await handle_chat(build_decision_chat_req(decision_payload), cli
 - Real credential values or copied secret artifacts in the repo -> reject the change.
 - Failure-path cases that do not assert service health after the error -> plan is incomplete.
 - Provider/tool matrices that only cover the happy path -> plan is incomplete.
-- Reasoning/tool/cache/provider behavior listed only as high-level dimensions, without provider-specific pass/fail oracles -> plan is incomplete.
-- Cache tests that prove only same-namespace hit/miss but not provider/interface/model/tool/reasoning/attachment/token-hash isolation -> plan is incomplete.
+- Reasoning/tool/provider/repeated-prompt behavior listed only as high-level dimensions, without provider-specific pass/fail oracles -> plan is incomplete.
+- Repeated-prompt tests that expect cache hits instead of a fresh upstream call -> plan contradicts the Local Studio no-result-cache contract.
 - UI tests that do not assert cleanup of pending/tool-running/error/retry states after success or failure -> plan is incomplete.
 
 ### 5. Good/Base/Bad Cases
 
-- Good: The plan defines provider/interface/tool/cache/conversation/request-log matrices plus concrete pass/fail assertions and artifact handling.
+- Good: The plan defines provider/interface/tool/repeated-prompt/conversation/request-log matrices plus concrete pass/fail assertions and artifact handling.
 - Good: The plan defines architecture contract assertions and requires each API/UI case to record pass/fail/not-applicable evidence for the relevant contracts.
-- Good: An OpenAI Responses reasoning case asserts the request `reasoning` parameter plus preservation of returned reasoning summary/tool details across API, UI, conversation JSON, refresh, cache hit, and request logs, while distinguishing an upstream no-summary result from a parser/storage loss.
+- Good: An OpenAI Responses reasoning case asserts the request `reasoning` parameter plus preservation of returned reasoning summary/tool details across API, UI, conversation JSON, refresh, rerun, repeated prompt, and request logs, while distinguishing an upstream no-summary result from a parser/storage loss.
 - Base: The plan documents a narrow smoke route with both API and UI checks and states what is out of scope.
 - Bad: The plan says "test Local Studio manually" without credential setup, user paths, request-log expectations, bug oracle, or cleanup rules.
 - Bad: The plan says "Reasoning: on/off" but never names the provider/interface, expected request fields, response fields, UI persistence, or empty-state behavior.
@@ -1050,7 +1048,7 @@ def clear_snapshot_cache(self) -> None:
 - `_should_start_account_pool_warmup(*, use_pure_http: bool, account_count: int, warmup_limit: int) -> bool` gates stored-account warmup.
 - `_account_pool_warmup_account_ids(accounts, *, active_account_id, rotation_mode, warmup_limit) -> list[str]` selects bounded account IDs without mutating rotator state.
 - `AccountClientPool.get_client(account_id: str) -> AIStudioClient | None` returns the account-scoped client to warm.
-- `AIStudioClient.warmup() -> None` warms the browser context without capturing model templates.
+- `AIStudioClient.warmup() -> None` warms the browser context and prepares the default text capture template/snapshot machinery without inserting a reusable prompt response into `SnapshotCache`.
 
 ### 3. Contracts
 
@@ -1059,9 +1057,10 @@ def clear_snapshot_cache(self) -> None:
 - Stored-account warmup must run in the background and must not block FastAPI startup readiness.
 - Warmup must be bounded and sequential by default; do not launch every stored account browser at once.
 - Candidate order must cover likely first-use accounts without calling `AccountRotator.acquire_account()` because warmup must not change `in_flight`, affinity, or round-robin cursor state.
-- Exhaustion mode warms the active non-isolated account first. Balanced/default mode warms the first non-isolated registry account. A first non-isolated premium account may be added within the configured limit.
+- Candidate order must prefer the active non-isolated account in every rotation mode, then add the first non-isolated registry account and a first non-isolated premium account within the configured limit. This keeps internal Local Studio Google routes and direct browser-backed API routes aligned with the account most likely to be selected first.
+- `GET /health` must expose non-secret warmup progress (`status`, target accounts, completed accounts, failed accounts) so real tests and operators can distinguish API startup readiness from browser warmup completion.
 - Warmup failures are logged per account and do not fail startup; the next real request can still open a fresh browser context and recover.
-- Default startup warmup must not pre-capture model templates because template capture sends probe prompts through AI Studio and can consume quota or create upstream side effects.
+- Default startup warmup may prepare exactly the default text model capture template and BotGuard/snapshot path to reduce first-response latency. It must not pre-capture every model, and it must not store the probe prompt as a reusable captured response/result.
 
 ### 4. Validation & Error Matrix
 
@@ -1074,17 +1073,19 @@ def clear_snapshot_cache(self) -> None:
 
 ### 5. Good/Base/Bad Cases
 
-- Good: Service starts with two stored accounts, `AISTUDIO_ACCOUNT_WARMUP_LIMIT=2`, logs account-pool warmup start, completes at least the first account browser warmup, and the first `/v1/chat/completions` succeeds.
+- Good: Service starts with two stored accounts, `AISTUDIO_ACCOUNT_WARMUP_LIMIT=2`, logs account-pool warmup start for active-first candidates, reports `warmup.status=complete` from `GET /health`, and then warmed `/v1/chat/completions` plus Local Studio Google stream requests begin streaming without repeating the full template-capture cold path.
 - Base: Account warmup logs a recoverable AI Studio navigation failure, startup remains healthy, and a later request retries the browser path normally.
 - Bad: Startup calls `AccountRotator.acquire_account()` for warmup and shifts the first real request to a different account by incrementing in-flight or round-robin state.
-- Bad: Startup pre-captures templates for every model by default, sending hidden `template` prompts and consuming quota before any user request.
+- Bad: Startup pre-captures templates for every model by default, or stores the warmup probe prompt in `SnapshotCache` so a later identical user prompt replays the warmup result.
 
 ### 6. Tests Required
 
 - Unit: zero-account browser mode still starts only the global background warmup.
 - Unit: account-pool warmup gate is false for pure HTTP, zero accounts, and warmup limit zero.
-- Unit: candidate selection covers balanced/default first account, exhaustion active account, isolated account skipping, premium extra candidate, and limit truncation.
-- Real: WSL smoke with real account credentials verifies account-pool warmup logs started/completed or a controlled warning, then verifies browser-backed API and frontend UI sends still succeed.
+- Unit: candidate selection covers active-account-first ordering for balanced/default and exhaustion modes, isolated account skipping, premium extra candidate, and limit truncation.
+- Unit: `health_response()` exposes warmup status without credentials or storage-state content.
+- Unit: `AIStudioClient.warmup()` calls the capture-service warmup path, and `RequestCaptureService.warmup()` prepares template/snapshot machinery without writing to `SnapshotCache`.
+- Real: WSL smoke with real account credentials waits for `GET /health` warmup completion, verifies account-pool warmup completed or a controlled warning, then verifies browser-backed API, Local Studio Google API, and frontend UI sends still succeed.
 
 ### 7. Wrong vs Correct
 

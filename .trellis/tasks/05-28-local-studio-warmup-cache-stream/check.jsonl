@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend package spec index for final quality verification."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Verification contracts for Local Studio stream behavior, cache removal, request logs, static UI, and real system tests."}

@@ -22,6 +22,10 @@ class RuntimeState:
     rotator: object | None = None  # AccountRotator 实例
     account_client_pool: AccountClientPool | None = None
     request_log_store: RequestLogStore | None = None
+    warmup_status: str = "idle"
+    warmup_target_accounts: list[str] = field(default_factory=list)
+    warmup_completed_accounts: list[str] = field(default_factory=list)
+    warmup_failed_accounts: list[str] = field(default_factory=list)
     model_stats: dict[str, dict] = field(
         default_factory=lambda: defaultdict(
             lambda: {

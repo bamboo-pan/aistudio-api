@@ -282,7 +282,7 @@ def test_google_local_studio_provider_chat_uses_internal_image_tool(tmp_path, mo
     assistant = response.json()["conversation"]["messages"][-1]
     assert assistant["content"] == "Generated image"
     assert assistant["images"][0]["url"].startswith("/api/local-studio/assets/")
-    assert response.json()["cache"]["hit"] is False
+    assert "cache" not in response.json()
 
 
 def test_openai_provider_chat_uses_openai_responses_search_tool(tmp_path, monkeypatch):
@@ -684,7 +684,7 @@ def test_chat_route_posts_selected_interface_mode_and_timeout(tmp_path, monkeypa
     assert response.json()["conversation"]["messages"][-1]["content"] == "hello chat"
 
 
-def test_chat_route_reuses_local_request_cache(tmp_path, monkeypatch):
+def test_chat_route_ignores_removed_local_request_cache(tmp_path, monkeypatch):
     app, old_dir = local_studio_app(tmp_path)
     captured = {"posts": 0}
 
@@ -734,14 +734,14 @@ def test_chat_route_reuses_local_request_cache(tmp_path, monkeypatch):
     second_body = second.json()
     assert first.status_code == 200
     assert second.status_code == 200
-    assert captured["posts"] == 1
-    assert first_body["cache"] == {"hit": False, "cache_key": first_body["cache"]["cache_key"]}
-    assert second_body["cache"]["hit"] is True
+    assert captured["posts"] == 2
+    assert "cache" not in first_body
+    assert "cache" not in second_body
     assert second_body["conversation"]["messages"][-1]["content"] == "cached upstream"
-    assert second_body["conversation"]["messages"][-1]["cache"]["hit"] is True
+    assert "cache" not in second_body["conversation"]["messages"][-1]
 
 
-def test_stream_chat_reuses_local_request_cache(tmp_path, monkeypatch):
+def test_stream_chat_ignores_removed_local_request_cache(tmp_path, monkeypatch):
     app, old_dir = local_studio_app(tmp_path)
     captured = {"streams": 0}
 
@@ -800,12 +800,20 @@ def test_stream_chat_reuses_local_request_cache(tmp_path, monkeypatch):
         for line in second.text.splitlines()
         if line.startswith("data: ") and json.loads(line[6:]).get("type") == "local_studio.completed"
     ][0]
+    deltas = [
+        json.loads(line[6:])
+        for line in second.text.splitlines()
+        if line.startswith("data: ") and json.loads(line[6:]).get("type") == "local_studio.delta"
+    ]
 
     assert first.status_code == 200
     assert second.status_code == 200
-    assert captured["streams"] == 1
-    assert completed["cache"]["hit"] is True
-    assert completed["conversation"]["messages"][-1]["cache"]["hit"] is True
+    assert second.headers["cache-control"] == "no-cache"
+    assert second.headers["x-accel-buffering"] == "no"
+    assert captured["streams"] == 2
+    assert any(delta.get("content") == "stream cached" for delta in deltas)
+    assert "cache" not in completed
+    assert "cache" not in completed["conversation"]["messages"][-1]
 
 
 def test_chat_route_image_tool_http_error_does_not_call_images_api(tmp_path, monkeypatch):
