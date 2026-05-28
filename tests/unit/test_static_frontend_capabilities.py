@@ -154,6 +154,27 @@ def test_static_frontend_exposes_request_log_page():
     assert ".request-code" in style_css
 
 
+def test_static_frontend_exposes_system_config_page():
+    app_js = (ROOT / "src" / "aistudio_api" / "static" / "app.js").read_text(encoding="utf-8")
+    index_html = (ROOT / "src" / "aistudio_api" / "static" / "index.html").read_text(encoding="utf-8")
+    style_css = (ROOT / "src" / "aistudio_api" / "static" / "style.css").read_text(encoding="utf-8")
+
+    assert "view==='config'" in index_html
+    assert "go('config')" in index_html
+    assert "系统配置" in index_html
+    assert "x-text=\"item.key\"" in index_html
+    assert "x-show=\"!!item.configured_error\"" in index_html
+    assert "loadConfig()" in app_js
+    assert "saveConfigItem(item)" in app_js
+    assert "resetConfigItem(item)" in app_js
+    assert "'/config'" in app_js
+    assert "`/config/${encodeURIComponent(item.key)}`" in app_js
+    assert "configPendingRestartCount" in app_js
+    assert ".config-row.pending" in style_css
+    assert ".config-toggle" in style_css
+    assert ".config-metrics" in style_css
+
+
 def test_static_frontend_exposes_playground_workbench_tools():
     app_js = (ROOT / "src" / "aistudio_api" / "static" / "app.js").read_text(encoding="utf-8")
     index_html = (ROOT / "src" / "aistudio_api" / "static" / "index.html").read_text(encoding="utf-8")

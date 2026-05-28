@@ -35,6 +35,10 @@
       <svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h5"/></svg>
       <span class="nav-label">请求记录</span>
     </button>
+    <button class="nav-item" :class="{active:view==='config'}" @click="go('config')" title="系统配置" aria-label="系统配置">
+      <svg viewBox="0 0 24 24"><path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M2 14h4"/><path d="M10 8h4"/><path d="M18 16h4"/></svg>
+      <span class="nav-label">系统配置</span>
+    </button>
     <button class="nav-item" :class="{active:view==='accounts'}" @click="go('accounts')" title="账号管理" aria-label="账号管理">
       <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
       <span class="nav-label">账号管理</span>
@@ -489,6 +493,86 @@
           <div class="local-studio-size-note" x-text="localStudioImageToolNote"></div>
         </section>
       </aside>
+    </div>
+  </div>
+
+  <!-- System Config -->
+  <div class="page-wrap config-page" :class="{active:view==='config'}">
+    <div class="scroll-area">
+      <div class="page-pad config-pad">
+        <div class="account-hero config-hero">
+          <div>
+            <div class="account-kicker">Configuration</div>
+            <h1>系统配置</h1>
+            <p x-text="configEnvFile?('配置文件：'+configEnvFile):'配置文件加载中'"></p>
+          </div>
+          <div class="account-hero-actions">
+            <button class="btn" :disabled="configLoading" @click="loadConfig(true)">
+              <svg viewBox="0 0 24 24" :class="{'spin':configLoading}"><path d="M21 12a9 9 0 11-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg>
+              <span x-text="configLoading?'刷新中':'刷新'"></span>
+            </button>
+          </div>
+        </div>
+
+        <div class="notice notice-error config-notice" x-show="configError" x-text="configError" x-cloak></div>
+
+        <div class="config-metrics">
+          <div class="account-metric"><span>可配置项</span><strong x-text="configItemCount"></strong></div>
+          <div class="account-metric"><span>已写入 .env</span><strong x-text="configOverriddenCount"></strong></div>
+          <div class="account-metric"><span>等待重启</span><strong :class="{'metric-warn':configPendingRestartCount}" x-text="configPendingRestartCount"></strong></div>
+        </div>
+
+        <template x-for="group in configGroups" :key="group.id">
+          <section class="account-panel config-panel">
+            <div class="account-panel-head config-panel-head">
+              <div>
+                <h2 x-text="group.label"></h2>
+                <p x-text="(group.items||[]).length+' 项' "></p>
+              </div>
+            </div>
+            <div class="config-list">
+              <template x-for="item in group.items" :key="item.key">
+                <div class="config-row" :class="{dirty:configItemDirty(item),pending:item.pending_restart}">
+                  <div class="config-info-block">
+                    <div class="config-label-row">
+                      <strong x-text="item.label"></strong>
+                      <span class="badge badge-green" x-show="item.is_overridden" x-cloak>.env</span>
+                      <span class="badge badge-red" x-show="item.pending_restart" x-cloak>需重启</span>
+                    </div>
+                    <code x-text="item.key"></code>
+                    <p x-text="item.description"></p>
+                    <div class="config-meta">
+                      <span>当前 <strong x-text="configFormatValue(item.current_value,item.type)"></strong></span>
+                      <span>默认 <strong x-text="configFormatValue(item.default_value,item.type)"></strong></span>
+                    </div>
+                    <div class="notice notice-error" x-show="!!item.configured_error" x-text="item.configured_error?'已保存值无效：'+item.configured_error:''" x-cloak></div>
+                  </div>
+                  <div class="config-control-block">
+                    <template x-if="item.type==='bool'">
+                      <button type="button" class="request-switch config-toggle" :class="{active:configBooleanDraft(item)}" :disabled="item.saving" @click="item.draft=!configBooleanDraft(item);saveConfigItem(item)">
+                        <span class="request-switch-track"><span class="request-switch-knob"></span></span>
+                        <strong x-text="configBooleanDraft(item)?'开启':'关闭'"></strong>
+                      </button>
+                    </template>
+                    <template x-if="item.type!=='bool'">
+                      <input class="config-input" :type="configInputType(item)" :min="item.minimum??null" :max="item.maximum??null" :step="configInputStep(item)" x-model="item.draft" @keydown.enter.prevent="saveConfigItem(item)">
+                    </template>
+                    <div class="config-actions">
+                      <button class="btn btn-sm btn-primary" :disabled="item.saving||!configItemDirty(item)" @click="saveConfigItem(item)">
+                        <svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>
+                        <span x-text="item.saving?'保存中':'保存'"></span>
+                      </button>
+                      <button class="btn btn-sm" :disabled="item.saving||!item.is_overridden" @click="resetConfigItem(item)">重置</button>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </section>
+        </template>
+
+        <div class="account-empty" x-show="!configLoading&&!configGroups.length" x-cloak>暂无可配置项</div>
+      </div>
     </div>
   </div>
 
