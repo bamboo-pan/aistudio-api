@@ -1080,3 +1080,36 @@ Updated the Local Studio real system test plan to serve as the global highest te
 ### Next Steps
 
 - None - task complete
+
+
+## Session 33: Fix Local Studio stream image regressions
+
+**Date**: 2026-05-30
+**Task**: Fix Local Studio stream image regressions
+**Branch**: `fix/local-studio-stream-image-tool`
+
+### Summary
+
+Fixed Local Studio streamed Responses image-tool path, added regression coverage, updated backend quality spec, and verified with unit plus WSL API/UI smoke.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `745c8c2` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
