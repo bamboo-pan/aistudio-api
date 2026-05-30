@@ -71,6 +71,7 @@ Questions to answer:
 - Local Studio must not implement a final-result replay cache. Repeating the same prompt must call the selected upstream/provider path again, and neither API responses nor assistant messages should expose `cache.hit` metadata. Provider-native or browser-capture caches used by lower layers are separate mechanisms and must not return a previous assistant answer as if it were freshly generated.
 - Responses-mode `search: true` must add a provider-aware search tool to the `/responses` `tools` list and must coexist with the provider-aware `image_generation` tool. Built-in Google AI Studio providers use `{"type": "web_search_preview"}` for the internal compatibility route; custom OpenAI-compatible providers use `{"type": "web_search"}` and must not send `web_search_preview` upstream.
 - The Local Studio image-generation tool is Responses-mode only. When enabled, Local Studio must send the `image_generation` tool through `/responses` and must not fall back to `/images/generations`; HTTP/transport failures surface as upstream errors, and no-candidate completions remain image-less. OpenAI providers keep OpenAI image tool options such as quality/background/format/compression. Google AI Studio providers send `provider: "google-ai-studio"`, the selected Gemini image model, and only model-supported size/options.
+- Google AI Studio image model ids have two layers: public picker/API ids may be `gemini-3.1-flash-image-preview` or `gemini-3-pro-image-preview`, but the captured MakerSuite `GenerateContent` RPC body currently expects `gemini-3.1-flash-image` or `gemini-3-pro-image`. Keep the public id in Local Studio settings, OpenAI-compatible payloads, account selection, and user-visible traces; normalize only the replay body model before sending the captured browser request upstream.
 - The internal Google AI Studio `/v1/responses` compatibility route must expose image generation as an optional model-selected tool, not as a forced call. Plain chat prompts with the image tool enabled must still be able to return a normal message without invoking image generation.
 - For built-in Google provider requests that combine `web_search_preview` and `image_generation`, the internal Responses compatibility route must preserve the search output item and use the selected Gemini image model/size when the model chooses image generation.
 - Built-in Google provider requests that combine `web_search_preview` and `image_generation` must not send Google built-in search together with a function-calling image tool during the image-tool decision step. Build the decision request as search-only plus the image-tool selection instruction from the start, then parse the text protocol locally and call image generation only if selected. Do not rely on a first upstream 400 followed by retry; request logs are part of the contract and must not contain the `include_server_side_tool_invocations` failure.
@@ -93,6 +94,7 @@ Questions to answer:
 - Upstream 4xx -> mirror the 4xx status with `upstream_error`; upstream 5xx/524 -> HTTP 502 with the upstream status embedded in the message.
 - Upstream timeout -> HTTP 504 and persist an assistant error message.
 - Google Responses search plus image-tool decision path records `Please enable tool_config.include_server_side_tool_invocations...` in any upstream response/request-log group -> fail the regression; avoid the invalid upstream call rather than hiding it behind a successful retry.
+- Google image generation replay sends `models/gemini-3.1-flash-image-preview` or `models/gemini-3-pro-image-preview` in the captured RPC body and receives `Requested entity was not found` -> fail the regression; normalize the replay body to `models/gemini-3.1-flash-image` or `models/gemini-3-pro-image` while preserving the public selected model id elsewhere.
 - `gpt-image-2` size not `auto` or `WIDTHxHEIGHT` -> HTTP 400 before upstream call.
 - `gpt-image-2` edges not multiples of 16, longest edge `>=3840`, ratio `>3:1`, pixels `<655,360`, or pixels `>8,294,400` -> HTTP 400 before upstream call.
 
@@ -104,6 +106,7 @@ Questions to answer:
 - Good: Responses high-reasoning stream emits reasoning summary events; Local Studio accumulates them into the assistant `thinking` field, the completed conversation persists that field, and the existing UI shows the `Reasoning summary` block after refresh.
 - Good: Request logs enabled; a Local Studio chat group contains client request, upstream request, upstream response, and client response phases without API token leakage.
 - Good: Responses image tool returns `image_generation_call.result`; the image is saved locally and rendered in the UI.
+- Good: User selects `gemini-3.1-flash-image-preview`; Local Studio stores/sends that public id through the Responses image tool, the browser replay body uses `models/gemini-3.1-flash-image`, and the generated image asset is saved/rendered without a `Requested entity was not found` error.
 - Good: Responses image tool emits `response.image_generation_call.partial_image`, then the transport raises an incomplete chunked read; Local Studio saves the partial image, preserves any text/usage already received, and shows the upstream interruption as an error note beside the partial result.
 - Good: Responses image tool emits a partial image, then completes with a final image for the same output; Local Studio saves/renders only one final image instead of showing duplicate thumbnails.
 - Good: Responses image tool returns no image candidate; Local Studio saves the completed conversation without generated images and does not call `/images/generations`.
@@ -129,6 +132,7 @@ Questions to answer:
 - Unit: `gpt-image-2` official size options and invalid custom sizes.
 - Unit: chat persists assistant errors for upstream 524/timeouts and rejects multiline tokens without leaking secrets.
 - Unit: Responses image-tool HTTP failures, transport failures, and no-candidate completions do not call `/images/generations`.
+- Unit: Browser replay normalizes Google public image preview ids to current MakerSuite RPC ids only at replay-body time (`gemini-3.1-flash-image-preview` -> `gemini-3.1-flash-image`, `gemini-3-pro-image-preview` -> `gemini-3-pro-image`).
 - Unit: Responses stream partial-image events are parsed as image candidates, and transport failures after partial output persist a partial assistant message with images plus an incomplete-stream error note.
 - Unit: Responses stream partial-image plus final-image events persist only one generated image candidate.
 - Unit: request-log middleware records Local Studio client/upstream/client response phases and redacts client tokens plus upstream Authorization headers.
@@ -216,6 +220,19 @@ allowed_tool_names = _tool_names_from_payload(decision_payload.get("tools"))
 if _responses_tools_include_search(payload.get("tools")):
 	decision_payload = _responses_search_only_image_decision_payload(payload, tool)
 chat_response = await handle_chat(build_decision_chat_req(decision_payload), client)
+```
+
+#### Wrong
+
+```python
+modified_body = modify_body(captured.body, model="gemini-3.1-flash-image-preview", prompt=prompt)
+```
+
+#### Correct
+
+```python
+replay_model = image_replay_model_id("gemini-3.1-flash-image-preview")
+modified_body = modify_body(captured.body, model=replay_model, prompt=prompt)
 ```
 
 ## Scenario: Real WebUI System Test Plans

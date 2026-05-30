@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 32
-- **Last Active**: 2026-05-24
+- **Total Sessions**: 33
+- **Last Active**: 2026-05-30
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~1082 | Active |
+| `journal-1.md` | ~1115 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 33 | 2026-05-30 | Fix Local Studio stream image regressions | `745c8c2` | `fix/local-studio-stream-image-tool` |
 | 32 | 2026-05-24 | System test plan charter hardening | `ead17d4` | `feature/05-24-local-studio-system-test-fixes` |
 | 31 | 2026-05-24 | Local Studio streaming reasoning display | `cf8f940` | `feature/05-24-local-studio-system-test-fixes` |
 | 30 | 2026-05-24 | Local Studio real system test fixes | `e2ebd3b` | `feature/05-24-local-studio-system-test-fixes` |

@@ -264,3 +264,126 @@ def test_responses_search_image_fallback_splits_builtin_search_and_function_tool
         "prompt": "red square with searched context",
         "size": "1024x1024",
     }
+
+
+def test_responses_image_tool_retries_google_image_model_not_found(monkeypatch):
+    image_models = []
+
+    async def fake_handle_chat(req, client, request=None):
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": 'Tool call requested: image_generation {"prompt":"fallback square","size":"1024x1024"}'
+                    }
+                }
+            ],
+            "usage": {"prompt_tokens": 3, "completion_tokens": 4},
+        }
+
+    async def fake_handle_image_generation(req, client):
+        image_models.append(req.model)
+        if req.model == "gemini-3.1-flash-image-preview":
+            raise HTTPException(502, detail={"message": "HTTP 404: Requested entity was not found", "type": "upstream_error"})
+        return {"data": [{"b64_json": "ZmFrZQ==", "mime_type": "image/png"}], "usage": {"total_tokens": 1}}
+
+    monkeypatch.setattr(api_service, "handle_chat", fake_handle_chat)
+    monkeypatch.setattr(api_service, "handle_image_generation", fake_handle_image_generation)
+
+    response = asyncio.run(
+        api_service.handle_openai_responses(
+            {
+                "model": "gemini-3-flash-preview",
+                "input": "make an image",
+                "tools": [{"type": "image_generation", "provider": "google-ai-studio", "model": "gemini-3.1-flash-image-preview"}],
+            },
+            client=object(),
+        )
+    )
+
+    assert image_models == ["gemini-3.1-flash-image-preview", "gemini-3-pro-image-preview"]
+    assert response["output"][0]["type"] == "image_generation_call"
+    assert response["thinking"] == "Image generation tool selected gemini-3-pro-image-preview at 1024x1024."
+
+
+async def collect_response_stream_payloads(response):
+    return [payload async for payload in api_service._iter_sse_data_payloads(response)]
+
+
+def test_responses_image_tool_streams_text_decision_before_completed(monkeypatch):
+    captured = {}
+
+    async def fake_handle_chat(req, client, request=None):
+        captured["stream"] = req.stream
+
+        async def body():
+            yield 'data: {"choices":[{"delta":{"content":"hel"}}]}\n\n'
+            yield 'data: {"choices":[{"delta":{"content":"lo"},"finish_reason":"stop"}]}\n\n'
+            yield 'data: [DONE]\n\n'
+
+        return api_service.StreamingResponse(body(), media_type="text/event-stream")
+
+    monkeypatch.setattr(api_service, "handle_chat", fake_handle_chat)
+
+    response = asyncio.run(
+        api_service.handle_openai_responses(
+            {
+                "model": "gemini-3-flash-preview",
+                "input": "answer normally",
+                "stream": True,
+                "tools": [{"type": "image_generation", "provider": "google-ai-studio", "model": "gemini-3-pro-image-preview"}],
+            },
+            client=object(),
+        )
+    )
+    payloads = asyncio.run(collect_response_stream_payloads(response))
+    events = [json.loads(payload) for payload in payloads if payload != "[DONE]"]
+    event_types = [event.get("type") for event in events]
+
+    assert captured["stream"] is True
+    assert event_types.index("response.output_text.delta") < event_types.index("response.completed")
+    assert [event.get("delta") for event in events if event.get("type") == "response.output_text.delta"] == ["hel", "lo"]
+    assert events[-1]["response"]["output_text"] == "hello"
+
+
+def test_responses_image_tool_stream_generates_image_after_streamed_tool_decision(monkeypatch):
+    captured_image_request = {}
+
+    async def fake_handle_chat(req, client, request=None):
+        assert req.stream is True
+
+        async def body():
+            yield 'data: {"choices":[{"delta":{"content":"Tool call requested: image_generation {\\"prompt\\":\\"red square\\",\\"size\\":\\"1024x1024\\"}"},"finish_reason":"stop"}]}\n\n'
+            yield 'data: [DONE]\n\n'
+
+        return api_service.StreamingResponse(body(), media_type="text/event-stream")
+
+    async def fake_handle_image_generation(req, client):
+        captured_image_request["model"] = req.model
+        captured_image_request["prompt"] = req.prompt
+        captured_image_request["size"] = req.size
+        return {"data": [{"b64_json": "ZmFrZQ==", "mime_type": "image/png"}], "usage": {"total_tokens": 1}}
+
+    monkeypatch.setattr(api_service, "handle_chat", fake_handle_chat)
+    monkeypatch.setattr(api_service, "handle_image_generation", fake_handle_image_generation)
+
+    response = asyncio.run(
+        api_service.handle_openai_responses(
+            {
+                "model": "gemini-3-flash-preview",
+                "input": "make an image",
+                "stream": True,
+                "tools": [{"type": "image_generation", "provider": "google-ai-studio", "model": "gemini-3-pro-image-preview"}],
+            },
+            client=object(),
+        )
+    )
+    payloads = asyncio.run(collect_response_stream_payloads(response))
+    events = [json.loads(payload) for payload in payloads if payload != "[DONE]"]
+    completed = next(event for event in events if event.get("type") == "response.completed")
+
+    assert captured_image_request == {"model": "gemini-3-pro-image-preview", "prompt": "red square", "size": "1024x1024"}
+    assert any(event.get("type") == "response.function_call_arguments.done" for event in events)
+    assert any(event.get("type") == "response.image_generation_call.partial_image" for event in events)
+    assert completed["response"]["output_text"] == "Generated image"
+    assert completed["response"]["output"][0]["type"] == "image_generation_call"

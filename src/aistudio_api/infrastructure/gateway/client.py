@@ -31,6 +31,18 @@ PURE_HTTP_GENERATE_CONTENT_UNSUPPORTED = (
     "for full compatibility"
 )
 
+_IMAGE_REPLAY_MODEL_ALIASES = {
+    "gemini-3.1-flash-image-preview": "gemini-3.1-flash-image",
+    "gemini-3-pro-image-preview": "gemini-3-pro-image",
+}
+
+
+def image_replay_model_id(model: str) -> str:
+    raw = str(model or "").strip()
+    prefix = "models/" if raw.startswith("models/") else ""
+    model_id = raw.removeprefix("models/")
+    return f"{prefix}{_IMAGE_REPLAY_MODEL_ALIASES.get(model_id, model_id)}"
+
 
 class AIStudioClient:
     def __init__(
@@ -350,16 +362,17 @@ class AIStudioClient:
         if not captured:
             raise RequestError(0, "无法拦截请求")
 
+        replay_model = image_replay_model_id(model)
         modified_body = modify_body(
             captured.body,
-            model=model,
+            model=replay_model,
             prompt=None if contents else prompt,
             contents=contents,
             generation_config_overrides=generation_config_overrides,
             sanitize_plain_text=False,
             enable_thinking=False,
         )
-        status, raw = await self._replay_request(captured, body=modified_body, timeout=timeout, kind="generate_image", model=model)
+        status, raw = await self._replay_request(captured, body=modified_body, timeout=timeout, kind="generate_image", model=replay_model)
         raw_text = raw.decode("utf-8", errors="replace")
         self._dump_raw_exchange(
             kind="generate_image",

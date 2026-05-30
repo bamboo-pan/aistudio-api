@@ -29,6 +29,15 @@ class FakeTextClient:
 
 
 class FakeTextAndImageClient(FakeTextClient):
+    async def stream_generate_content(self, **kwargs):
+        self.calls.append(kwargs)
+        yield ("thinking", self.thinking or "Selecting image tool")
+        if self.text:
+            yield ("body", self.text)
+        if self.function_calls:
+            yield ("tool_calls", self.function_calls)
+        yield ("usage", {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7})
+
     async def generate_image(self, **kwargs):
         self.calls.append({"image": kwargs})
         return ModelOutput(
@@ -554,10 +563,11 @@ def test_openai_responses_streams_image_generation_tool_events():
     assert any(event_name == "response.reasoning.delta" for event_name, _ in events)
     assert any(event_name == "response.image_generation_call.partial_image" for event_name, _ in events)
     done_items = [data["item"] for event_name, data in events if event_name == "response.output_item.done"]
-    assert done_items and "result" not in done_items[0]
+    image_done_items = [item for item in done_items if item.get("type") == "image_generation_call"]
+    assert image_done_items and "result" not in image_done_items[0]
     completed = [data for event_name, data in events if event_name == "response.completed"][0]
-    assert completed["response"]["output"][0]["type"] == "image_generation_call"
-    assert "result" not in completed["response"]["output"][0]
+    image_output_items = [item for item in completed["response"]["output"] if item.get("type") == "image_generation_call"]
+    assert image_output_items and "result" not in image_output_items[0]
     assert "Image generation tool selected" in completed["response"]["thinking"]
 
 
