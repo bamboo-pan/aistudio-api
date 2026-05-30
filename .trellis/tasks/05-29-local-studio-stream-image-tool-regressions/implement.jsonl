@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend guideline index for Local Studio API and infrastructure changes."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Local Studio stream, image-tool, request-log, provider, no-cache, and real-test contracts."}

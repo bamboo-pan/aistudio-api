@@ -334,7 +334,7 @@ def test_static_frontend_exposes_local_studio_workbench():
     assert "reasoning_effort:this.localStudioControlAvailable('thinking')?this.localStudioReasoningEffort:'off'" in app_js
     assert "image_tool_enabled:this.localStudioInterfaceMode==='responses'&&this.localStudioImageToolEnabled" in app_js
     assert "image_tool_provider:this.localStudioProviderType" in app_js
-    assert "image_model:this.localStudioImageToolLabel" in app_js
+    assert "image_model:this.localStudioSelectedImageModel.id||this.localStudioImageModel" in app_js
     assert "if(!this.localStudioIsGoogleProvider)" in app_js
     assert "localStudioImageParamAvailable('quality')" in index_html
     assert "rerunLocalStudioMessage(index)" in app_js

@@ -2,6 +2,7 @@ import asyncio
 import json
 
 from aistudio_api.infrastructure.gateway.capture import CapturedRequest
+from aistudio_api.infrastructure.gateway.client import image_replay_model_id
 from aistudio_api.infrastructure.gateway.replay import RequestReplayService
 from aistudio_api.infrastructure.gateway.streaming import StreamingGateway
 
@@ -91,6 +92,11 @@ def test_streaming_replay_uses_captured_request_url_and_headers_without_session_
         "x-client-data": "abc",
     }
     assert json.loads(session.calls[0]["body"])[0] == "models/gemini-3.1-flash-lite"
+
+
+def test_image_preview_model_ids_replay_with_current_rpc_model_ids():
+    assert image_replay_model_id("gemini-3.1-flash-image-preview") == "gemini-3.1-flash-image"
+    assert image_replay_model_id("models/gemini-3-pro-image-preview") == "models/gemini-3-pro-image"
 
 
 async def _collect_stream_events(stream):
