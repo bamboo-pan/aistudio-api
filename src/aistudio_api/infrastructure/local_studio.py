@@ -1198,6 +1198,11 @@ def parse_responses_stream_event(payload: Mapping[str, Any]) -> dict[str, Any]:
         item = payload["item"]
         if str(item.get("type") or "") == "reasoning":
             thinking = parse_responses_output({"output": [item]})["thinking"]
+        elif event_type == "response.output_item.done" and str(item.get("type") or "") == "function_call":
+            name = str(item.get("name") or "").strip()
+            if name:
+                arguments = str(item.get("arguments") or "").strip()
+                thinking = f"Tool call requested: {name} {arguments}".strip()
     elif event_type in {"response.reasoning_summary_part.done", "response.reasoning_summary_part.added"}:
         thinking = "\n".join(_text_from_parts(payload.get("part"))).strip()
     elif event_type == "response.completed" and isinstance(payload.get("response"), Mapping):

@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend spec index and pre-development checklist for Local Studio backend changes."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Contains the Local Studio streaming, provider, request-log, and real-test contracts for this bug path."}
