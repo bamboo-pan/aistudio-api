@@ -940,6 +940,22 @@ def test_responses_stream_reasoning_summary_events_extract_thinking():
     assert item_done["thinking"] == "final summary"
 
 
+def test_responses_stream_function_call_done_extracts_tool_progress():
+    parsed = parse_local_studio_stream_event(
+        "responses",
+        {
+            "type": "response.output_item.done",
+            "item": {
+                "type": "function_call",
+                "name": "image_generation",
+                "arguments": '{"prompt":"red square","size":"1024x1024"}',
+            },
+        },
+    )
+
+    assert parsed["thinking"] == 'Tool call requested: image_generation {"prompt":"red square","size":"1024x1024"}'
+
+
 def test_stream_chat_persists_responses_reasoning_summary(tmp_path, monkeypatch):
     app, old_dir = local_studio_app(tmp_path)
 
@@ -1004,6 +1020,93 @@ def test_stream_chat_persists_responses_reasoning_summary(tmp_path, monkeypatch)
     assert response.status_code == 200
     assert assistant["content"] == "Answer"
     assert assistant["thinking"] == "I will calculate."
+
+
+def test_stream_chat_emits_image_tool_progress_before_completion(tmp_path, monkeypatch):
+    app, old_dir = local_studio_app(tmp_path)
+
+    class FakeStreamResponse:
+        status_code = 200
+        headers = {"content-type": "text/event-stream"}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        def raise_for_status(self):
+            return None
+
+        async def aiter_lines(self):
+            events = [
+                {
+                    "type": "response.output_item.done",
+                    "item": {
+                        "type": "function_call",
+                        "name": "image_generation",
+                        "arguments": '{"prompt":"red square","size":"1024x1024"}',
+                    },
+                },
+                {
+                    "type": "response.completed",
+                    "response": {
+                        "output_text": "Generated image",
+                        "thinking": "Image generation tool selected gemini-3.1-flash-image-preview at 1024x1024.",
+                        "output": [{"type": "image_generation_call", "result": "ZmFrZQ=="}],
+                        "usage": {"input_tokens": 1, "output_tokens": 2},
+                    },
+                },
+            ]
+            for event in events:
+                yield "data: " + json.dumps(event)
+                yield ""
+
+    class FakeClient:
+        def __init__(self, timeout):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        def stream(self, method, url, headers, json):
+            return FakeStreamResponse()
+
+    monkeypatch.setattr(routes_local_studio, "_new_http_client", FakeClient)
+    try:
+        response = request_app(
+            app,
+            "POST",
+            "/api/local-studio/chat",
+            json={
+                "base_url": "http://compat.example/v1",
+                "api_key": "token-1",
+                "model": "gpt-5.4-mini",
+                "message": "make a cat image",
+                "options": {"stream": True, "image_tool_enabled": True},
+            },
+        )
+    finally:
+        settings.local_studio_dir = old_dir
+
+    events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
+    progress_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.get("type") == "local_studio.delta" and "Tool call requested: image_generation" in str(event.get("thinking") or "")
+    )
+    completed_index = next(index for index, event in enumerate(events) if event.get("type") == "local_studio.completed")
+    assistant = events[completed_index]["conversation"]["messages"][-1]
+
+    assert response.status_code == 200
+    assert progress_index < completed_index
+    assert assistant["content"] == "Generated image"
+    assert "Tool call requested: image_generation" in assistant["thinking"]
+    assert "Image generation tool selected gemini-3.1-flash-image-preview" in assistant["thinking"]
+    assert assistant["images"][0]["url"].startswith("/api/local-studio/assets/")
 
 
 def test_stream_chat_persists_response_image_candidates(tmp_path, monkeypatch):

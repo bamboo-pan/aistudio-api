@@ -484,6 +484,14 @@ async def _stream_local_studio_chat(
     status_code = 0
     response_headers: dict[str, str] = {}
 
+    def append_completed_thinking(value: Any) -> None:
+        text = str(value or "").strip()
+        if not text:
+            return
+        if any(text == part or text in part for part in thinking_parts):
+            return
+        thinking_parts.append(text)
+
     try:
         async with _new_http_client(timeout) as client:
             async with client.stream("POST", url, headers=headers, json=request_body) as response:
@@ -520,8 +528,11 @@ async def _stream_local_studio_chat(
                             error_message = str(parsed["error"])
                         if parsed.get("content") and (not is_completed_event or not content_parts):
                             content_parts.append(str(parsed["content"]))
-                        if parsed.get("thinking") and (not is_completed_event or not thinking_parts):
-                            thinking_parts.append(str(parsed["thinking"]))
+                        if parsed.get("thinking"):
+                            if is_completed_event:
+                                append_completed_thinking(parsed["thinking"])
+                            else:
+                                thinking_parts.append(str(parsed["thinking"]))
                         if isinstance(parsed.get("image_candidates"), list):
                             parsed_candidates = [candidate for candidate in parsed["image_candidates"] if isinstance(candidate, dict)]
                             if event_type == "response.image_generation_call.partial_image":
