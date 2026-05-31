@@ -250,6 +250,7 @@ def test_static_frontend_exposes_local_studio_workbench():
     style_css = (ROOT / "src" / "aistudio_api" / "static" / "style.css").read_text(encoding="utf-8")
 
     assert "<title>Local Studio</title>" in index_html
+    assert "/static/app.js?v=20260531-stream-rendering" in index_html
     assert "OpenAI Local Studio" not in index_html
     assert "view==='studio'" in index_html
     assert "go('studio')" in index_html
@@ -291,7 +292,9 @@ def test_static_frontend_exposes_local_studio_workbench():
     assert "localStudioCacheEnabled=!localStudioCacheEnabled" not in index_html
     assert "sendLocalStudioStream(body)" in app_js
     assert "local_studio.delta" in app_js
-    assert "refreshLocalStudioStreamMessage()" in app_js
+    assert "const streamMessage={id:`stream-${Date.now()}`" in app_js
+    assert "const message=this.localStudioActiveMessages[this.localStudioActiveMessages.length-1]||streamMessage" in app_js
+    assert "this.refreshLocalStudioStreamMessage();this.scrollLocalStudioDown()" in app_js
     assert "localStudioPendingTitle" in app_js
     assert "localStudioBusyTimer" in app_js
     assert "Local Studio 流式响应中断，已保存结果" in app_js

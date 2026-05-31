@@ -1,0 +1,25 @@
+{
+  "ok": true,
+  "command": "wsl.exe -d Ubuntu-24.04 -- bash /mnt/c/Users/bamboo/Desktop/aistudio-api_u1/.trellis/tasks/05-31-local-studio-stream-rendering/verification/wsl_real_stream_rendering_smoke.sh",
+  "run_root": "/home/bamboo/aistudio-api-stream-rendering-20260531-133123",
+  "artifact_root": "/home/bamboo/aistudio-api-stream-rendering-20260531-133123/artifacts",
+  "run_id": "stream-rendering-1780205529",
+  "marker": "STREAM_RENDER_MARKER_stream-rendering-1780205529",
+  "selected_model": "codex-auto-review",
+  "api_stream": {
+    "first_delta_seconds": 2.425,
+    "first_delta_chunk": 1,
+    "completed_chunk": 254,
+    "delta_prefix": "STREAM_RENDER_MARKER_stream-rendering-1780205529\n1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n21\n22\n23\n24\n25\n26\n27"
+  },
+  "ui_stream": {
+    "first_visible_seconds": 2.315,
+    "max_dom_len": 825,
+    "state_had_content_without_dom": false,
+    "final_len": 580
+  },
+  "request_logs": {
+    "matching_groups": 2,
+    "upstream_request_groups": 2
+  }
+}

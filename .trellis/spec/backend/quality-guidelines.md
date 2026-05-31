@@ -68,6 +68,7 @@ Questions to answer:
 - Request logging must include `/api/local-studio/models` and `/api/local-studio/chat` client requests plus manually recorded upstream request/response phases. Client `api_key`, `apiKey`, and `token` body fields and upstream `Authorization` headers must be redacted.
 - The `timeout` setting must be passed into every Local Studio upstream client, including model list, non-stream chat, and stream chat.
 - The static UI must clear an accepted Local Studio draft immediately after send, restore it on non-rerun failure, and keep provider profiles, active provider id, stream/non-stream, interface mode, reasoning, model, search, and image settings in `openai.localStudio.settings.v1`.
+- The static UI stream renderer must mutate the Alpine-proxied assistant message while consuming `local_studio.delta`. After assigning a new `localStudioConversation`, reacquire the just-appended message from `this.localStudioActiveMessages` before appending content/thinking. Mutating the plain object that was used to seed the messages array can update internal state but fail to repaint the `x-for`/`x-html` transcript until `local_studio.completed` replaces the conversation.
 - Browser-local provider profiles may store runtime tokens, but server-side conversation files and task/spec artifacts must not persist tokens.
 - Local Studio must not implement a final-result replay cache. Repeating the same prompt must call the selected upstream/provider path again, and neither API responses nor assistant messages should expose `cache.hit` metadata. Provider-native or browser-capture caches used by lower layers are separate mechanisms and must not return a previous assistant answer as if it were freshly generated.
 - Responses-mode `search: true` must add a provider-aware search tool to the `/responses` `tools` list and must coexist with the provider-aware `image_generation` tool. Built-in Google AI Studio providers use `{"type": "web_search_preview"}` for the internal compatibility route; custom OpenAI-compatible providers use `{"type": "web_search"}` and must not send `web_search_preview` upstream.
@@ -140,7 +141,7 @@ Questions to answer:
 - Unit: Responses image-tool `function_call` stream events produce `local_studio.delta.thinking` before `local_studio.completed`, and completed conversation thinking keeps the tool progress plus final image-generation trace.
 - Unit: request-log middleware records Local Studio client/upstream/client response phases and redacts client tokens plus upstream Authorization headers.
 - Static: `#studio` route/sidebar, Local Studio interface selector, stream toggle, capability grid, immediate draft clearing, provider-aware image model list, provider-specific size/parameter controls, custom size, Responses-only image panel, and no `3840x2160` option.
-- Static: provider dropdown/add/delete button, built-in Google provider with no URL/token fields, OpenAI provider URL/token validation, provider type/id in request settings, `web_search` toggle, no result-cache toggle/namespace wiring, and stream delta UI refresh wiring.
+- Static: provider dropdown/add/delete button, built-in Google provider with no URL/token fields, OpenAI provider URL/token validation, provider type/id in request settings, `web_search` toggle, no result-cache toggle/namespace wiring, and stream delta UI refresh wiring that updates the Alpine-proxied assistant message before completion.
 - Static syntax: when editing `src/aistudio_api/static/app.js`, run `node --check src/aistudio_api/static/app.js`.
 - Real: WSL API smoke with real account data must verify original Playground OpenAI Chat, Responses, Gemini, and Claude routes still return text/stream/usage as applicable.
 - Real: WSL API smoke must verify Local Studio OpenAI Chat, Responses, Gemini, Claude, stream mode, timeout settings, request logs, and runtime-only compatible key credentials. If the key file stores `base_url` plus token on separate lines, pass them as separate request fields; never pass the whole file as one Authorization value.
@@ -207,6 +208,26 @@ try:
 	response.raise_for_status()
 except httpx.HTTPError:
 	raise
+```
+
+#### Wrong
+
+```javascript
+const conversation = {...this.localStudioConversation, messages: [...this.localStudioActiveMessages, streamMessage]}
+this.localStudioConversation = conversation
+const message = streamMessage
+message.content += event.content
+this.refreshLocalStudioStreamMessage()
+```
+
+#### Correct
+
+```javascript
+const conversation = {...this.localStudioConversation, messages: [...this.localStudioActiveMessages, streamMessage]}
+this.localStudioConversation = conversation
+const message = this.localStudioActiveMessages[this.localStudioActiveMessages.length - 1] || streamMessage
+message.content += event.content
+this.refreshLocalStudioStreamMessage()
 ```
 
 #### Wrong
